@@ -1986,6 +1986,7 @@ void sapComputeSpectWeight( tSapChSelSpectInfo* pSpectInfoParams,
     tSirProbeRespBeacon *pBeaconStruct;
     tpAniSirGlobal  pMac = (tpAniSirGlobal) halHandle;
     tSapSpectChInfo *pSpectChStartAddr = pSpectInfoParams->pSpectCh;
+    tSapSpectChInfo *pExtSpectCh = NULL;
     tSapSpectChInfo *pSpectChEndAddr =
                     pSpectInfoParams->pSpectCh + pSpectInfoParams->numSpectChans;
 
@@ -2065,7 +2066,6 @@ void sapComputeSpectWeight( tSapChSelSpectInfo* pSpectInfoParams,
                         case eHT_CHANNEL_WIDTH_40MHZ: //HT40
                             switch( secondaryChannelOffset)
                             {
-                                tSapSpectChInfo *pExtSpectCh = NULL;
                                 case PHY_DOUBLE_CHANNEL_LOW_PRIMARY: // Above the Primary Channel
                                     pExtSpectCh = (pSpectCh + 1);
                                     if( pExtSpectCh != NULL &&
