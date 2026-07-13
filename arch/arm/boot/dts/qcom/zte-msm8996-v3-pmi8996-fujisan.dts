@@ -16,6 +16,7 @@
 #include "msm8996-v3.dtsi"
 #include "msm-pmi8996.dtsi"
 #include "msm8996-mtp.dtsi"
+#include "zte-msm8996-fujisan-pinctrl.dtsi"
 
 #include "zte-msm8996-v3-pmi8996-fujisan.dtsi"
 

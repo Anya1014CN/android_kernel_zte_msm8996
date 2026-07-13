@@ -1,0 +1,17 @@
+&tlmm {
+	zte_hall: zte_hall {
+		zte_hall_gpio_active: zte_hall_gpio_active {
+			mux {
+				pins = "gpio124";
+				function = "gpio";
+			};
+
+			config {
+				pins = "gpio124";
+				drive-strength = <2>;
+				bias-disable;
+				input-enable;
+			};
+		};
+	};
+};

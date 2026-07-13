@@ -16,6 +16,7 @@
 #include "msm8996pro-v1.1.dtsi"
 #include "msm-pmi8996.dtsi"
 #include "msm8996-mtp-fujisan.dtsi"
+#include "zte-msm8996-fujisan-pinctrl.dtsi"
 #include "zte-camera-sensor-mtp-fujisan.dtsi"
 #include "zte-msm8996pro-v1.1-pmi8996-fujisan.dtsi"
 
