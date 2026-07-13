@@ -5585,6 +5585,20 @@ static int synaptics_rmi4_resume(struct device *dev)
 	rmi4_data->current_page = MASK_8BIT;
 
 	synaptics_rmi4_sleep_enable(rmi4_data, false);
+
+	/*
+	 * TD4322 loses its configured state when the secondary panel rails are
+	 * removed.  Restore F12 and the interrupt masks before unmasking the IRQ;
+	 * otherwise recovery depends on the first reset interrupt winning a race
+	 * with the display-mode transition.
+	 */
+	if (zte_ts_is_td4322()) {
+		retval = synaptics_rmi4_reinit_device(rmi4_data);
+		if (retval < 0)
+			dev_err(rmi4_data->pdev->dev.parent,
+					"%s: Failed to reinit device\n", __func__);
+	}
+
 	synaptics_rmi4_irq_enable(rmi4_data, true, false);
 
 exit:

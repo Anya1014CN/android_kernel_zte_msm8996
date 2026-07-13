@@ -4954,6 +4954,7 @@ EXPORT_SYMBOL(zte_get_ts_power_status);
 static void fwu_startup_fw_update_work(struct work_struct *work)
 {
 	static unsigned char do_once = 1;
+	int retval;
 #ifdef WAIT_FOR_FB_READY
 	unsigned int timeout;
 	struct synaptics_rmi4_data *rmi4_data = fwu_2nd->rmi4_data;
@@ -4987,7 +4988,13 @@ static void fwu_startup_fw_update_work(struct work_struct *work)
 	}
 #endif
 
-	synaptics_fw_updater_2nd(NULL);
+	retval = synaptics_fw_updater_2nd(NULL);
+	if (retval < 0) {
+		dev_warn(rmi4_data->pdev->dev.parent,
+				"%s: Startup firmware update unavailable, keeping touchscreen active\n",
+				__func__);
+		goto Exit;
+	}
 
 FailedLoop:
 #ifdef CONFIG_BOARD_FUJISAN
@@ -4997,6 +5004,7 @@ FailedLoop:
 	}
 #endif
 
+Exit:
 	SYNA_INFO("end\n");
 }
 #endif
