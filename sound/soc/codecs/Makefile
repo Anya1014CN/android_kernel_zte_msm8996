@@ -191,6 +191,11 @@ obj-$(CONFIG_SND_SOC_MSM_HDMI_DBA_CODEC_RX) := msm_hdmi_dba_codec_rx.o
 snd-soc-max9877-objs := max9877.o
 snd-soc-tpa6130a2-objs := tpa6130a2.o
 snd-soc-tas2552-objs := tas2552.o
+snd-soc-tfa98xx-objs := tfa98xx.o tfa_container.o tfa_dsp.o \
+	tfa9890_init.o tfa9888_init.o tfa9891_init.o tfa9897_init.o \
+	tfa9887B_init.o tfa9887_init.o
+
+obj-$(CONFIG_ZTE_NXP_SMART_PA) += snd-soc-tfa98xx.o
 
 obj-$(CONFIG_SND_SOC_88PM860X)	+= snd-soc-88pm860x.o
 obj-$(CONFIG_SND_SOC_AB8500_CODEC)	+= snd-soc-ab8500-codec.o
