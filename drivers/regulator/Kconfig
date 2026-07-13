@@ -634,6 +634,14 @@ config REGULATOR_TPS51632
 	  The voltage output can be configure through I2C interface or PWM
 	  interface.
 
+config REGULATOR_TPS65132
+	tristate "TI TPS65132 Power regulator"
+	depends on I2C
+	select REGMAP_I2C
+	help
+	  This driver supports TPS65132 voltage regulator chips. The chip has
+	  positive and negative output rails for display panel bias supplies.
+
 config REGULATOR_TPS6105X
 	tristate "TI TPS6105X Power regulators"
 	depends on TPS6105X
@@ -908,4 +916,3 @@ config REGULATOR_KRYO
 	  CPU subsystem.
 
 endif
-
