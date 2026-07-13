@@ -26,6 +26,13 @@ else
 DTB_OBJS := $(shell find $(obj)/dts/ -name \*.dtb)
 endif
 
+# Fujisan's released DTS does not reproduce the DTB shipped on production
+# devices. Keep the source DTBs buildable, but append the known-good board DTB
+# used by the stock boot image.
+ifeq ($(CONFIG_BOARD_FUJISAN),y)
+DTB_OBJS := $(srctree)/arch/arm/boot/dts/qcom/zte-fujisan-stock.dtb
+endif
+
 $(obj)/Image: vmlinux FORCE
 	$(call if_changed,objcopy)
 
