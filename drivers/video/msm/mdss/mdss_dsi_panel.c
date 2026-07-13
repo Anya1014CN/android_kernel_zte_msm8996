@@ -37,11 +37,10 @@ extern u32 zte_frame_count;/*pan*/
 extern u32 zte_bl_brightness_2;
 #endif
 
-ssize_t mdss_dsi_panel_lcd_read_proc(struct file *file, char __user *page, size_t size, loff_t *ppos)
-{
-	int len = 0;
-	printk("LCD %s:---enter---\n",__func__);
-
+#define DT_CMD_HDR 6
+#define MIN_REFRESH_RATE 48
+#define DEFAULT_MDP_TRANSFER_TIME 14000
+#define VSYNC_DELAY msecs_to_jiffies(17)
 
 struct mutex zte_display_lock;
 int zte_display_init=0;
@@ -414,6 +413,23 @@ end:
 }
 
 #endif
+
+static void mdss_dsi_panel_apply_settings(struct mdss_dsi_ctrl_pdata *ctrl,
+				struct dsi_panel_cmds *pcmds)
+{
+	struct dcs_cmd_req cmdreq;
+	struct mdss_panel_info *pinfo;
+
+	pinfo = &ctrl->panel_data.panel_info;
+	if (pinfo->dcs_cmd_by_left && ctrl->ndx != DSI_CTRL_LEFT)
+		return;
+
+	memset(&cmdreq, 0, sizeof(cmdreq));
+	cmdreq.cmds = pcmds->cmds;
+	cmdreq.cmds_cnt = pcmds->cmd_cnt;
+	cmdreq.flags = CMD_REQ_COMMIT;
+	mdss_dsi_cmdlist_put(ctrl, &cmdreq);
+}
 
 DEFINE_LED_TRIGGER(bl_led_trigger);
 #ifdef ZTE_SAMSUNG_ACL_HBM
@@ -2705,18 +2721,9 @@ int mdss_dsi_panel_reset_for_ts(struct mdss_panel_data *pdata, int enable)
 				pdata->panel_info.rst_seq[0]);
 			if (rc) {
 				pr_err("%s: unable to set dir for rst gpio\n", __func__);
-					goto exit;
+				goto exit;
 			}
 		}
-		mdelay(5);
-	} else {
-			if (gpio_is_valid(ctrl_pdata->lcd_3v_vsp_en_gpio)) {
-				//gpio_set_value((ctrl_pdata->lcd_5v_vsp_en_gpio), 0);
-				gpio_direction_output((ctrl_pdata->lcd_3v_vsp_en_gpio), 0);
-			}
-			mdelay(2);
-	}
-}
 
 		for (i = 0; i < pdata->panel_info.rst_seq_len; ++i) {
 			gpio_set_value((ctrl_pdata->rst2_gpio),
@@ -2735,6 +2742,55 @@ exit:
 	return rc;
 }
 #endif
+
+static void mdss_dsi_panel_set_idle_mode(struct mdss_panel_data *pdata,
+						bool enable)
+{
+	struct mdss_dsi_ctrl_pdata *ctrl;
+
+	if (!pdata) {
+		pr_err("%s: Invalid input data\n", __func__);
+		return;
+	}
+
+	ctrl = container_of(pdata, struct mdss_dsi_ctrl_pdata, panel_data);
+	if (ctrl->idle == enable)
+		return;
+
+	if (enable && ctrl->idle_on_cmds.cmd_cnt) {
+		mdss_dsi_panel_cmds_send(ctrl, &ctrl->idle_on_cmds,
+				CMD_REQ_COMMIT);
+		ctrl->idle = true;
+	} else if (!enable && ctrl->idle_off_cmds.cmd_cnt) {
+		mdss_dsi_panel_cmds_send(ctrl, &ctrl->idle_off_cmds,
+				CMD_REQ_COMMIT);
+		ctrl->idle = false;
+	}
+}
+
+static int mdss_dsi_panel_apply_display_setting(
+		struct mdss_panel_data *pdata, u32 mode)
+{
+	struct mdss_dsi_ctrl_pdata *ctrl;
+	struct dsi_panel_cmds *cmds;
+
+	if (!pdata)
+		return -EINVAL;
+
+	ctrl = container_of(pdata, struct mdss_dsi_ctrl_pdata, panel_data);
+	if (mode == MDSS_PANEL_LOW_PERSIST_MODE_ON)
+		cmds = &ctrl->lp_on_cmds;
+	else if (mode == MDSS_PANEL_LOW_PERSIST_MODE_OFF)
+		cmds = &ctrl->lp_off_cmds;
+	else
+		return -EINVAL;
+
+	if (!cmds->cmd_cnt)
+		return -EINVAL;
+
+	mdss_dsi_panel_apply_settings(ctrl, cmds);
+	return 0;
+}
 
 static void mdss_dsi_panel_switch_mode(struct mdss_panel_data *pdata,
 							int mode)
@@ -4614,6 +4670,7 @@ static int mdss_panel_parse_dt(struct device_node *np,
 			struct mdss_dsi_ctrl_pdata *ctrl_pdata)
 {
 	u32 tmp;
+	u8 lanes = 0;
 	int rc, len = 0;
 	const char *data;
 	static const char *pdest;
@@ -4923,17 +4980,7 @@ int mdss_dsi_panel_init(struct device_node *node,
 	pinfo->persist_mode = false;
 
 #ifdef CONFIG_BOARD_FUJISAN
-	memset(pinfo->bl_calib_values, 0, ARRAY_SIZE(pinfo->bl_calib_values));
-	pinfo->is_bl_calib = 0;
-
-	panel_hue_proc_init();
-	ctrl_pdata->current_hue_level_for_setting = -1;
-	ctrl_pdata->current_hue_level_index_for_setting = -1;
-	ctrl_pdata->current_hue_level_index = 128;
-#endif
-
-#ifdef CONFIG_BOARD_FUJISAN
-	memset(pinfo->bl_calib_values, 0, ARRAY_SIZE(pinfo->bl_calib_values));
+	memset(pinfo->bl_calib_values, 0, sizeof(pinfo->bl_calib_values));
 	pinfo->is_bl_calib = 0;
 
 	panel_hue_proc_init();
