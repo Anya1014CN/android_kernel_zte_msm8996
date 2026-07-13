@@ -16,3 +16,4 @@ obj-$(CONFIG_TOUCHSCREEN_SYNAPTICS_DSX_ACTIVE_PEN_V27) += synaptics_dsx_active_p
 obj-$(CONFIG_TOUCHSCREEN_SYNAPTICS_DSX_GESTURE_V27) += synaptics_dsx_gesture.o
 obj-$(CONFIG_TOUCHSCREEN_SYNAPTICS_DSX_VIDEO_V27) += synaptics_dsx_video.o
 obj-$(CONFIG_TOUCHSCREEN_SYNAPTICS_DSX_DEBUG_V27) += synaptics_dsx_debug.o
+obj-$(CONFIG_BOARD_FUJISAN) += zte_touch_expand.o

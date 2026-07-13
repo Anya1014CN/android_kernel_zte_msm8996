@@ -123,6 +123,10 @@
 #define F12_WAKEUP_GESTURE_MODE 0x02
 #define F12_UDG_DETECT 0x0f
 
+void zte_touch_expand_push(unsigned short x, unsigned short y,
+		unsigned int wx, unsigned int wy, unsigned char slot_id,
+		unsigned char tool_finger, unsigned char panel_id);
+bool zte_touch_separate_inputs_enabled(void);
 int gloved_finger_hall_status_2nd(bool flag);
 static int synaptics_rmi4_check_status(struct synaptics_rmi4_data *rmi4_data,
 		bool *was_in_bl_mode);
@@ -1403,11 +1407,13 @@ static int synaptics_rmi4_f12_abs_report(struct synaptics_rmi4_data *rmi4_data,
 			y = rmi4_data->sensor_max_y - y;
 
 #ifdef TYPE_B_PROTOCOL
-		input_mt_slot(rmi4_data->input_dev, finger);
-		input_mt_report_slot_state(rmi4_data->input_dev,
-				MT_TOOL_FINGER,
-				finger_status == F12_FINGER_STATUS ||
-				finger_status == F12_GLOVED_FINGER_STATUS);
+		if (zte_touch_separate_inputs_enabled()) {
+			input_mt_slot(rmi4_data->input_dev, finger);
+			input_mt_report_slot_state(rmi4_data->input_dev,
+					MT_TOOL_FINGER,
+					finger_status == F12_FINGER_STATUS ||
+					finger_status == F12_GLOVED_FINGER_STATUS);
+		}
 #endif
 
 		switch (finger_status) {
@@ -1417,19 +1423,24 @@ static int synaptics_rmi4_f12_abs_report(struct synaptics_rmi4_data *rmi4_data,
 			if (stylus_presence)
 				break;
 
-			input_report_key(rmi4_data->input_dev, BTN_TOUCH, 1);
-			input_report_key(rmi4_data->input_dev,
-					BTN_TOOL_FINGER, 1);
-			input_report_abs(rmi4_data->input_dev,
-					ABS_MT_POSITION_X, x);
-			input_report_abs(rmi4_data->input_dev,
-					ABS_MT_POSITION_Y, y);
+			if (!zte_touch_separate_inputs_enabled()) {
+				zte_touch_expand_push(x, y, wx, wy,
+						finger, 1, 0);
+			} else {
+				input_report_key(rmi4_data->input_dev, BTN_TOUCH, 1);
+				input_report_key(rmi4_data->input_dev,
+						BTN_TOOL_FINGER, 1);
+				input_report_abs(rmi4_data->input_dev,
+						ABS_MT_POSITION_X, x);
+				input_report_abs(rmi4_data->input_dev,
+						ABS_MT_POSITION_Y, y);
 #ifdef REPORT_2D_W
-			input_report_abs(rmi4_data->input_dev,
-					ABS_MT_TOUCH_MAJOR, max(wx, wy));
-			input_report_abs(rmi4_data->input_dev,
-					ABS_MT_TOUCH_MINOR, min(wx, wy));
+				input_report_abs(rmi4_data->input_dev,
+						ABS_MT_TOUCH_MAJOR, max(wx, wy));
+				input_report_abs(rmi4_data->input_dev,
+						ABS_MT_TOUCH_MINOR, min(wx, wy));
 #endif
+			}
 
 			dev_dbg(rmi4_data->pdev->dev.parent,
 					"%s: Finger %d: status = 0x%02x, x = %d, y = %d, wx = %d, wy = %d\n",
@@ -1480,20 +1491,26 @@ static int synaptics_rmi4_f12_abs_report(struct synaptics_rmi4_data *rmi4_data,
 			touch_count++;
 			break;
 		default:
+			if (!zte_touch_separate_inputs_enabled())
+				zte_touch_expand_push(0, 0, 0, 0,
+						finger, 0, 0);
 			break;
 		}
 	}
 
 	if (touch_count == 0) {
-		input_report_key(rmi4_data->input_dev, BTN_TOUCH, 0);
-		input_report_key(rmi4_data->input_dev,
-				BTN_TOOL_FINGER, 0);
+		if (zte_touch_separate_inputs_enabled()) {
+			input_report_key(rmi4_data->input_dev, BTN_TOUCH, 0);
+			input_report_key(rmi4_data->input_dev,
+					BTN_TOOL_FINGER, 0);
+		}
 		finger_presence = 0;
 #ifdef F12_DATA_15_WORKAROUND
 		objects_already_present = 0;
 #endif
 	}
-	input_sync(rmi4_data->input_dev);
+	if (zte_touch_separate_inputs_enabled())
+		input_sync(rmi4_data->input_dev);
 
 	mutex_unlock(&(rmi4_data->rmi4_report_mutex));
 
@@ -3820,14 +3837,20 @@ static int synaptics_rmi4_free_fingers(struct synaptics_rmi4_data *rmi4_data)
 
 #ifdef TYPE_B_PROTOCOL
 	for (ii = 0; ii < rmi4_data->num_of_fingers; ii++) {
-		input_mt_slot(rmi4_data->input_dev, ii);
-		input_mt_report_slot_state(rmi4_data->input_dev,
-				MT_TOOL_FINGER, 0);
+		if (zte_touch_separate_inputs_enabled()) {
+			input_mt_slot(rmi4_data->input_dev, ii);
+			input_mt_report_slot_state(rmi4_data->input_dev,
+					MT_TOOL_FINGER, 0);
+		} else {
+			zte_touch_expand_push(0, 0, 0, 0, ii, 0, 0);
+		}
 	}
 #endif
-	input_report_key(rmi4_data->input_dev, BTN_TOUCH, 0);
-	input_report_key(rmi4_data->input_dev, BTN_TOOL_FINGER, 0);
-	input_sync(rmi4_data->input_dev);
+	if (zte_touch_separate_inputs_enabled()) {
+		input_report_key(rmi4_data->input_dev, BTN_TOUCH, 0);
+		input_report_key(rmi4_data->input_dev, BTN_TOOL_FINGER, 0);
+		input_sync(rmi4_data->input_dev);
+	}
 
 	mutex_unlock(&(rmi4_data->rmi4_report_mutex));
 

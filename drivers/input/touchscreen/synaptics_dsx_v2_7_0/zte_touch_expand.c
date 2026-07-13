@@ -45,6 +45,17 @@ typedef struct {
 
 
 static TOUCH_EXPAND_T global_touch_expand;
+static bool separate_inputs;
+
+module_param_named(separate_inputs, separate_inputs, bool, 0644);
+MODULE_PARM_DESC(separate_inputs,
+		"Route touches to each panel input instead of the combined input");
+
+bool zte_touch_separate_inputs_enabled(void)
+{
+	return separate_inputs;
+}
+EXPORT_SYMBOL(zte_touch_separate_inputs_enabled);
 
 static DECLARE_WAIT_QUEUE_HEAD(touch_expand_waitq);
 
