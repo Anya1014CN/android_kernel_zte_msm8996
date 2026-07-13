@@ -20,10 +20,18 @@
 #include <linux/types.h>
 #include <linux/debugfs.h>
 
+#define KHZ_TO_HZ 1000
+
 /* panel id type */
 struct panel_id {
 	u16 id;
 	u16 type;
+};
+
+enum fps_resolution {
+	FPS_RESOLUTION_DEFAULT,
+	FPS_RESOLUTION_HZ,
+	FPS_RESOLUTION_KHZ,
 };
 
 #define DEFAULT_FRAME_RATE	60
@@ -792,6 +800,7 @@ struct mdss_panel_timing {
 struct mdss_panel_data {
 	struct mdss_panel_info panel_info;
 	void (*set_backlight) (struct mdss_panel_data *pdata, u32 bl_level);
+	int (*apply_display_setting)(struct mdss_panel_data *pdata, u32 mode);
 	void (*vr_mode_enable) (struct mdss_panel_data *pdata, bool enable);	//zte jiangfeng add for VR mode
 	unsigned char *mmss_cc_base;
 
@@ -835,7 +844,8 @@ struct mdss_panel_debugfs_info {
  * mdss_get_panel_framerate() - get panel frame rate based on panel information
  * @panel_info:	Pointer to panel info containing all panel information
  */
-static inline u32 mdss_panel_get_framerate(struct mdss_panel_info *panel_info)
+static inline u32 mdss_panel_get_framerate(struct mdss_panel_info *panel_info,
+					   u32 flags)
 {
 	u32 frame_rate, pixel_total;
 	u64 rate;
@@ -844,8 +854,10 @@ static inline u32 mdss_panel_get_framerate(struct mdss_panel_info *panel_info)
 					panel_info);
 	bool idle = false;
 
-	if (panel_info == NULL)
-		return DEFAULT_FRAME_RATE;
+	if (panel_info == NULL) {
+		frame_rate = DEFAULT_FRAME_RATE;
+		goto end;
+	}
 
 	switch (panel_info->type) {
 	case MIPI_VIDEO_PANEL:
@@ -866,9 +878,7 @@ static inline u32 mdss_panel_get_framerate(struct mdss_panel_info *panel_info)
 		break;
 	case DTV_PANEL:
 		if (panel_info->dynamic_fps) {
-			frame_rate = panel_info->lcdc.frame_rate / 1000;
-			if (panel_info->lcdc.frame_rate % 1000)
-				frame_rate += 1;
+			frame_rate = panel_info->lcdc.frame_rate;
 			break;
 		}
 	default:
@@ -881,7 +891,7 @@ static inline u32 mdss_panel_get_framerate(struct mdss_panel_info *panel_info)
 			  panel_info->lcdc.v_pulse_width +
 			  panel_info->yres);
 		if (pixel_total) {
-			rate = panel_info->clk_rate;
+			rate = panel_info->clk_rate * KHZ_TO_HZ;
 			do_div(rate, pixel_total);
 			frame_rate = (u32)rate;
 		} else {
@@ -889,6 +899,15 @@ static inline u32 mdss_panel_get_framerate(struct mdss_panel_info *panel_info)
 		}
 		break;
 	}
+end:
+	if (flags == FPS_RESOLUTION_KHZ) {
+		if (!(frame_rate / KHZ_TO_HZ))
+			frame_rate *= KHZ_TO_HZ;
+	} else if (flags == FPS_RESOLUTION_HZ) {
+		if (frame_rate / KHZ_TO_HZ)
+			frame_rate /= KHZ_TO_HZ;
+	}
+
 	return frame_rate;
 }
 
