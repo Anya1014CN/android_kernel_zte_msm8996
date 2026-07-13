@@ -630,6 +630,7 @@ int mdss_dsi_wait_for_lane_idle(struct mdss_dsi_ctrl_pdata *ctrl);
 
 irqreturn_t mdss_dsi_isr(int irq, void *ptr);
 irqreturn_t hw_vsync_handler(int irq, void *data);
+void disable_esd_thread(void);
 /*zte,esd interrupt mode 0205  start */
 irqreturn_t esd_gpio_interrupt_handler(int irq, void *data);
 /*zte,esd interrupt mode 0205  end */

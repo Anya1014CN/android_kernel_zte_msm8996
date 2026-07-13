@@ -4599,6 +4599,8 @@ static int mdss_fb_atomic_commit_ioctl(struct fb_info *info,
 	struct mdp_input_layer __user *input_layer_list;
 	struct mdp_output_layer *output_layer = NULL;
 	struct mdp_output_layer __user *output_layer_user;
+	struct msm_fb_data_type *mfd;
+	struct mdss_overlay_private *mdp5_data = NULL;
 
 	ret = copy_from_user(&commit, argp, sizeof(struct mdp_layer_commit));
 	if (ret) {
@@ -4855,8 +4857,21 @@ static int __ioctl_wait_idle(struct msm_fb_data_type *mfd, u32 cmd)
 	return ret;
 }
 
+static bool check_not_supported_ioctl(u32 cmd)
+{
+#ifdef TARGET_HW_MDSS_MDP3
+	return false;
+#else
+	return (cmd == MSMFB_OVERLAY_SET || cmd == MSMFB_OVERLAY_UNSET ||
+		cmd == MSMFB_OVERLAY_GET || cmd == MSMFB_OVERLAY_PREPARE ||
+		cmd == MSMFB_DISPLAY_COMMIT || cmd == MSMFB_OVERLAY_PLAY ||
+		cmd == MSMFB_BUFFER_SYNC || cmd == MSMFB_OVERLAY_QUEUE ||
+		cmd == MSMFB_NOTIFY_UPDATE);
+#endif
+}
+
 //zte jiangfeng add for VR mode
-#ifdef CONFIG_BOARD_AILSA_II
+#if defined(CONFIG_BOARD_AILSA_II) || defined(CONFIG_BOARD_FUJISAN)
 int mdss_fb_vr_mode_switch(struct msm_fb_data_type *mfd, u32 vr_mode)
 {
 	struct mdss_panel_data *pdata;
