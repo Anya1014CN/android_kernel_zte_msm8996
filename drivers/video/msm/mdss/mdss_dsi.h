@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -435,6 +435,20 @@ struct mdss_dsi_ctrl_pdata {
 	int panel_mode;
 	int irq_cnt;
 	int disp_te_gpio;
+#ifdef CONFIG_BOARD_FUJISAN
+	int disp_te2_gpio;
+	int rst2_gpio;
+	int lcd_5v_vsp_en_gpio;
+	int lcd_5v_vsn_en_gpio;
+	struct regulator *lcd_2p8_reg;
+	struct regulator *lcd2_2p8_reg;
+	struct regulator *lcd2_5v_vsp_reg;
+	struct regulator *lcd2_5v_vsn_reg;
+	int current_hue_level;
+	int current_hue_level_for_setting;
+	int current_hue_level_index;
+	int current_hue_level_index_for_setting;
+#endif
 	int rst_gpio;
 	int disp_en_gpio;
 	int bklt_en_gpio;
@@ -444,7 +458,6 @@ struct mdss_dsi_ctrl_pdata {
 	/*zte,esd interrupt mode 0205  end */
 	int lcd_3v_vsp_en_gpio;
 	int mode_gpio;
-	int intf_mux_gpio;
 	int bklt_ctrl;	/* backlight ctrl */
 	/*zte,for acl and hbm  20161224 start */
 	int current_acl_level;
@@ -617,7 +630,6 @@ int mdss_dsi_wait_for_lane_idle(struct mdss_dsi_ctrl_pdata *ctrl);
 
 irqreturn_t mdss_dsi_isr(int irq, void *ptr);
 irqreturn_t hw_vsync_handler(int irq, void *data);
-void disable_esd_thread(void);
 /*zte,esd interrupt mode 0205  start */
 irqreturn_t esd_gpio_interrupt_handler(int irq, void *data);
 /*zte,esd interrupt mode 0205  end */

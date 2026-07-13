@@ -20,24 +20,20 @@
 #include <linux/types.h>
 #include <linux/debugfs.h>
 
-#define KHZ_TO_HZ 1000
-
 /* panel id type */
 struct panel_id {
 	u16 id;
 	u16 type;
 };
 
-enum fps_resolution {
-	FPS_RESOLUTION_DEFAULT,
-	FPS_RESOLUTION_HZ,
-	FPS_RESOLUTION_KHZ,
-};
-
 #define DEFAULT_FRAME_RATE	60
 #define DEFAULT_ROTATOR_FRAME_RATE 120
 #define ROTATOR_LOW_FRAME_RATE 30
 #define MDSS_DSI_RST_SEQ_LEN	10
+#ifdef CONFIG_BOARD_FUJISAN
+#define MDSS_DSI_BL_CALIB_LEN	256
+#define MDSS_DSI_HUE_NUM	256
+#endif
 /* worst case prefill lines for all chipsets including all vertical blank */
 #define MDSS_MDP_MAX_PREFILL_FETCH 25
 
@@ -647,6 +643,10 @@ struct mdss_panel_info {
 	bool panel_ack_disabled;
 	bool esd_check_enabled;
 	bool allow_phy_power_off;
+	#ifdef CONFIG_BOARD_FUJISAN
+	u32 bl_calib_values[MDSS_DSI_BL_CALIB_LEN];
+	bool is_bl_calib;
+	#endif
 	char dfps_update;
 	/* new requested fps before it is updated in hw */
 	int new_fps;
@@ -792,7 +792,7 @@ struct mdss_panel_timing {
 struct mdss_panel_data {
 	struct mdss_panel_info panel_info;
 	void (*set_backlight) (struct mdss_panel_data *pdata, u32 bl_level);
-	int (*apply_display_setting)(struct mdss_panel_data *pdata, u32 mode);
+	void (*vr_mode_enable) (struct mdss_panel_data *pdata, bool enable);	//zte jiangfeng add for VR mode
 	unsigned char *mmss_cc_base;
 
 	/**
@@ -835,8 +835,7 @@ struct mdss_panel_debugfs_info {
  * mdss_get_panel_framerate() - get panel frame rate based on panel information
  * @panel_info:	Pointer to panel info containing all panel information
  */
-static inline u32 mdss_panel_get_framerate(struct mdss_panel_info *panel_info,
-					   u32 flags)
+static inline u32 mdss_panel_get_framerate(struct mdss_panel_info *panel_info)
 {
 	u32 frame_rate, pixel_total;
 	u64 rate;
@@ -845,10 +844,8 @@ static inline u32 mdss_panel_get_framerate(struct mdss_panel_info *panel_info,
 					panel_info);
 	bool idle = false;
 
-	if (panel_info == NULL) {
-		frame_rate = DEFAULT_FRAME_RATE;
-		goto end;
-	}
+	if (panel_info == NULL)
+		return DEFAULT_FRAME_RATE;
 
 	switch (panel_info->type) {
 	case MIPI_VIDEO_PANEL:
@@ -869,7 +866,9 @@ static inline u32 mdss_panel_get_framerate(struct mdss_panel_info *panel_info,
 		break;
 	case DTV_PANEL:
 		if (panel_info->dynamic_fps) {
-			frame_rate = panel_info->lcdc.frame_rate;
+			frame_rate = panel_info->lcdc.frame_rate / 1000;
+			if (panel_info->lcdc.frame_rate % 1000)
+				frame_rate += 1;
 			break;
 		}
 	default:
@@ -882,7 +881,7 @@ static inline u32 mdss_panel_get_framerate(struct mdss_panel_info *panel_info,
 			  panel_info->lcdc.v_pulse_width +
 			  panel_info->yres);
 		if (pixel_total) {
-			rate = panel_info->clk_rate * KHZ_TO_HZ;
+			rate = panel_info->clk_rate;
 			do_div(rate, pixel_total);
 			frame_rate = (u32)rate;
 		} else {
@@ -890,15 +889,6 @@ static inline u32 mdss_panel_get_framerate(struct mdss_panel_info *panel_info,
 		}
 		break;
 	}
-end:
-	if (flags == FPS_RESOLUTION_KHZ) {
-		if (!(frame_rate / KHZ_TO_HZ))
-			frame_rate *= KHZ_TO_HZ;
-	} else if (flags == FPS_RESOLUTION_HZ) {
-		if (frame_rate / KHZ_TO_HZ)
-			frame_rate /= KHZ_TO_HZ;
-	}
-
 	return frame_rate;
 }
 

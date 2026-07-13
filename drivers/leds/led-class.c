@@ -54,6 +54,10 @@ static ssize_t brightness_store(struct device *dev,
 		goto unlock;
 
 	led_cdev->usr_brightness_req = state;
+#ifdef CONFIG_BOARD_FUJISAN
+	pr_info("%s: mdss set led_cdev->name=%s usr_brightness_req=%d\n",
+				__func__, led_cdev->name, led_cdev->usr_brightness_req);
+#endif
 	__led_set_brightness(led_cdev, state);
 
 	ret = size;
@@ -83,6 +87,10 @@ static ssize_t max_brightness_store(struct device *dev,
 		return ret;
 
 	led_cdev->max_brightness = state;
+#ifdef CONFIG_BOARD_FUJISAN
+	pr_info("%s: mdss set max_brightness=%d\n",
+				__func__, led_cdev->max_brightness);
+#endif
 	led_set_brightness(led_cdev, led_cdev->usr_brightness_req);
 
 	return size;

@@ -14,6 +14,8 @@ if INPUT_TOUCHSCREEN
 source "drivers/input/touchscreen/synaptics_dsx/Kconfig"
 source "drivers/input/touchscreen/synaptics_dsx_2.6/Kconfig"
 source "drivers/input/touchscreen/synaptics_dsx_zte/Kconfig"
+source "drivers/input/touchscreen/synaptics_dsx_v2_7_0/Kconfig"
+source "drivers/input/touchscreen/synaptics_dsx_v2_7_0_2nd/Kconfig"
 
 config OF_TOUCHSCREEN
 	def_tristate INPUT
@@ -1156,5 +1158,11 @@ config FORCE_TOUCH_NDT
        default y
        help
          This driver provides support for Force Touch by NDT.
+
+config ZTE_TS_PINCTRL
+	bool "ZTE touchscreen pinctrl"
+	depends on I2C && INPUT
+	help
+	  This driver provides shared pinctrl support for ZTE touchscreens.
 
 endif

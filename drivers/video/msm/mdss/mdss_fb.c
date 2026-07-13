@@ -54,10 +54,10 @@
 #include "mdss_debug.h"
 #include "mdss_smmu.h"
 #include "mdss_mdp.h"
-#include "mdp3_ctrl.h"
-
 u32 zte_frame_count;/*pan*/
-
+#ifdef CONFIG_BOARD_FUJISAN
+u32 zte_bl_brightness_2;
+#endif
 #ifdef CONFIG_FB_MSM_TRIPLE_BUFFER
 #define MDSS_FB_NUM 3
 #else
@@ -77,12 +77,6 @@ u32 zte_frame_count;/*pan*/
 #define BLANK_FLAG_LP	FB_BLANK_VSYNC_SUSPEND
 #define BLANK_FLAG_ULP	FB_BLANK_NORMAL
 #endif
-
-/*
- * Time period for fps calulation in micro seconds.
- * Default value is set to 1 sec.
- */
-#define MDP_TIME_PERIOD_CALC_FPS_US	1000000
 
 static struct fb_info *fbi_list[MAX_FBI_LIST];
 static int fbi_list_index;
@@ -278,6 +272,19 @@ static int mdss_fb_notify_update(struct msm_fb_data_type *mfd,
 static int lcd_backlight_registered;
 
 #define MAX_BRIGHTNESS_EXIT_VRMODE 200
+
+#ifdef CONFIG_BOARD_FUJISAN
+static int lcd_backlight_2_registered;
+static void mdss_fb_set_bl_brightness_2(struct led_classdev *led_cdev,
+				      enum led_brightness value)
+{
+	if (value == 1) {
+		zte_bl_brightness_2 = 1;
+	} else {
+		zte_bl_brightness_2 = 0;
+	}
+}
+#endif
 static void mdss_fb_set_bl_brightness(struct led_classdev *led_cdev,
 				      enum led_brightness value)
 {
@@ -292,6 +299,9 @@ static void mdss_fb_set_bl_brightness(struct led_classdev *led_cdev,
 	if (value > mfd->panel_info->brightness_max)
 		value = mfd->panel_info->brightness_max;
 
+	if(mfd->vr_mode_exiting && value > MAX_BRIGHTNESS_EXIT_VRMODE)
+		value = MAX_BRIGHTNESS_EXIT_VRMODE;
+
 	/* This maps android backlight level 0 to 255 into
 	   driver backlight level 0 to bl_max with rounding */
 	MDSS_BRIGHT_TO_BL(bl_lvl, value, mfd->panel_info->bl_max,
@@ -299,6 +309,9 @@ static void mdss_fb_set_bl_brightness(struct led_classdev *led_cdev,
 
 	if (!bl_lvl && value)
 		bl_lvl = 1;
+
+	if(mfd->vr_mode)
+		return;
 
 	if (!IS_CALIB_MODE_BL(mfd) && (!mfd->ext_bl_ctrl || !value ||
 							!mfd->bl_level)) {
@@ -314,6 +327,16 @@ static struct led_classdev backlight_led = {
 	.brightness_set = mdss_fb_set_bl_brightness,
 	.max_brightness = MDSS_MAX_BL_BRIGHTNESS,
 };
+
+#ifdef CONFIG_BOARD_FUJISAN
+static struct led_classdev backlight_led_2 = {
+	.name           = "lcd-backlight-2",
+	.brightness     = MDSS_MAX_BL_BRIGHTNESS / 2,
+	/*.brightness_set = mdss_fb_set_bl_brightness,*/
+	.brightness_set = mdss_fb_set_bl_brightness_2,
+	.max_brightness = MDSS_MAX_BL_BRIGHTNESS,
+};
+#endif
 
 static ssize_t mdss_fb_get_type(struct device *dev,
 				struct device_attribute *attr, char *buf)
@@ -511,22 +534,6 @@ static void __mdss_fb_idle_notify_work(struct work_struct *work)
 	if (mfd->idle_time)
 		sysfs_notify(&mfd->fbi->dev->kobj, NULL, "idle_notify");
 	mfd->idle_state = MDSS_FB_IDLE;
-}
-
-
-static ssize_t mdss_fb_get_fps_info(struct device *dev,
-		struct device_attribute *attr, char *buf)
-{
-	struct fb_info *fbi = dev_get_drvdata(dev);
-	struct msm_fb_data_type *mfd = fbi->par;
-	unsigned int fps_int , fps_float;
-
-	if (mfd->panel_power_state != MDSS_PANEL_POWER_ON)
-		mfd->fps_info.measured_fps = 0;
-	fps_int = (unsigned int) mfd->fps_info.measured_fps;
-	fps_float = do_div(fps_int, 10);
-	return scnprintf(buf, PAGE_SIZE, "%d.%d\n", fps_int, fps_float);
-
 }
 
 static ssize_t mdss_fb_get_idle_time(struct device *dev,
@@ -819,73 +826,90 @@ static ssize_t mdss_fb_get_dfps_mode(struct device *dev,
 	return ret;
 }
 
-static ssize_t mdss_fb_change_persist_mode(struct device *dev,
-		struct device_attribute *attr, const char *buf, size_t len)
+#ifdef CONFIG_BOARD_FUJISAN
+static ssize_t mdss_fb_change_bl_calib(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t len)
 {
 	struct fb_info *fbi = dev_get_drvdata(dev);
 	struct msm_fb_data_type *mfd = (struct msm_fb_data_type *)fbi->par;
-	struct mdss_panel_info *pinfo = NULL;
 	struct mdss_panel_data *pdata;
-	int ret = 0;
-	u32 persist_mode;
+	struct mdss_panel_info *pinfo;
 
-	if (!mfd || !mfd->panel_info) {
-		pr_err("%s: Panel info is NULL!\n", __func__);
-	return len;
-	}
-
-	pinfo = mfd->panel_info;
-
-	if (kstrtouint(buf, 0, &persist_mode)) {
-		pr_err("kstrtouint buf error!\n");
-		return len;
-	}
-
-	mutex_lock(&mfd->mdss_sysfs_lock);
-	if (mdss_panel_is_power_off(mfd->panel_power_state)) {
-		pinfo->persist_mode = persist_mode;
-		goto end;
-	}
-
-	mutex_lock(&mfd->bl_lock);
+	char *p = NULL;
+	int i = 0, count = 0, value = 0;
 
 	pdata = dev_get_platdata(&mfd->pdev->dev);
-	if ((pdata) && (pdata->apply_display_setting))
-		ret = pdata->apply_display_setting(pdata, persist_mode);
+	if (!pdata) {
+		pr_err("%s: no panel connected!\n", __func__);
+		return len;
+	}
+	pinfo = &pdata->panel_info;
 
-	mutex_unlock(&mfd->bl_lock);
+	count = ARRAY_SIZE(pinfo->bl_calib_values);
 
-	if (!ret) {
-		pr_debug("%s: Persist mode %d\n", __func__, persist_mode);
-		pinfo->persist_mode = persist_mode;
+	p = strsep((char **)(&buf), ",");
+	i = 1;
+	while (p != NULL && i < count) {
+		if (kstrtoint((const char *)p, 10, &value)) {
+			pr_err("%s: input value error, can't kstrtoint!\n", __func__);
+			pinfo->bl_calib_values[i] = 0;
+		} else {
+			pinfo->bl_calib_values[i] = (u32)value;
+			pr_debug("%s: i=%d, count=%d pinfo->bl_calib_values[%d]=%d\n",
+				__func__, i, count, i, pinfo->bl_calib_values[i]);
+		}
+
+		i++;
+		p = strsep((char **)(&buf), ",");
 	}
 
-end:
-	mutex_unlock(&mfd->mdss_sysfs_lock);
+	pinfo->is_bl_calib = 1;
+
 	return len;
 }
 
-static ssize_t mdss_fb_get_persist_mode(struct device *dev,
+static ssize_t mdss_fb_get_bl_calib(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
 	struct fb_info *fbi = dev_get_drvdata(dev);
 	struct msm_fb_data_type *mfd = (struct msm_fb_data_type *)fbi->par;
 	struct mdss_panel_data *pdata;
 	struct mdss_panel_info *pinfo;
-	int ret;
+	int ret = 0;
+	u32 i = 0, l = 0;
+	char values[MDSS_DSI_BL_CALIB_LEN * 5] = {0};
+	int count = 0;
 
 	pdata = dev_get_platdata(&mfd->pdev->dev);
 	if (!pdata) {
-		pr_err("no panel connected!\n");
+		pr_err("%s: no panel connected!\n", __func__);
 		return -EINVAL;
 	}
 	pinfo = &pdata->panel_info;
 
-	ret = scnprintf(buf, PAGE_SIZE, "%d\n", pinfo->persist_mode);
+	if (!pinfo->is_bl_calib) {
+		pr_info("%s: bl calib data not setted!\n", __func__);
+		ret = snprintf(buf, PAGE_SIZE, "\n");
+	} else {
+		count = ARRAY_SIZE(pinfo->bl_calib_values);
+
+		for (i = 1; i < count; i++) {
+			l = strlen(values);
+			if (i == (count - 1))
+				snprintf(values + l, sizeof(pinfo->bl_calib_values[i]),
+					"%d", pinfo->bl_calib_values[i]);
+			else
+				snprintf(values + l, sizeof(pinfo->bl_calib_values[i]) + 1,
+					"%d,", pinfo->bl_calib_values[i]);
+		}
+
+		pr_info("%s: count=%d values=%s\n", __func__, count, values);
+		ret = snprintf(buf, PAGE_SIZE, "%s\n", values);
+	}
 
 	return ret;
 }
-
+#endif
 static DEVICE_ATTR(msm_fb_type, S_IRUGO, mdss_fb_get_type, NULL);
 static DEVICE_ATTR(msm_fb_split, S_IRUGO | S_IWUSR, mdss_fb_show_split,
 					mdss_fb_store_split);
@@ -902,10 +926,10 @@ static DEVICE_ATTR(msm_fb_panel_status, S_IRUGO | S_IWUSR,
 	mdss_fb_get_panel_status, mdss_fb_force_panel_dead);
 static DEVICE_ATTR(msm_fb_dfps_mode, S_IRUGO | S_IWUSR,
 	mdss_fb_get_dfps_mode, mdss_fb_change_dfps_mode);
-static DEVICE_ATTR(measured_fps, S_IRUGO | S_IWUSR | S_IWGRP,
-	mdss_fb_get_fps_info, NULL);
-static DEVICE_ATTR(msm_fb_persist_mode, S_IRUGO | S_IWUSR,
-	mdss_fb_get_persist_mode, mdss_fb_change_persist_mode);
+#ifdef CONFIG_BOARD_FUJISAN
+static DEVICE_ATTR(msm_fb_bl_calib, S_IRUGO | S_IWUSR,
+	mdss_fb_get_bl_calib, mdss_fb_change_bl_calib);
+#endif
 static struct attribute *mdss_fb_attrs[] = {
 	&dev_attr_msm_fb_type.attr,
 	&dev_attr_msm_fb_split.attr,
@@ -917,8 +941,9 @@ static struct attribute *mdss_fb_attrs[] = {
 	&dev_attr_msm_fb_thermal_level.attr,
 	&dev_attr_msm_fb_panel_status.attr,
 	&dev_attr_msm_fb_dfps_mode.attr,
-	&dev_attr_measured_fps.attr,
-	&dev_attr_msm_fb_persist_mode.attr,
+#ifdef CONFIG_BOARD_FUJISAN
+	&dev_attr_msm_fb_bl_calib.attr,
+#endif
 	NULL,
 };
 
@@ -1224,7 +1249,12 @@ static int mdss_fb_probe(struct platform_device *pdev)
 		return -ENOMEM;
 	}
 	zte_frame_count = 0;/*pan*/
+#ifdef CONFIG_BOARD_FUJISAN
+	zte_bl_brightness_2 = 0;
+#endif
 	mfd = (struct msm_fb_data_type *)fbi->par;
+	mfd->vr_mode = 0;		//zte jiangfeng add for vr mode
+	mfd->vr_mode_exiting = 0;		//zte jiangfeng add for vr mode
 	mfd->key = MFD_KEY;
 	mfd->fbi = fbi;
 	mfd->panel_info = &pdata->panel_info;
@@ -1290,7 +1320,6 @@ static int mdss_fb_probe(struct platform_device *pdev)
 			return rc;
 		}
 	}
-	mdss_fb_init_fps_info(mfd);
 
 	rc = pm_runtime_set_active(mfd->fbi->dev);
 	if (rc < 0)
@@ -1298,7 +1327,11 @@ static int mdss_fb_probe(struct platform_device *pdev)
 	pm_runtime_enable(mfd->fbi->dev);
 
 	/* android supports only one lcd-backlight/lcd for now */
+#ifdef CONFIG_BOARD_FUJISAN
+	if (!lcd_backlight_registered && mfd->index == 0) {
+#else
 	if (!lcd_backlight_registered) {
+#endif
 		backlight_led.brightness = mfd->panel_info->brightness_max;
 		backlight_led.max_brightness = mfd->panel_info->brightness_max;
 		if (led_classdev_register(&pdev->dev, &backlight_led))
@@ -1306,6 +1339,18 @@ static int mdss_fb_probe(struct platform_device *pdev)
 		else
 			lcd_backlight_registered = 1;
 	}
+
+#ifdef CONFIG_BOARD_FUJISAN
+	if (!lcd_backlight_2_registered && mfd->index == 1) {
+		backlight_led_2.brightness = mfd->panel_info->brightness_max;
+		backlight_led_2.max_brightness = mfd->panel_info->brightness_max;
+		pr_err("%s: led_classdev_register mfd->index=%d\n", __func__, mfd->index);
+		if (led_classdev_register(&pdev->dev, &backlight_led_2))
+			pr_err("led_classdev_main_register failed\n");
+		else
+			lcd_backlight_2_registered = 1;
+	}
+#endif
 
 	mdss_fb_init_panel_modes(mfd, pdata);
 
@@ -1397,10 +1442,21 @@ static int mdss_fb_remove(struct platform_device *pdev)
 	/* remove /dev/fb* */
 	unregister_framebuffer(mfd->fbi);
 
+#ifdef CONFIG_BOARD_FUJISAN
+	if (lcd_backlight_registered && mfd->index == 0) {
+#else
 	if (lcd_backlight_registered) {
+#endif
 		lcd_backlight_registered = 0;
 		led_classdev_unregister(&backlight_led);
 	}
+
+#ifdef CONFIG_BOARD_FUJISAN
+	if (lcd_backlight_2_registered && mfd->index == 1) {
+		lcd_backlight_2_registered = 0;
+		led_classdev_unregister(&backlight_led_2);
+	}
+#endif
 
 	return 0;
 }
@@ -1702,8 +1758,19 @@ void mdss_fb_update_backlight(struct msm_fb_data_type *mfd)
 	u32 temp;
 	bool bl_notify = false;
 
+#ifdef CONFIG_BOARD_FUJISAN
+	if (mfd->unset_bl_level == U32_MAX) {
+		if (!mfd->allow_bl_update) {
+			mutex_lock(&mfd->bl_lock);
+			mfd->allow_bl_update = true;
+			mutex_unlock(&mfd->bl_lock);
+		}
+		return;
+	}
+#else
 	if (mfd->unset_bl_level == U32_MAX)
 		return;
+#endif
 	mutex_lock(&mfd->bl_lock);
 	if (!mfd->allow_bl_update) {
 		pdata = dev_get_platdata(&mfd->pdev->dev);
@@ -1847,6 +1914,7 @@ static int mdss_fb_blank_unblank(struct msm_fb_data_type *mfd)
 {
 	int ret = 0;
 	int cur_power_state;
+	struct mdss_panel_data *pdata;	//zte jiangfeng add for VR mode
 
 	if (!mfd)
 		return -EINVAL;
@@ -1914,8 +1982,17 @@ static int mdss_fb_blank_unblank(struct msm_fb_data_type *mfd)
 			if (IS_CALIB_MODE_BL(mfd))
 				mdss_fb_set_backlight(mfd, mfd->calib_mode_bl);
 			else if ((!mfd->panel_info->mipi.post_init_delay) &&
-				(mfd->unset_bl_level != U32_MAX))
+				(mfd->unset_bl_level != U32_MAX)) {
+				#ifdef CONFIG_BOARD_FUJISAN
+				if (mfd->index == 1)
+					mfd->unset_bl_level = 0;
+				pr_info("%s: mfd->index:%d mfd->unset_bl_level:%d\n",
+							__func__, mfd->index, mfd->unset_bl_level);
 				mdss_fb_set_backlight(mfd, mfd->unset_bl_level);
+				#else
+				mdss_fb_set_backlight(mfd, mfd->unset_bl_level);
+				#endif
+			}
 
 			/*
 			 * it blocks the backlight update between unblank and
@@ -1926,6 +2003,18 @@ static int mdss_fb_blank_unblank(struct msm_fb_data_type *mfd)
 		}
 		mutex_unlock(&mfd->bl_lock);
 	}
+
+	//zte jiangfeng add for VR mode
+	mfd->vr_mode_exiting = 0;
+
+	if(mfd->vr_mode)
+	{
+		pdata = dev_get_platdata(&mfd->pdev->dev);
+		if ((pdata) && (pdata->vr_mode_enable)) {
+			pdata->vr_mode_enable(pdata, mfd->vr_mode);
+		}
+	}
+	//zte jiangfeng add for VR mode, end
 
 error:
 	return ret;
@@ -2658,6 +2747,7 @@ static int mdss_fb_register(struct msm_fb_data_type *mfd)
 	atomic_set(&mfd->commits_pending, 0);
 	atomic_set(&mfd->ioctl_ref_cnt, 0);
 	atomic_set(&mfd->kickoff_pending, 0);
+	atomic_set(&mfd->vr_pending, 0);
 
 	init_timer(&mfd->no_update.timer);
 	mfd->no_update.timer.function = mdss_fb_no_update_notify_timer_cb;
@@ -2673,6 +2763,7 @@ static int mdss_fb_register(struct msm_fb_data_type *mfd)
 	init_waitqueue_head(&mfd->idle_wait_q);
 	init_waitqueue_head(&mfd->ioctl_q);
 	init_waitqueue_head(&mfd->kickoff_wait_q);
+	init_waitqueue_head(&mfd->vr_wait_q);
 
 	ret = fb_alloc_cmap(&fbi->cmap, 256, 0);
 	if (ret)
@@ -2724,7 +2815,11 @@ static int mdss_fb_open(struct fb_info *info, int user)
 		goto pm_error;
 	}
 
+#ifdef CONFIG_BOARD_FUJISAN
+	if (!mfd->ref_cnt && mfd->index != 1) {
+#else
 	if (!mfd->ref_cnt) {
+#endif
 		result = mdss_fb_blank_sub(FB_BLANK_UNBLANK, info,
 					   mfd->op_enable);
 		if (result) {
@@ -2923,7 +3018,7 @@ static int __mdss_fb_wait_for_fence_sub(struct msm_sync_pt_data *sync_pt_data,
 						wait_ms);
 
 			pr_warn("%s: sync_fence_wait timed out! ",
-					fences[i]->name);
+					sync_pt_data->fence_name);
 			pr_cont("Waiting %ld.%ld more seconds\n",
 				(wait_ms/MSEC_PER_SEC), (wait_ms%MSEC_PER_SEC));
 			MDSS_XLOG(sync_pt_data->timeline_value);
@@ -3077,7 +3172,6 @@ static int __mdss_fb_sync_buf_done_callback(struct notifier_block *p,
 	case MDP_NOTIFY_FRAME_DONE:
 		pr_debug("%s: frame done\n", sync_pt_data->fence_name);
 		mdss_fb_signal_timeline(sync_pt_data);
-		mdss_fb_calc_fps(mfd);
 		break;
 	case MDP_NOTIFY_FRAME_CFG_DONE:
 		if (sync_pt_data->async_wait_fences)
@@ -3550,8 +3644,7 @@ void mdss_panelinfo_to_fb_var(struct mdss_panel_info *pinfo,
 	var->left_margin = pinfo->lcdc.h_back_porch;
 	var->hsync_len = pinfo->lcdc.h_pulse_width;
 
-	frame_rate = mdss_panel_get_framerate(pinfo,
-					FPS_RESOLUTION_HZ);
+	frame_rate = mdss_panel_get_framerate(pinfo);
 	if (frame_rate) {
 		unsigned long clk_rate, h_total, v_total;
 
@@ -3616,6 +3709,7 @@ static int __mdss_fb_perform_commit(struct msm_fb_data_type *mfd)
 		else
 			mfd->pending_switch = false;
 	}
+	++zte_frame_count ;/*pan*/
 	if (fb_backup->disp_commit.flags & MDP_DISPLAY_COMMIT_OVERLAY) {
 		if (mfd->mdp.kickoff_fnc)
 			ret = mfd->mdp.kickoff_fnc(mfd,
@@ -3666,6 +3760,24 @@ skip_commit:
 	return ret;
 }
 
+struct msm_fb_data_type *g_mfd=NULL;
+void zte_wake_up_display(int enable)
+{
+    if(g_mfd==NULL)
+    {
+        pr_err("zte_wake_up_display is failed,enable=%d\n",enable);
+		return;
+    }
+
+	  if(enable)
+         atomic_dec(&g_mfd->vr_pending);
+	  else
+	     atomic_inc(&g_mfd->vr_pending);
+
+	  wake_up_all(&g_mfd->vr_wait_q);
+}
+
+
 static int __mdss_fb_display_thread(void *data)
 {
 	struct msm_fb_data_type *mfd = data;
@@ -3673,6 +3785,7 @@ static int __mdss_fb_display_thread(void *data)
 	struct sched_param param;
 
 
+	g_mfd=mfd;
 
 
 	/*
@@ -3693,6 +3806,15 @@ static int __mdss_fb_display_thread(void *data)
 
 		if (kthread_should_stop())
 			break;
+
+
+        wait_event(mfd->vr_wait_q,
+				(!atomic_read(&mfd->vr_pending) ||
+					 kthread_should_stop()));
+
+		if (kthread_should_stop())
+			break;
+
 
 		MDSS_XLOG(mfd->index, XLOG_FUNC_ENTRY);
 		ret = __mdss_fb_perform_commit(mfd);
@@ -4322,6 +4444,7 @@ static int mdss_fb_handle_buf_sync_ioctl(struct msm_sync_pt_data *sync_pt_data,
 		goto buf_sync_err_3;
 	}
 
+	sync_fence_install(rel_fence, rel_fen_fd);
 	sync_fence_install(retire_fence, retire_fen_fd);
 
 skip_retire_fence:
@@ -4476,10 +4599,6 @@ static int mdss_fb_atomic_commit_ioctl(struct fb_info *info,
 	struct mdp_input_layer __user *input_layer_list;
 	struct mdp_output_layer *output_layer = NULL;
 	struct mdp_output_layer __user *output_layer_user;
-	struct mdp_frc_info *frc_info = NULL;
-	struct mdp_frc_info __user *frc_info_user;
-	struct msm_fb_data_type *mfd;
-	struct mdss_overlay_private *mdp5_data = NULL;
 
 	ret = copy_from_user(&commit, argp, sizeof(struct mdp_layer_commit));
 	if (ret) {
@@ -4578,26 +4697,6 @@ static int mdss_fb_atomic_commit_ioctl(struct fb_info *info,
 		}
 	}
 
-	/* Copy Deterministic Frame Rate Control info from userspace */
-	frc_info_user = commit.commit_v1.frc_info;
-	if (frc_info_user) {
-		frc_info = kzalloc(sizeof(struct mdp_frc_info), GFP_KERNEL);
-		if (!frc_info) {
-			pr_err("unable to allocate memory for frc\n");
-			ret = -ENOMEM;
-			goto err;
-		}
-
-		ret = copy_from_user(frc_info, frc_info_user,
-			sizeof(struct mdp_frc_info));
-		if (ret) {
-			pr_err("frc info copy from user failed\n");
-			goto frc_err;
-		}
-
-		commit.commit_v1.frc_info = frc_info;
-	}
-
 	ATRACE_BEGIN("ATOMIC_COMMIT");
 	ret = mdss_fb_atomic_commit(info, &commit, file);
 	if (ret)
@@ -4614,15 +4713,12 @@ static int mdss_fb_atomic_commit_ioctl(struct fb_info *info,
 
 		commit.commit_v1.input_layers = input_layer_list;
 		commit.commit_v1.output_layer = output_layer_user;
-		commit.commit_v1.frc_info = frc_info_user;
 		rc = copy_to_user(argp, &commit,
 			sizeof(struct mdp_layer_commit));
 		if (rc)
 			pr_err("copy to user for release & retire fence failed\n");
 	}
 
-frc_err:
-	kfree(frc_info);
 err:
 	for (i--; i >= 0; i--) {
 		kfree(layer_list[i].scale);
@@ -4759,21 +4855,30 @@ static int __ioctl_wait_idle(struct msm_fb_data_type *mfd, u32 cmd)
 	return ret;
 }
 
-#ifdef TARGET_HW_MDSS_MDP3
-static bool check_not_supported_ioctl(u32 cmd)
+//zte jiangfeng add for VR mode
+#ifdef CONFIG_BOARD_AILSA_II
+int mdss_fb_vr_mode_switch(struct msm_fb_data_type *mfd, u32 vr_mode)
 {
-	return false;
+	struct mdss_panel_data *pdata;
+
+	mfd->vr_mode = vr_mode;
+
+	pdata = dev_get_platdata(&mfd->pdev->dev);
+	if ((pdata) && (pdata->vr_mode_enable)) {
+		pdata->vr_mode_enable(pdata, vr_mode);
+	}
+
+	if(!vr_mode)
+		mfd->vr_mode_exiting = 1;
+	return 0;
 }
 #else
-static bool check_not_supported_ioctl(u32 cmd)
+int mdss_fb_vr_mode_switch(struct msm_fb_data_type *mfd, u32 vr_mode)
 {
-	return((cmd == MSMFB_OVERLAY_SET) || (cmd == MSMFB_OVERLAY_UNSET) ||
-		(cmd == MSMFB_OVERLAY_GET) || (cmd == MSMFB_OVERLAY_PREPARE) ||
-		(cmd == MSMFB_DISPLAY_COMMIT) || (cmd == MSMFB_OVERLAY_PLAY) ||
-		(cmd == MSMFB_BUFFER_SYNC) || (cmd == MSMFB_OVERLAY_QUEUE) ||
-		(cmd == MSMFB_NOTIFY_UPDATE));
+	return 0;
 }
 #endif
+//zte jiangfeng add for VR mode, end
 
 /*
  * mdss_fb_do_ioctl() - MDSS Framebuffer ioctl function
@@ -4794,6 +4899,7 @@ int mdss_fb_do_ioctl(struct fb_info *info, unsigned int cmd,
 	struct mdp_buf_sync buf_sync;
 	unsigned int dsi_mode = 0;
 	struct mdss_panel_data *pdata = NULL;
+	u32 vr_mode;		//zte jiangfeng add for VR mode
 
 	if (!info || !info->par)
 		return -EINVAL;
@@ -4871,6 +4977,18 @@ int mdss_fb_do_ioctl(struct fb_info *info, unsigned int cmd,
 	case MSMFB_ASYNC_POSITION_UPDATE:
 		ret = mdss_fb_async_position_update_ioctl(info, argp);
 		break;
+//zte jiangfeng add for VR mode
+	case MSMFB_VR_MODE:
+		//printk("jiangfeng %s line %d\n", __func__, __LINE__);
+		ret = copy_from_user(&vr_mode, argp, sizeof(vr_mode));
+		if (ret) {
+			pr_err("%s: MSMFB_VR_MODE ioctl failed\n", __func__);
+			goto exit;
+		}
+
+		ret = mdss_fb_vr_mode_switch(mfd, vr_mode);
+		break;
+//zte jiangfeng add for VR mode, end
 
 	default:
 		if (mfd->mdp.ioctl_handler)
@@ -5084,35 +5202,4 @@ void mdss_fb_report_panel_dead(struct msm_fb_data_type *mfd)
 	kobject_uevent_env(&mfd->fbi->dev->kobj,
 		KOBJ_CHANGE, envp);
 	pr_err("Panel has gone bad, sending uevent - %s\n", envp[0]);
-}
-
-
-/*
- * mdss_fb_calc_fps() - Calculates fps value.
- * @mfd   : frame buffer structure associated with fb device.
- *
- * This function is called at frame done. It counts the number
- * of frames done for every 1 sec. Stores the value in measured_fps.
- * measured_fps value is 10 times the calculated fps value.
- * For example, measured_fps= 594 for calculated fps of 59.4
- */
-void mdss_fb_calc_fps(struct msm_fb_data_type *mfd)
-{
-	ktime_t current_time_us;
-	u64 fps, diff_us;
-
-	current_time_us = ktime_get();
-	diff_us = (u64)ktime_us_delta(current_time_us,
-			mfd->fps_info.last_sampled_time_us);
-	mfd->fps_info.frame_count++;
-
-	if (diff_us >= MDP_TIME_PERIOD_CALC_FPS_US) {
-		fps = ((u64)mfd->fps_info.frame_count) * 10000000;
-		do_div(fps, diff_us);
-		mfd->fps_info.measured_fps = (unsigned int)fps;
-		pr_debug(" MDP_FPS for fb%d is %d.%d\n",
-			mfd->index, (unsigned int)fps/10, (unsigned int)fps%10);
-		mfd->fps_info.last_sampled_time_us = current_time_us;
-		mfd->fps_info.frame_count = 0;
-	}
 }
