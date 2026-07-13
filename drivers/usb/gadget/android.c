@@ -1669,6 +1669,7 @@ static struct android_usb_function audio_function = {
 };
 #endif
 
+#ifdef CONFIG_SND_PCM
 /* PERIPHERAL uac2 */
 struct uac2_function_config {
 	struct usb_function *func;
@@ -1726,6 +1727,7 @@ static struct android_usb_function uac2_function = {
 	.cleanup	= uac2_function_cleanup,
 	.bind_config	= uac2_function_bind_config,
 };
+#endif
 
 #ifdef CONFIG_MEDIA_SUPPORT
 /* PERIPHERAL VIDEO */
