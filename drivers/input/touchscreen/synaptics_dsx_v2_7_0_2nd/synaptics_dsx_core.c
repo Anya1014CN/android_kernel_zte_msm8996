@@ -1431,8 +1431,7 @@ static int synaptics_rmi4_f12_abs_report(struct synaptics_rmi4_data *rmi4_data,
 				input_report_key(rmi4_data->input_dev,
 						BTN_TOOL_FINGER, 1);
 				input_report_abs(rmi4_data->input_dev,
-						ABS_MT_POSITION_X,
-						x + TOUCH_ABS_OFFSET_X);
+						ABS_MT_POSITION_X, x);
 				input_report_abs(rmi4_data->input_dev,
 						ABS_MT_POSITION_Y, y);
 #ifdef REPORT_2D_W
@@ -3409,8 +3408,8 @@ static void synaptics_rmi4_set_params(struct synaptics_rmi4_data *rmi4_data)
 	rmi = &(rmi4_data->rmi4_mod_info);
 
 	input_set_abs_params(rmi4_data->input_dev,
-			ABS_MT_POSITION_X, TOUCH_ABS_OFFSET_X,
-			rmi4_data->sensor_max_x + TOUCH_ABS_OFFSET_X, 0, 0);
+			ABS_MT_POSITION_X, 0,
+			rmi4_data->sensor_max_x, 0, 0);
 	input_set_abs_params(rmi4_data->input_dev,
 			ABS_MT_POSITION_Y, 0,
 			rmi4_data->sensor_max_y, 0, 0);
