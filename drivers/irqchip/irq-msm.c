@@ -13,7 +13,7 @@
 #include <linux/irqchip/qpnp-int.h>
 #include <linux/irqchip/msm-gpio-irq.h>
 #include <linux/irqchip/msm-mpm-irq.h>
-#ifdef CONFIG_AK4961_CODEC
+#if defined(CONFIG_AK4961_CODEC) || defined(CONFIG_AK4962_CODEC)
 #include <linux/mfd/ak49xx/core.h>
 #else
 #include <linux/mfd/wcd9xxx/core.h>
@@ -69,7 +69,7 @@ IRQCHIP_DECLARE(sdx20_pinctrl, "qcom,sdx20-pinctrl",
 		pinctrl_irq_dummy);
 IRQCHIP_DECLARE(9607_pinctrl, "qcom,mdm9607-pinctrl", pinctrl_irq_dummy);
 IRQCHIP_DECLARE(qpnp_irq, "qcom,spmi-pmic-arb", qpnpint_of_init);
-#ifdef CONFIG_AK4961_CODEC
+#if defined(CONFIG_AK4961_CODEC) || defined(CONFIG_AK4962_CODEC)
 IRQCHIP_DECLARE(ak49xx_irq, "akm,ak49xx-irq", ak49xx_irq_of_init);
 #else
 IRQCHIP_DECLARE(wcd9xxx_irq, "qcom,wcd9xxx-irq", wcd9xxx_irq_of_init);
