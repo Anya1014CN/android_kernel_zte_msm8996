@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2018 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2017 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -794,7 +794,7 @@ VOS_STATUS vos_open( v_CONTEXT_t *pVosContext, v_SIZE_t hddContextSize )
                "%s: VOSS successfully Opened", __func__);
 
    *pVosContext = gpVosContext;
-   gpVosContext->is_closed = false;
+
    return VOS_STATUS_SUCCESS;
 
 
@@ -1155,12 +1155,6 @@ VOS_STATUS vos_stop( v_CONTEXT_t vosContext )
 {
   VOS_STATUS vosStatus;
 
-  if (gpVosContext->is_closed) {
-      VOS_TRACE(VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_INFO,
-                "%s: vos is already closed", __func__);
-      return VOS_STATUS_SUCCESS;
-  }
-
   /* WDA_Stop is called before the SYS so that the processing of Riva
   pending responces will not be handled during uninitialization of WLAN driver */
   vos_event_reset( &(gpVosContext->wdaCompleteEvent) );
@@ -1203,12 +1197,6 @@ VOS_STATUS vos_stop( v_CONTEXT_t vosContext )
 VOS_STATUS vos_close( v_CONTEXT_t vosContext )
 {
   VOS_STATUS vosStatus;
-
-  if (gpVosContext->is_closed) {
-      VOS_TRACE(VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_INFO,
-                "%s: already closed", __func__);
-      return VOS_STATUS_SUCCESS;
-  }
 
   vosStatus = wma_wmi_work_close( vosContext );
   if (!VOS_IS_STATUS_SUCCESS(vosStatus)) {
@@ -1315,7 +1303,6 @@ VOS_STATUS vos_close( v_CONTEXT_t vosContext )
 
   vos_wdthread_flush_timer_work();
 
-  gpVosContext->is_closed = true;
   return VOS_STATUS_SUCCESS;
 }
 
@@ -3312,45 +3299,3 @@ bool vos_is_probe_rsp_offload_enabled(void)
 
 	return pHddCtx->cfg_ini->sap_probe_resp_offload;
 }
-
-bool vos_is_mon_enable(void)
-{
-	hdd_context_t *phdd_ctx = NULL;
-
-	if (gpVosContext == NULL) {
-		VOS_TRACE(VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_ERROR,
-			  "%s: global voss context is NULL", __func__);
-		return false;
-	}
-
-	phdd_ctx = (hdd_context_t *)vos_get_context(VOS_MODULE_ID_HDD,
-						   gpVosContext);
-	if (!phdd_ctx) {
-		VOS_TRACE(VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_FATAL,
-			  "%s: HDD context is Null", __func__);
-		return false;
-	}
-
-	return phdd_ctx->is_mon_enable;
-}
-#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
-v_BOOL_t vos_is_ch_switch_with_csa_enabled(void)
-{
-   hdd_context_t *pHddCtx;
-
-   pHddCtx = (hdd_context_t*)(gpVosContext->pHDDContext);
-   if((NULL == pHddCtx) ||
-      (NULL == pHddCtx->cfg_ini))
-   {
-     VOS_TRACE( VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_FATAL,
-               "%s: Hdd Context is Null", __func__);
-     return FALSE;
-   }
-   return pHddCtx->cfg_ini->sap_ch_switch_with_csa;
-}
-#else
-v_BOOL_t vos_is_ch_switch_with_csa_enabled(void)
-{
-	return FALSE;
-}
-#endif//#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-2018 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2017 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -616,9 +616,6 @@ struct ol_txrx_pdev_t {
 	tp_ol_packetdump_cb ol_tx_packetdump_cb;
 	tp_ol_packetdump_cb ol_rx_packetdump_cb;
 
-	/* virtual montior callback functions */
-	ol_txrx_vir_mon_rx_fp osif_rx_mon_cb;
-
 #ifdef WLAN_FEATURE_TSF_PLUS
 	tp_ol_timestamp_cb ol_tx_timestamp_cb;
 #endif
@@ -1232,13 +1229,9 @@ struct ol_txrx_peer_t {
 	u_int16_t tx_pause_flag;
 #endif
 	adf_os_time_t last_assoc_rcvd;
-	adf_os_time_t last_disassoc_deauth_rcvd;
+	adf_os_time_t last_disassoc_rcvd;
+	adf_os_time_t last_deauth_rcvd;
 	struct ol_rx_reorder_history * reorder_history;
-};
-
-struct ol_fw_data {
-	void *data;
-	uint32_t len;
 };
 
 #endif /* _OL_TXRX_TYPES__H_ */

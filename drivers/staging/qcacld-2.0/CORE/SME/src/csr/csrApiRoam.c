@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2018 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2017 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -2111,22 +2111,6 @@ eHalStatus csrChangeDefaultConfigParam(tpAniSirGlobal pMac, tCsrConfigParam *pPa
                                pParam->tx_aggregation_size;
         pMac->roam.configParam.rx_aggregation_size =
                                pParam->rx_aggregation_size;
-        pMac->roam.configParam.tx_aggr_sw_retry_threshhold_be =
-                               pParam->tx_aggr_sw_retry_threshhold_be;
-        pMac->roam.configParam.tx_aggr_sw_retry_threshhold_bk =
-                               pParam->tx_aggr_sw_retry_threshhold_bk;
-        pMac->roam.configParam.tx_aggr_sw_retry_threshhold_vi =
-                               pParam->tx_aggr_sw_retry_threshhold_vi;
-        pMac->roam.configParam.tx_aggr_sw_retry_threshhold_vo =
-                               pParam->tx_aggr_sw_retry_threshhold_vo;
-        pMac->roam.configParam.tx_non_aggr_sw_retry_threshhold_be =
-                               pParam->tx_non_aggr_sw_retry_threshhold_be;
-        pMac->roam.configParam.tx_non_aggr_sw_retry_threshhold_bk =
-                               pParam->tx_non_aggr_sw_retry_threshhold_bk;
-        pMac->roam.configParam.tx_non_aggr_sw_retry_threshhold_vi =
-                               pParam->tx_non_aggr_sw_retry_threshhold_vi;
-        pMac->roam.configParam.tx_non_aggr_sw_retry_threshhold_vo =
-                               pParam->tx_non_aggr_sw_retry_threshhold_vo;
 
         pMac->roam.configParam.gStaLocalEDCAEnable =
                                pParam->gStaLocalEDCAEnable;
@@ -2358,22 +2342,6 @@ eHalStatus csrGetConfigParam(tpAniSirGlobal pMac, tCsrConfigParam *pParam)
                pMac->roam.configParam.tx_aggregation_size;
         pParam->rx_aggregation_size =
                pMac->roam.configParam.rx_aggregation_size;
-        pParam->tx_aggr_sw_retry_threshhold_be =
-               pMac->roam.configParam.tx_aggr_sw_retry_threshhold_be;
-        pParam->tx_aggr_sw_retry_threshhold_bk =
-               pMac->roam.configParam.tx_aggr_sw_retry_threshhold_bk;
-        pParam->tx_aggr_sw_retry_threshhold_vi =
-               pMac->roam.configParam.tx_aggr_sw_retry_threshhold_vi;
-        pParam->tx_aggr_sw_retry_threshhold_vo =
-               pMac->roam.configParam.tx_aggr_sw_retry_threshhold_vo;
-        pParam->tx_non_aggr_sw_retry_threshhold_be =
-               pMac->roam.configParam.tx_non_aggr_sw_retry_threshhold_be;
-        pParam->tx_non_aggr_sw_retry_threshhold_bk =
-               pMac->roam.configParam.tx_non_aggr_sw_retry_threshhold_bk;
-        pParam->tx_non_aggr_sw_retry_threshhold_vi =
-               pMac->roam.configParam.tx_non_aggr_sw_retry_threshhold_vi;
-        pParam->tx_non_aggr_sw_retry_threshhold_vo =
-               pMac->roam.configParam.tx_non_aggr_sw_retry_threshhold_vo;
         status = eHAL_STATUS_SUCCESS;
     }
     return (status);
@@ -9606,11 +9574,7 @@ void csrRoamingStateMsgProcessor( tpAniSirGlobal pMac, void *pMsgBuf )
                  */
                 csrRemoveCmdWithSessionIdFromPendingList(pMac,
                                         pSmeRsp->sessionId,
-                                        &pMac->sme.smeCmdPendingList,
-                                        eSmeCommandWmStatusChange);
-                csrRemoveCmdWithSessionIdFromPendingList(pMac,
-                                        pSmeRsp->sessionId,
-                                        &pMac->roam.roamCmdPendingList,
+                                        &pMac->sme.smeScanCmdPendingList,
                                         eSmeCommandWmStatusChange);
                 csrRoamRoamingStateDeauthRspProcessor( pMac, (tSirSmeDeauthRsp *)pSmeRsp );
             }
@@ -13841,7 +13805,7 @@ eHalStatus csrRoamDelPMKIDfromCache( tpAniSirGlobal pMac, tANI_U32 sessionId,
                                          (v_MACADDR_t *)pmksa->BSSID))) {
                 fMatchFound = 1;
 
-            } else if (pmksa->ssid_len && (!adf_os_mem_cmp(cached_pmksa->ssid,
+            } else if ((!adf_os_mem_cmp(cached_pmksa->ssid,
                         pmksa->ssid, pmksa->ssid_len)) &&
                         (!adf_os_mem_cmp(cached_pmksa->cache_id,
                         pmksa->cache_id, CACHE_ID_LEN)))
@@ -14520,16 +14484,6 @@ eHalStatus csrSendJoinReqMsg( tpAniSirGlobal pMac, tANI_U32 sessionId, tSirBssDe
             //Need to disable VHT operation in 2.4 GHz band
             ucDot11Mode = WNI_CFG_DOT11_MODE_11N;
         }
-
-#if defined(FEATURE_WLAN_WAPI) && defined(WLAN_WAPI_MODE_11AC_DISABLE)
-        if( csrIsProfileWapi( pProfile ) &&
-           ((ucDot11Mode == WNI_CFG_DOT11_MODE_11AC) ||
-            (ucDot11Mode == WNI_CFG_DOT11_MODE_11AC_ONLY)) )
-        {
-            //Disable 11ac when WAPI is used
-            ucDot11Mode = WNI_CFG_DOT11_MODE_11N;
-        }
-#endif
 
         smsLog(pMac, LOG1, FL("dot11mode %d uCfgDot11Mode %d"),
                               ucDot11Mode, pSession->bssParams.uCfgDot11Mode);
@@ -16348,22 +16302,6 @@ eHalStatus csrSendMBAddSelfStaReqMsg( tpAniSirGlobal pMac,
       pMsg->nss_5g = nss_5g;
       pMsg->tx_aggregation_size = pMac->roam.configParam.tx_aggregation_size;
       pMsg->rx_aggregation_size = pMac->roam.configParam.rx_aggregation_size;
-      pMsg->tx_aggr_sw_retry_threshhold_be =
-                pMac->roam.configParam.tx_aggr_sw_retry_threshhold_be;
-      pMsg->tx_aggr_sw_retry_threshhold_bk =
-                pMac->roam.configParam.tx_aggr_sw_retry_threshhold_bk;
-      pMsg->tx_aggr_sw_retry_threshhold_vi =
-                pMac->roam.configParam.tx_aggr_sw_retry_threshhold_vi;
-      pMsg->tx_aggr_sw_retry_threshhold_vo =
-                pMac->roam.configParam.tx_aggr_sw_retry_threshhold_vo;
-      pMsg->tx_non_aggr_sw_retry_threshhold_be =
-                pMac->roam.configParam.tx_non_aggr_sw_retry_threshhold_be;
-      pMsg->tx_non_aggr_sw_retry_threshhold_bk =
-                pMac->roam.configParam.tx_non_aggr_sw_retry_threshhold_bk;
-      pMsg->tx_non_aggr_sw_retry_threshhold_vi =
-                pMac->roam.configParam.tx_non_aggr_sw_retry_threshhold_vi;
-      pMsg->tx_non_aggr_sw_retry_threshhold_vo =
-                pMac->roam.configParam.tx_non_aggr_sw_retry_threshhold_vo;
       smsLog( pMac, LOG1, FL("selfMac="MAC_ADDRESS_STR),
               MAC_ADDR_ARRAY(pMsg->selfMacAddr));
       status = palSendMBMessage(pMac->hHdd, pMsg);
@@ -18244,13 +18182,6 @@ eHalStatus csrRoamOffloadScan(tpAniSirGlobal pMac, tANI_U8 sessionId,
       smsLog(pMac, LOGE, FL("Supplicant disabled driver roaming"));
       return eHAL_STATUS_FAILURE;
    }
-
-   if (vos_is_mon_enable() && (ROAM_SCAN_OFFLOAD_STOP != command)) {
-       VOS_TRACE(VOS_MODULE_ID_SME, VOS_TRACE_LEVEL_ERROR,
-                 "%s: monitor is enabled, disable roaming", __func__);
-       return eHAL_STATUS_FAILURE;
-   }
-
 #ifdef WLAN_FEATURE_ROAM_OFFLOAD
    if (pSession->roamOffloadSynchParams.bRoamSynchInProgress
        && (ROAM_SCAN_OFFLOAD_STOP == command))
@@ -19697,12 +19628,6 @@ tANI_U32 csrGetdot11Mode(tHalHandle hHal, tANI_U32 sessionId,
     tDot11fBeaconIEs *ies_local = NULL;
     tANI_U32 dot11mode = 0;
 
-    if (!pSession)
-    {
-        smsLog( pMac, LOGE, FL( "  Session does not exist for session id %d" ), sessionId);
-        return 0;
-    }
-
     smsLog(pMac, LOG1, FL("phyMode %d"), pSession->pCurRoamProfile->phyMode);
 
     /* Get IE's */
@@ -20193,7 +20118,7 @@ eHalStatus csrRoamReadTSF(tpAniSirGlobal pMac, tANI_U8 *pTimestamp,
     }
     pBssDescription = handoffNode.pBssDescription;
     // Get the time diff in nano seconds
-    timer_diff = (vos_get_bootbased_boottime_ns() -
+    timer_diff = (vos_get_monotonic_boottime_ns() -
                   pBssDescription->scansystimensec);
     // Convert nano to micro sec timer
     timer_diff = vos_do_div(timer_diff, SYSTEM_TIME_NSEC_TO_USEC);
