@@ -35,6 +35,7 @@
 #include <linux/compiler.h>
 #include <linux/pstore_ram.h>
 #include <linux/of.h>
+#include <linux/of_address.h>
 
 #define RAMOOPS_KERNMSG_HDR "===="
 #define MIN_MEM_SIZE 4096UL
@@ -476,15 +477,75 @@ static void  ramoops_of_init(struct platform_device *pdev)
 	const struct device *dev = &pdev->dev;
 	struct ramoops_platform_data *pdata;
 	struct device_node *np = pdev->dev.of_node;
+	struct device_node *rmem_np;
+	struct resource rmem;
+	const __be32 *cell;
 	u32 start = 0, size = 0, console = 0, pmsg = 0;
 	u32 record = 0, oops = 0;
-	int ret;
+	int i, len, ret;
 
 	pdata = dev_get_drvdata(dev);
 	if (!pdata) {
 		pr_err("private data is empty!\n");
 		return;
 	}
+
+	if (of_device_is_compatible(np, "qcom,ramoops")) {
+		rmem_np = of_parse_phandle(np, "memory-region", 0);
+		if (!rmem_np) {
+			dev_err(dev, "missing memory-region\n");
+			return;
+		}
+
+		ret = of_address_to_resource(rmem_np, 0, &rmem);
+		of_node_put(rmem_np);
+		if (ret) {
+			dev_err(dev, "invalid memory-region: %d\n", ret);
+			return;
+		}
+
+		ret = of_property_read_u32(np, "mem_type", &pdata->mem_type);
+		if (ret) {
+			dev_err(dev, "missing mem_type\n");
+			return;
+		}
+
+		ret = of_property_read_u32(np, "dump_oops", &oops);
+		if (ret) {
+			dev_err(dev, "missing dump_oops\n");
+			return;
+		}
+
+		cell = of_get_property(np, "size", &len);
+		if (!cell || len != 4 * sizeof(u64)) {
+			dev_err(dev, "invalid size array\n");
+			return;
+		}
+
+		pdata->mem_address = rmem.start;
+		pdata->mem_size = resource_size(&rmem);
+		for (i = 0; i < 4; i++, cell += 2) {
+			size_t entry_size = (size_t)of_read_number(cell, 2);
+
+			switch (i) {
+			case 0:
+				pdata->console_size = entry_size;
+				break;
+			case 1:
+				pdata->record_size = entry_size;
+				break;
+			case 2:
+				pdata->ftrace_size = entry_size;
+				break;
+			case 3:
+				pdata->pmsg_size = entry_size;
+				break;
+			}
+		}
+		pdata->dump_oops = (int)oops;
+		return;
+	}
+
 	ret = of_property_read_u32(np, "android,ramoops-buffer-start",
 				&start);
 	if (ret)
