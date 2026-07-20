@@ -33,6 +33,22 @@
 #define UL(x) _AC(x, UL)
 
 /*
+ * Size of the PCI I/O space. This must remain a power of two so that
+ * IO_SPACE_LIMIT acts as a mask for the low bits of I/O addresses.
+ */
+#define PCI_IO_SIZE		SZ_16M
+
+/*
+ * The size of the KASAN shadow region. This should be 1/8th of the
+ * size of the entire kernel virtual address space.
+ */
+#ifdef CONFIG_KASAN
+#define KASAN_SHADOW_SIZE	(UL(1) << (VA_BITS - 3))
+#else
+#define KASAN_SHADOW_SIZE	(0)
+#endif
+
+/*
  * PAGE_OFFSET - the virtual address of the start of the kernel image (top
  *		 (VA_BITS - 1))
  * VA_BITS - the maximum number of bits for virtual addresses.
