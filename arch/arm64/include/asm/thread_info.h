@@ -68,9 +68,13 @@ struct thread_info {
 #define init_stack		(init_thread_union.stack)
 
 /*
- * how to get the current stack pointer from C
+ * Clang rejects a global register variable bound to sp. Read it on demand.
  */
-register unsigned long current_stack_pointer asm ("sp");
+#define current_stack_pointer ({					\
+	unsigned long __current_stack_pointer;				\
+	asm volatile("mov %0, sp" : "=r" (__current_stack_pointer));	\
+	__current_stack_pointer;					\
+})
 
 /*
  * how to get the thread information struct from C
