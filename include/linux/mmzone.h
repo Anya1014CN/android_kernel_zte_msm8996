@@ -338,6 +338,8 @@ enum zone_type {
 	__MAX_NR_ZONES
 };
 
+#define MAX_NR_ZONES __MAX_NR_ZONES
+
 #ifndef __GENERATING_BOUNDS_H
 
 struct zone {
