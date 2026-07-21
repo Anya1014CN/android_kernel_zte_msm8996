@@ -714,6 +714,9 @@ KBUILD_CPPFLAGS += $(call cc-option,-Qunused-arguments,)
 # compiler errors while preventing newer diagnostic-only warnings from
 # stopping the build.
 KBUILD_CFLAGS += -Wno-error
+# Do not let Clang lower kernel string operations into unavailable libc calls
+# such as bcmp() and stpcpy().
+KBUILD_CFLAGS += -fno-builtin
 KBUILD_CFLAGS += $(call cc-disable-warning, unused-variable)
 KBUILD_CFLAGS += $(call cc-disable-warning, format-invalid-specifier)
 KBUILD_CFLAGS += $(call cc-disable-warning, gnu)
