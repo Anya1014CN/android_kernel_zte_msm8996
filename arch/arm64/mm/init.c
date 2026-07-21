@@ -352,7 +352,7 @@ void __init mem_init(void)
 	}
 }
 
-static inline void poison_init_mem(void *s, size_t count)
+static __maybe_unused void poison_init_mem(void *s, size_t count)
 {
 	memset(s, 0, count);
 }

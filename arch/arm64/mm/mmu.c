@@ -136,10 +136,10 @@ void mem_text_address_restore(u64 addr)
 	}
 }
 #else
-static inline void mem_text_writeable_spinlock(unsigned long *flags) {};
-static inline void mem_text_address_writeable(u64 addr) {};
-static inline void mem_text_address_restore(u64 addr) {};
-static inline void mem_text_writeable_spinunlock(unsigned long *flags) {};
+static __maybe_unused void mem_text_writeable_spinlock(unsigned long *flags) {};
+static __maybe_unused void mem_text_address_writeable(u64 addr) {};
+static __maybe_unused void mem_text_address_restore(u64 addr) {};
+static __maybe_unused void mem_text_writeable_spinunlock(unsigned long *flags) {};
 #endif
 
 pgprot_t phys_mem_access_prot(struct file *file, unsigned long pfn,

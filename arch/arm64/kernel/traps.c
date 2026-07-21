@@ -17,6 +17,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <linux/kernel.h>
 #include <linux/signal.h>
 #include <linux/personality.h>
 #include <linux/kallsyms.h>
@@ -83,9 +84,9 @@ static void dump_mem(const char *lvl, const char *str, unsigned long bottom,
 			if (p >= bottom && p < top) {
 				unsigned int val;
 				if (__get_user(val, (unsigned int *)p) == 0)
-					sprintf(str + i * 9, " %08x", val);
+					scnprintf(str + i * 9, 10, " %08x", val);
 				else
-					sprintf(str + i * 9, " ????????");
+					scnprintf(str + i * 9, 10, " ????????");
 			}
 		}
 		printk("%s%04lx:%s\n", lvl, first & 0xffff, str);
@@ -114,9 +115,11 @@ static void __dump_instr(const char *lvl, struct pt_regs *regs)
 		bad = __get_user(val, &((u32 *)addr)[i]);
 
 		if (!bad)
-			p += sprintf(p, i == 0 ? "(%08x) " : "%08x ", val);
+			p += scnprintf(p, (str + sizeof(str)) - p,
+				       i == 0 ? "(%08x) " : "%08x ", val);
 		else {
-			p += sprintf(p, "bad PC value");
+			p += scnprintf(p, (str + sizeof(str)) - p,
+				       "bad PC value");
 			break;
 		}
 	}
