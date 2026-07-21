@@ -213,9 +213,6 @@ void migrate_to_reboot_cpu(void)
  */
 void kernel_restart(char *cmd)
 {
-#ifdef CONFIG_MACH_ZTE_FUJISAN
-	panic("Fujisan bring-up: unexpected kernel restart");
-#endif
 	kernel_restart_prepare(cmd);
 	migrate_to_reboot_cpu();
 	syscore_shutdown();
@@ -259,9 +256,6 @@ EXPORT_SYMBOL_GPL(kernel_halt);
  */
 void kernel_power_off(void)
 {
-#ifdef CONFIG_MACH_ZTE_FUJISAN
-	panic("Fujisan bring-up: unexpected kernel power off");
-#endif
 	kernel_shutdown_prepare(SYSTEM_POWER_OFF);
 	if (pm_power_off_prepare)
 		pm_power_off_prepare();
