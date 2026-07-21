@@ -315,8 +315,7 @@ static const char *const bpf_jmp_string[] = {
 	[BPF_EXIT >> 4] = "exit",
 };
 
-static void print_bpf_insn(const struct bpf_verifier_env *env,
-			   const struct bpf_insn *insn)
+static void print_bpf_insn(const struct bpf_insn *insn)
 {
 	u8 class = BPF_CLASS(insn->code);
 
@@ -386,11 +385,6 @@ static void print_bpf_insn(const struct bpf_verifier_env *env,
 			 * part of the ldimm64 insn is accessible.
 			 */
 			u64 imm = ((u64)(insn + 1)->imm << 32) | (u32)insn->imm;
-			bool map_ptr = insn->src_reg == BPF_PSEUDO_MAP_FD;
-
-			if (map_ptr && !env->allow_ptr_leaks)
-				imm = 0;
-
 			verbose("(%02x) r%d = 0x%llx\n", insn->code,
 				insn->dst_reg, (unsigned long long)imm);
 		} else {
@@ -1545,7 +1539,7 @@ static int do_check(struct verifier_env *env)
 
 		if (log_level) {
 			verbose("%d: ", insn_idx);
-			print_bpf_insn(env, insn);
+			print_bpf_insn(insn);
 		}
 
 		if (class == BPF_ALU || class == BPF_ALU64) {
