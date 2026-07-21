@@ -16,6 +16,29 @@
 #include "zte-usb2-type-c.dtsi"
 #include "msm8996-wsa881x.dtsi"
 
+/*
+ * The bootloader reserves this area on production Fujisan devices.  Keep the
+ * original layout so crash logs remain readable by the recovery kernel.
+ */
+&reserved_memory {
+	ramoops_mem: ramoops_region@bfc00000 {
+		compatible = "removed-dma-pool";
+		no-map;
+		reg = <0x0 0xbfc00000 0x0 0x00400000>;
+	};
+};
+
+&soc {
+	ramoops {
+		compatible = "ramoops";
+		memory-region = <&ramoops_mem>;
+		console-size = <0x0 0x00100000>;
+		record-size = <0x0 0x00008000>;
+		ftrace-size = <0x0 0x00100000>;
+		pmsg-size = <0x0 0x00100000>;
+	};
+};
+
 / {
 	bluetooth: bt_qca6174 {
 		compatible = "qca,qca6174";
