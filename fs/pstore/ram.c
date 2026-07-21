@@ -266,6 +266,19 @@ static size_t ramoops_write_kmsg_hdr(struct persistent_ram_zone *prz,
 	return len;
 }
 
+static bool ramoops_is_dump_reason(enum kmsg_dump_reason reason)
+{
+	if (reason == KMSG_DUMP_OOPS || reason == KMSG_DUMP_PANIC)
+		return true;
+
+#ifdef CONFIG_MACH_ZTE_FUJISAN
+	/* Preserve the final kernel log when bring-up requires a manual reboot. */
+	return reason == KMSG_DUMP_RESTART || reason == KMSG_DUMP_POWEROFF;
+#else
+	return false;
+#endif
+}
+
 static int notrace ramoops_pstore_write_buf(enum pstore_type_id type,
 					    enum kmsg_dump_reason reason,
 					    u64 *id, unsigned int part,
@@ -297,11 +310,7 @@ static int notrace ramoops_pstore_write_buf(enum pstore_type_id type,
 	if (type != PSTORE_TYPE_DMESG)
 		return -EINVAL;
 
-	/* Out of the various dmesg dump types, ramoops is currently designed
-	 * to only store crash logs, rather than storing general kernel logs.
-	 */
-	if (reason != KMSG_DUMP_OOPS &&
-	    reason != KMSG_DUMP_PANIC)
+	if (!ramoops_is_dump_reason(reason))
 		return -EINVAL;
 
 	/* Skip Oopes when configured to do so. */
