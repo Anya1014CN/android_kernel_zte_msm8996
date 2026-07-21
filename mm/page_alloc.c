@@ -305,7 +305,8 @@ static int bad_range(struct zone *zone, struct page *page)
 	return 0;
 }
 #else
-static inline int bad_range(struct zone *zone, struct page *page)
+static inline __maybe_unused int bad_range(struct zone *zone,
+					   struct page *page)
 {
 	return 0;
 }
@@ -465,8 +466,8 @@ static inline void clear_page_guard_flag(struct page *page)
 	__clear_bit(PAGE_DEBUG_FLAG_GUARD, &page->debug_flags);
 }
 #else
-static inline void set_page_guard_flag(struct page *page) { }
-static inline void clear_page_guard_flag(struct page *page) { }
+static inline __maybe_unused void set_page_guard_flag(struct page *page) { }
+static inline __maybe_unused void clear_page_guard_flag(struct page *page) { }
 #endif
 
 static inline void set_page_order(struct page *page, unsigned int order)

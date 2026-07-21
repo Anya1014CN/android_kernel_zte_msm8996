@@ -803,7 +803,7 @@ out:
 	return rc;
 }
 
-static inline int avc_sidcmp(u32 x, u32 y)
+static inline __maybe_unused int avc_sidcmp(u32 x, u32 y)
 {
 	return (x == y || x == SECSID_WILD || y == SECSID_WILD);
 }
