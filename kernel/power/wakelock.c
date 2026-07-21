@@ -97,14 +97,14 @@ static inline void increment_wakelocks_number(void)
 	number_of_wakelocks++;
 }
 
-static inline void decrement_wakelocks_number(void)
+static inline __maybe_unused void decrement_wakelocks_number(void)
 {
 	number_of_wakelocks--;
 }
 #else /* CONFIG_PM_WAKELOCKS_LIMIT = 0 */
 static inline bool wakelocks_limit_exceeded(void) { return false; }
 static inline void increment_wakelocks_number(void) {}
-static inline void decrement_wakelocks_number(void) {}
+static inline __maybe_unused void decrement_wakelocks_number(void) {}
 #endif /* CONFIG_PM_WAKELOCKS_LIMIT */
 
 #ifdef CONFIG_PM_WAKELOCKS_GC
@@ -363,4 +363,3 @@ int suspend_sys_sync_wait(void)
 core_initcall(sys_sync_queue_init);
 module_exit(sys_sync_queue_exit);
 /*zte_pm add for sync-end*/
-

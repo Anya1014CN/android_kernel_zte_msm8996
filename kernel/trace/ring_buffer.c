@@ -1867,7 +1867,7 @@ void ring_buffer_change_overwrite(struct ring_buffer *buffer, int val)
 }
 EXPORT_SYMBOL_GPL(ring_buffer_change_overwrite);
 
-static inline void *
+static inline __maybe_unused void *
 __rb_data_page_index(struct buffer_data_page *bpage, unsigned index)
 {
 	return bpage->data + index;

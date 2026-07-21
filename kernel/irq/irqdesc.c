@@ -60,7 +60,7 @@ static void desc_smp_init(struct irq_desc *desc, int node)
 #endif
 }
 
-static inline int desc_node(struct irq_desc *desc)
+static inline __maybe_unused int desc_node(struct irq_desc *desc)
 {
 	return desc->irq_data.node;
 }
@@ -69,7 +69,7 @@ static inline int desc_node(struct irq_desc *desc)
 static inline int
 alloc_masks(struct irq_desc *desc, gfp_t gfp, int node) { return 0; }
 static inline void desc_smp_init(struct irq_desc *desc, int node) { }
-static inline int desc_node(struct irq_desc *desc) { return 0; }
+static inline __maybe_unused int desc_node(struct irq_desc *desc) { return 0; }
 #endif
 
 static void desc_set_defaults(unsigned int irq, struct irq_desc *desc, int node,

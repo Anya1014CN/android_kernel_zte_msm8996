@@ -34,7 +34,7 @@
 static inline void arch_spin_lock(arch_spinlock_t *lock)
 {
 	unsigned int tmp;
-	arch_spinlock_t lockval, newval;
+	u32 lockval, newval;
 
 	asm volatile(
 	/* Atomically increment the next ticket. */
@@ -65,7 +65,7 @@ static inline void arch_spin_lock(arch_spinlock_t *lock)
 static inline int arch_spin_trylock(arch_spinlock_t *lock)
 {
 	unsigned int tmp;
-	arch_spinlock_t lockval;
+	u32 lockval;
 
 	asm volatile(
 "1:	ldaxr	%w0, %2\n"

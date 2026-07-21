@@ -3870,7 +3870,7 @@ static void transfer_busy_time(struct rq *rq, struct related_thread_group *grp,
 	BUG_ON((s64)*src_prev_runnable_sum < 0);
 }
 
-static inline struct group_cpu_time *
+static inline __maybe_unused struct group_cpu_time *
 task_group_cpu_time(struct task_struct *p, int cpu)
 {
 	return _group_cpu_time(rcu_dereference(p->grp), cpu);
@@ -3916,7 +3916,7 @@ static inline void transfer_busy_time(struct rq *rq,
 {
 }
 
-static inline struct group_cpu_time *
+static inline __maybe_unused struct group_cpu_time *
 task_group_cpu_time(struct task_struct *p, int cpu)
 {
 	return NULL;
@@ -8940,7 +8940,7 @@ static int __init sched_debug_setup(char *str)
 }
 early_param("sched_debug", sched_debug_setup);
 
-static inline bool sched_debug(void)
+static inline __maybe_unused bool sched_debug(void)
 {
 	return sched_debug_enabled;
 }
@@ -9056,7 +9056,7 @@ static void sched_domain_debug(struct sched_domain *sd, int cpu)
 }
 #else /* !CONFIG_SCHED_DEBUG */
 # define sched_domain_debug(sd, cpu) do { } while (0)
-static inline bool sched_debug(void)
+static inline __maybe_unused bool sched_debug(void)
 {
 	return false;
 }

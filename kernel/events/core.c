@@ -701,7 +701,7 @@ static inline int is_cgroup_event(struct perf_event *event)
 	return 0;
 }
 
-static inline u64 perf_cgroup_event_cgrp_time(struct perf_event *event)
+static inline __maybe_unused u64 perf_cgroup_event_cgrp_time(struct perf_event *event)
 {
 	return 0;
 }
