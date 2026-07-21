@@ -985,17 +985,31 @@ void smp2p_init_header(struct smp2p_smem __iomem *header_ptr,
 		int local_pid, int remote_pid,
 		uint32_t features, uint32_t version)
 {
-	header_ptr->magic = SMP2P_MAGIC;
-	SMP2P_SET_LOCAL_PID(header_ptr->rem_loc_proc_id, local_pid);
-	SMP2P_SET_REMOTE_PID(header_ptr->rem_loc_proc_id, remote_pid);
-	SMP2P_SET_FEATURES(header_ptr->feature_version, features);
-	SMP2P_SET_ENT_TOTAL(header_ptr->valid_total_ent, SMP2P_MAX_ENTRY);
-	SMP2P_SET_ENT_VALID(header_ptr->valid_total_ent, 0);
-	header_ptr->flags = 0;
+	u32 rem_loc = 0;
+	u32 feature_version = 0;
+	u32 valid_total = 0;
+
+	/*
+	 * Build the header in registers first, then emit only 32-bit Device
+	 * stores. Clang was free to turn adjacent field writes into an
+	 * unaligned 64-bit STUR on SMEM (alignment fault 0x96000061).
+	 */
+	rem_loc |= (local_pid << SMP2P_LOCAL_PID_BIT) & SMP2P_LOCAL_PID_MASK;
+	rem_loc |= (remote_pid << SMP2P_REMOTE_PID_BIT) & SMP2P_REMOTE_PID_MASK;
+	feature_version |= (features << SMP2P_FEATURE_BIT) & SMP2P_FEATURE_MASK;
+	valid_total |= (SMP2P_MAX_ENTRY << SMP2P_ENT_TOTAL_BIT) &
+		SMP2P_ENT_TOTAL_MASK;
+
+	writel_relaxed(SMP2P_MAGIC, &header_ptr->magic);
+	writel_relaxed(rem_loc, &header_ptr->rem_loc_proc_id);
+	writel_relaxed(feature_version, &header_ptr->feature_version);
+	writel_relaxed(valid_total, &header_ptr->valid_total_ent);
+	writel_relaxed(0, &header_ptr->flags);
 
 	/* ensure that all fields are valid before version is written */
 	wmb();
-	SMP2P_SET_VERSION(header_ptr->feature_version, version);
+	feature_version |= (version << SMP2P_VERSION_BIT) & SMP2P_VERSION_MASK;
+	writel_relaxed(feature_version, &header_ptr->feature_version);
 }
 
 /**
@@ -1045,8 +1059,10 @@ static int smp2p_do_negotiation(int remote_pid,
 
 	r_version = 0;
 	if (r_smem_ptr) {
-		r_version = SMP2P_GET_VERSION(r_smem_ptr->feature_version);
-		r_feature = SMP2P_GET_FEATURES(r_smem_ptr->feature_version);
+		u32 feature_version = readl_relaxed(&r_smem_ptr->feature_version);
+
+		r_version = SMP2P_GET_VERSION(feature_version);
+		r_feature = SMP2P_GET_FEATURES(feature_version);
 	}
 
 	if (r_version == 0) {

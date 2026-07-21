@@ -15,6 +15,7 @@
 #define _ARCH_ARM_MACH_MSM_MSM_SMP2P_PRIVATE_H_
 
 #include <linux/types.h>
+#include <linux/io.h>
 #include <linux/spinlock.h>
 #include <linux/ipc_logging.h>
 #include "smp2p_private_api.h"
@@ -43,12 +44,20 @@
 #define SMP2P_GPIO_NO_INT BIT(1)
 
 #define SMP2P_GET_BITS(hdr_val, mask, bit) \
-	(((hdr_val) & (mask)) >> (bit))
+	(((u32)(hdr_val) & (mask)) >> (bit))
+/*
+ * Force a pure 32-bit RMW through a volatile pointer so Clang cannot
+ * merge adjacent SMEM field updates into an unaligned 64-bit STUR
+ * (alignment fault ESR 0x96000061 on Device memory).
+ */
 #define SMP2P_SET_BITS(hdr_val, mask, bit, new_value) \
-	{\
-		hdr_val = (hdr_val & ~(mask)) \
-		| (((new_value) << (bit)) & (mask)); \
-	}
+	do { \
+		volatile u32 *__smp2p_ptr = (volatile u32 *)&(hdr_val); \
+		u32 __smp2p_tmp = *__smp2p_ptr; \
+		__smp2p_tmp = (__smp2p_tmp & ~(mask)) | \
+			(((u32)(new_value) << (bit)) & (mask)); \
+		*__smp2p_ptr = __smp2p_tmp; \
+	} while (0)
 
 #define SMP2P_GET_LOCAL_PID(hdr) \
 	SMP2P_GET_BITS(hdr, SMP2P_LOCAL_PID_MASK, SMP2P_LOCAL_PID_BIT)
@@ -190,17 +199,17 @@ enum msm_smp2p_edge_state {
  * @flags:  Flags (bits 31:2 reserved)
  */
 struct smp2p_smem {
-	/* SMEM items are only 32-bit aligned. Keep all accesses word-sized. */
-	volatile uint32_t magic;
-	volatile uint32_t feature_version;
-	volatile uint32_t rem_loc_proc_id;
-	volatile uint32_t valid_total_ent;
-	volatile uint32_t flags;
+	/* SMEM items are only 32-bit aligned. Access only via 32-bit IO helpers. */
+	u32 magic;
+	u32 feature_version;
+	u32 rem_loc_proc_id;
+	u32 valid_total_ent;
+	u32 flags;
 };
 
 struct smp2p_entry_v1 {
 	char name[SMP2P_MAX_ENTRY_NAME];
-	volatile uint32_t entry;
+	u32 entry;
 };
 
 struct smp2p_smem_item {
