@@ -36,6 +36,7 @@
 #include <linux/pstore_ram.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
+#include <linux/workqueue.h>
 
 #define RAMOOPS_KERNMSG_HDR "===="
 #define MIN_MEM_SIZE 4096UL
@@ -804,8 +805,30 @@ static int __init ramoops_init(void)
 }
 postcore_initcall(ramoops_init);
 
+#ifdef CONFIG_MACH_ZTE_FUJISAN
+static void ramoops_fujisan_snapshot(struct work_struct *work)
+{
+	(void)work;
+	pr_emerg("Fujisan bring-up: saving deferred kernel log snapshot\n");
+	kmsg_dump(KMSG_DUMP_PANIC);
+}
+
+static DECLARE_DELAYED_WORK(ramoops_fujisan_snapshot_work,
+			    ramoops_fujisan_snapshot);
+
+static int __init ramoops_fujisan_snapshot_init(void)
+{
+	schedule_delayed_work(&ramoops_fujisan_snapshot_work, 90 * HZ);
+	return 0;
+}
+late_initcall(ramoops_fujisan_snapshot_init);
+#endif
+
 static void __exit ramoops_exit(void)
 {
+#ifdef CONFIG_MACH_ZTE_FUJISAN
+	cancel_delayed_work_sync(&ramoops_fujisan_snapshot_work);
+#endif
 	platform_driver_unregister(&ramoops_driver);
 	platform_device_unregister(dummy);
 	kfree(dummy_data);
