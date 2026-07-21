@@ -190,16 +190,17 @@ enum msm_smp2p_edge_state {
  * @flags:  Flags (bits 31:2 reserved)
  */
 struct smp2p_smem {
-	uint32_t magic;
-	uint32_t feature_version;
-	uint32_t rem_loc_proc_id;
-	uint32_t valid_total_ent;
-	uint32_t flags;
+	/* SMEM items are only 32-bit aligned. Keep all accesses word-sized. */
+	volatile uint32_t magic;
+	volatile uint32_t feature_version;
+	volatile uint32_t rem_loc_proc_id;
+	volatile uint32_t valid_total_ent;
+	volatile uint32_t flags;
 };
 
 struct smp2p_entry_v1 {
 	char name[SMP2P_MAX_ENTRY_NAME];
-	uint32_t entry;
+	volatile uint32_t entry;
 };
 
 struct smp2p_smem_item {
