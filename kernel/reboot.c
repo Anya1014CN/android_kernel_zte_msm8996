@@ -256,6 +256,9 @@ EXPORT_SYMBOL_GPL(kernel_halt);
  */
 void kernel_power_off(void)
 {
+#ifdef CONFIG_MACH_ZTE_FUJISAN
+	panic("Fujisan bring-up: unexpected kernel power off");
+#endif
 	kernel_shutdown_prepare(SYSTEM_POWER_OFF);
 	if (pm_power_off_prepare)
 		pm_power_off_prepare();
