@@ -213,6 +213,9 @@ void migrate_to_reboot_cpu(void)
  */
 void kernel_restart(char *cmd)
 {
+#ifdef CONFIG_MACH_ZTE_FUJISAN
+	panic("Fujisan bring-up: unexpected kernel restart");
+#endif
 	kernel_restart_prepare(cmd);
 	migrate_to_reboot_cpu();
 	syscore_shutdown();
