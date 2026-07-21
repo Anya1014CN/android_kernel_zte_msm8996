@@ -255,7 +255,7 @@ static int init_csc(struct ipu_ic *ic,
 	writel(param, base++);
 
 	param = ((a[0] & 0x1fe0) >> 5) | (params->scale << 8) |
-		(params->sat << 9);
+		(params->sat << 10);
 	writel(param, base++);
 
 	param = ((a[1] & 0x1f) << 27) | ((c[0][1] & 0x1ff) << 18) |
@@ -297,8 +297,8 @@ static int calc_resize_coeffs(struct ipu_ic *ic,
 		return -EINVAL;
 	}
 
-	/* Cannot downsize more than 8:1 */
-	if ((out_size << 3) < in_size) {
+	/* Cannot downsize more than 4:1 */
+	if ((out_size << 2) < in_size) {
 		dev_err(ipu->dev, "Unsupported downsize\n");
 		return -EINVAL;
 	}

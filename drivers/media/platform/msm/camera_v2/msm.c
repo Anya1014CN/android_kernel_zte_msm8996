@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2018, 2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -37,6 +37,7 @@ static struct list_head    ordered_sd_list;
 static struct mutex        ordered_sd_mtx;
 static struct mutex        v4l2_event_mtx;
 
+static atomic_t qos_add_request_done = ATOMIC_INIT(0);
 static struct pm_qos_request msm_v4l2_pm_qos_request;
 
 static struct msm_queue_head *msm_session_q;
@@ -53,6 +54,8 @@ spinlock_t msm_eventq_lock;
 
 static struct pid *msm_pid;
 spinlock_t msm_pid_lock;
+
+static uint32_t gpu_limit;
 
 /*
  * It takes 20 bytes + NULL character to write the
@@ -216,9 +219,11 @@ static inline int __msm_queue_find_command_ack_q(void *d1, void *d2)
 	return (ack->stream_id == *(unsigned int *)d2) ? 1 : 0;
 }
 
-static void msm_pm_qos_add_request(void)
+static inline void msm_pm_qos_add_request(void)
 {
 	pr_info("%s: add request", __func__);
+	if (atomic_cmpxchg(&qos_add_request_done, 0, 1))
+		return;
 	pm_qos_add_request(&msm_v4l2_pm_qos_request, PM_QOS_CPU_DMA_LATENCY,
 	PM_QOS_DEFAULT_VALUE);
 }
@@ -226,12 +231,15 @@ static void msm_pm_qos_add_request(void)
 static void msm_pm_qos_remove_request(void)
 {
 	pr_info("%s: remove request", __func__);
+	if (!atomic_cmpxchg(&qos_add_request_done, 1, 0))
+		return;
 	pm_qos_remove_request(&msm_v4l2_pm_qos_request);
 }
 
 void msm_pm_qos_update_request(int val)
 {
 	pr_info("%s: update request %d", __func__, val);
+	msm_pm_qos_add_request();
 	pm_qos_update_request(&msm_v4l2_pm_qos_request, val);
 }
 
@@ -369,8 +377,8 @@ static inline int __msm_sd_register_subdev(struct v4l2_subdev *sd)
 	}
 
 #if defined(CONFIG_MEDIA_CONTROLLER)
-	sd->entity.info.v4l.major = VIDEO_MAJOR;
-	sd->entity.info.v4l.minor = vdev->minor;
+	sd->entity.info.dev.major = VIDEO_MAJOR;
+	sd->entity.info.dev.minor = vdev->minor;
 	sd->entity.name = video_device_node_name(vdev);
 #endif
 	sd->devnode = vdev;
@@ -479,6 +487,14 @@ int msm_create_session(unsigned int session_id, struct video_device *vdev)
 	mutex_init(&session->lock_q);
 	mutex_init(&session->close_lock);
 	rwlock_init(&session->stream_rwlock);
+
+	if (gpu_limit) {
+		session->sysfs_pwr_limit = kgsl_pwr_limits_add(KGSL_DEVICE_3D0);
+		if (session->sysfs_pwr_limit)
+			kgsl_pwr_limits_set_freq(session->sysfs_pwr_limit,
+				gpu_limit);
+	}
+
 	return 0;
 }
 EXPORT_SYMBOL(msm_create_session);
@@ -608,7 +624,7 @@ static inline int __msm_remove_session_cmd_ack_q(void *d1, void *d2)
 {
 	struct msm_command_ack *cmd_ack = d1;
 
-	if (!(&cmd_ack->command_q))
+	if (&cmd_ack->command_q == NULL)
 		return 0;
 
 	msm_queue_drain(&cmd_ack->command_q, struct msm_command, list);
@@ -618,7 +634,7 @@ static inline int __msm_remove_session_cmd_ack_q(void *d1, void *d2)
 
 static void msm_remove_session_cmd_ack_q(struct msm_session *session)
 {
-	if ((!session) || !(&session->command_ack_q))
+	if ((!session) || (&session->command_ack_q == NULL))
 		return;
 
 	mutex_lock(&session->lock);
@@ -643,6 +659,11 @@ int msm_destroy_session(unsigned int session_id)
 		list, __msm_queue_find_session, &session_id);
 	if (!session)
 		return -EINVAL;
+
+	if (gpu_limit && session->sysfs_pwr_limit) {
+		kgsl_pwr_limits_set_default(session->sysfs_pwr_limit);
+		kgsl_pwr_limits_del(session->sysfs_pwr_limit);
+	}
 
 	msm_destroy_session_streams(session);
 	msm_remove_session_cmd_ack_q(session);
@@ -709,22 +730,6 @@ static int __msm_close_wakeup_all_cmdack_session(void *d1, void *d2)
 
 	stream = msm_queue_find(&session->stream_q, struct msm_stream,
 		list, __msm_wakeup_all_cmdack_session_stream, d1);
-	return 0;
-}
-
-static int __msm_recovery_session_notify_hal(void *d1, void *d2)
-{
-	struct v4l2_event event;
-	struct msm_v4l2_event_data *event_data =
-		(struct msm_v4l2_event_data *)&event.u.data[0];
-	struct msm_session *session = d1;
-
-	event.type = MSM_CAMERA_V4L2_EVENT_TYPE;
-	event.id   = MSM_CAMERA_MSM_NOTIFY;
-	event_data->command = MSM_CAMERA_PRIV_RECOVERY;
-
-	v4l2_event_queue(session->event_q.vdev, &event);
-
 	return 0;
 }
 
@@ -841,13 +846,6 @@ static long msm_private_ioctl(struct file *file, void *fh,
 		msm_queue_traverse_action(msm_session_q,
 			struct msm_session, list,
 			__msm_close_destry_session_notify_apps, NULL);
-		break;
-
-	case MSM_CAM_V4L2_IOCTL_NOTIFY_RECOVERY:
-		/* send v4l2_event to HAL next*/
-		msm_queue_traverse_action(msm_session_q,
-			struct msm_session, list,
-			__msm_recovery_session_notify_hal, NULL);
 		break;
 
 	default:
@@ -1113,7 +1111,7 @@ static struct v4l2_file_operations msm_fops = {
 	.open   = msm_open,
 	.poll   = msm_poll,
 	.release = msm_close,
-	.ioctl   = video_ioctl2,
+	.unlocked_ioctl   = video_ioctl2,
 #ifdef CONFIG_COMPAT
 	.compat_ioctl32 = video_ioctl2,
 #endif
@@ -1418,6 +1416,9 @@ static int msm_probe(struct platform_device *pdev)
 		pr_err("%s: failed to register ahb clocks\n", __func__);
 		goto v4l2_fail;
 	}
+
+	of_property_read_u32(pdev->dev.of_node,
+		"qcom,gpu-limit", &gpu_limit);
 
 	goto probe_end;
 

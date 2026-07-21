@@ -11,6 +11,8 @@
  * option) any later version.
  */
 
+#define DISABLE_BRANCH_PROFILING
+
 #include <linux/types.h>
 #include <linux/kernel.h>
 #include <linux/string.h>
@@ -28,8 +30,13 @@ unsigned long free_mem_end_ptr;
 extern unsigned char __image_begin, __image_end;
 
 /* debug interfaces  */
+#ifdef CONFIG_DEBUG_ZBOOT
 extern void puts(const char *s);
 extern void puthex(unsigned long long val);
+#else
+#define puts(s) do {} while (0)
+#define puthex(val) do {} while (0)
+#endif
 
 void error(char *x)
 {
@@ -106,8 +113,8 @@ void decompress_kernel(unsigned long boot_heap_start)
 	puts("\n");
 
 	/* Decompress the kernel with according algorithm */
-	decompress((char *)zimage_start, zimage_size, 0, 0,
-		   (void *)VMLINUX_LOAD_ADDRESS_ULL, 0, error);
+	__decompress((char *)zimage_start, zimage_size, 0, 0,
+		   (void *)VMLINUX_LOAD_ADDRESS_ULL, 0, 0, error);
 
 	/* FIXME: should we flush cache here? */
 	puts("Now, booting the kernel...\n");

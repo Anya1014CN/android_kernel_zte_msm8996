@@ -23,6 +23,8 @@
 
 #define ISP_STATS_STREAM_BIT  0x80000000
 
+#define INTERLACE_SUPPORT_OLD_REMOVED
+
 struct msm_vfe_cfg_cmd_list;
 
 enum ISP_START_PIXEL_PATTERN {
@@ -530,7 +532,8 @@ enum vfe_sd_type {
 };
 
 /* When you change the value below, check for the sof event_data size.
- * V4l2 limits payload to 64 bytes */
+ * V4l2 limits payload to 64 bytes
+ */
 #define MS_NUM_SLAVE_MAX 1
 
 /* Usecases when 2 HW need to be related or synced */
@@ -553,12 +556,14 @@ struct msm_isp_set_dual_hw_ms_cmd {
 	enum msm_vfe_dual_hw_ms_type dual_hw_ms_type;
 	/* Primary intf is mostly associated with preview.
 	 * This primary intf SOF frame_id and timestamp is tracked
-	 * and used to calculate delta */
+	 * and used to calculate delta
+	 */
 	enum msm_vfe_input_src primary_intf;
 	/* input_src array indicates other input INTF that may be Master/Slave.
 	 * For these additional intf, frame_id and timestamp are not saved.
 	 * However, if these are slaves then they will still get their
-	 * frame_id from Master */
+	 * frame_id from Master
+	 */
 	enum msm_vfe_input_src input_src[VFE_SRC_MAX];
 	uint32_t sof_delta_threshold; /* In milliseconds. Sent for Master */
 };
@@ -612,6 +617,33 @@ struct msm_vfe_axi_src_state {
 	enum msm_vfe_input_src input_src;
 	uint32_t src_active;
 	uint32_t src_frame_id;
+};
+
+enum msm_vfe_cmd_ext_type_t {
+	VFE_GET_BUFQ_STATE,
+};
+
+enum msm_isp_buffer_state {
+	MSM_ISP_BUFFER_STATE_UNUSED,         /* not used */
+	MSM_ISP_BUFFER_STATE_INITIALIZED,    /* REQBUF done */
+	MSM_ISP_BUFFER_STATE_PREPARED,       /* BUF mapped */
+	MSM_ISP_BUFFER_STATE_QUEUED,         /* buf queued */
+	MSM_ISP_BUFFER_STATE_DEQUEUED,       /* in use in VFE */
+	MSM_ISP_BUFFER_STATE_DIVERTED,       /* Sent to other hardware*/
+	MSM_ISP_BUFFER_STATE_DISPATCHED,     /* Sent to HAL*/
+};
+
+struct msm_vfe_bufq_state {
+	uint32_t handle;
+	uint32_t nbufs;
+	int32_t __user *buf_state;
+};
+
+struct msm_vfe_cmd_ext {
+	enum msm_vfe_cmd_ext_type_t type;
+	union {
+		struct msm_vfe_bufq_state bufq_state;
+	} data;
 };
 
 enum msm_isp_event_mask_index {
@@ -721,7 +753,8 @@ enum msm_isp_event_idx {
 
 /* The msm_v4l2_event_data structure should match the
  * v4l2_event.u.data field.
- * should not exceed 64 bytes */
+ * should not exceed 64 bytes
+ */
 
 struct msm_isp_buf_event {
 	uint32_t session_id;
@@ -729,6 +762,7 @@ struct msm_isp_buf_event {
 	uint32_t handle;
 	uint32_t output_format;
 	int8_t buf_idx;
+	uint8_t field_type;
 };
 struct msm_isp_fetch_eng_event {
 	uint32_t session_id;
@@ -902,6 +936,13 @@ struct msm_vfe_axi_output_plane_cfg {
 	uint32_t frame_increment;
 };
 
+struct msm_vfe_axi_framedrop_update {
+	enum msm_vfe_axi_stream_src stream_src;
+
+	uint8_t framedrop_period;
+	uint32_t framedrop_pattern;
+};
+
 struct msm_vfe_axi_output_path_cfg {
 	uint8_t enable;
 
@@ -966,6 +1007,10 @@ enum msm_isp_ioctl_cmd_code {
 	MSM_ISP_AXI_OUTPUT_CFG,
 	MSM_ISP_START,
 	MSM_ISP_STOP,
+
+	MSM_ISP_SET_CLK_STATUS,
+	MSM_ISP_CMD_EXT,
+	MSM_ISP_FRAMEDROP_UPDATE,
 };
 
 
@@ -1093,9 +1138,20 @@ enum msm_isp_ioctl_cmd_code {
 	_IOWR('V', MSM_ISP_AXI_OUTPUT_CFG, \
 		struct msm_vfe_axi_output_cfg)
 
+#define VIDIOC_MSM_ISP_FRAMEDROP_UPDATE \
+	_IOWR('V', MSM_ISP_FRAMEDROP_UPDATE, \
+		struct msm_vfe_axi_output_cfg)
+
 #define VIDIOC_MSM_ISP_CAMIF_CFG \
 	_IOWR('V', MSM_ISP_CAMIF_CFG, \
 		struct msm_vfe_camif_cfg)
 
+#define VIDIOC_MSM_ISP_SET_CLK_STATUS \
+	_IOWR('V', MSM_ISP_SET_CLK_STATUS, \
+		unsigned int)
+
+#define VIDIOC_MSM_ISP_CMD_EXT \
+	_IOWR('V', MSM_ISP_CMD_EXT, \
+		struct msm_vfe_cmd_ext)
 
 #endif /* __UAPI_MSM_AIS_ISP__ */

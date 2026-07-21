@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2015, 2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -101,6 +101,7 @@ struct elem_info qmi_response_type_v01_ei[] = {
 		.ei_array	= NULL,
 	},
 };
+EXPORT_SYMBOL(qmi_response_type_v01_ei);
 
 struct elem_info qmi_error_resp_type_v01_ei[] = {
 	{
@@ -1994,8 +1995,10 @@ int qmi_svc_event_notifier_register(uint32_t service_id,
 			svc_info_arr = kmalloc_array(num_servers,
 						sizeof(*svc_info_arr),
 						GFP_KERNEL);
-			if (!svc_info_arr)
-				return -ENOMEM;
+			if (!svc_info_arr) {
+				ret = -ENOMEM;
+				goto qmi_svc_event_notifier_register_err;
+			}
 			num_servers = msm_ipc_router_lookup_server_name(
 								&svc_name,
 								svc_info_arr,
@@ -2013,6 +2016,8 @@ int qmi_svc_event_notifier_register(uint32_t service_id,
 			spin_unlock_irqrestore(&temp->nb_lock, flags);
 		}
 	}
+
+qmi_svc_event_notifier_register_err:
 	mutex_unlock(&temp->svc_addr_list_lock);
 
 	return ret;

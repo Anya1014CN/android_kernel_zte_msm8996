@@ -16,6 +16,8 @@
 
 #include <soc/qcom/msm_qmi_interface.h>
 
+#include "ipa_qmi_service.h"
+
 /* Type Definitions  */
 static struct elem_info ipa3_hdr_tbl_info_type_data_v01_ei[] = {
 	{
@@ -3263,7 +3265,8 @@ struct elem_info ipa3_get_stats_per_client_resp_msg_data_v01_ei[] = {
 	},
 };
 
-struct elem_info ipa3_configure_ul_firewall_rules_req_msg_data_v01_ei[] = {
+struct elem_info
+	ipa3_configure_ul_firewall_rules_req_msg_data_v01_ei[] = {
 	{
 		.data_type	= QMI_DATA_LEN,
 		.elem_len	= 1,
@@ -3343,7 +3346,8 @@ struct elem_info ipa3_configure_ul_firewall_rules_req_msg_data_v01_ei[] = {
 	},
 };
 
-struct elem_info ipa3_configure_ul_firewall_rules_resp_msg_data_v01_ei[] = {
+struct elem_info
+	ipa3_configure_ul_firewall_rules_resp_msg_data_v01_ei[] = {
 	{
 		.data_type	= QMI_STRUCT,
 		.elem_len	= 1,
@@ -3362,7 +3366,8 @@ struct elem_info ipa3_configure_ul_firewall_rules_resp_msg_data_v01_ei[] = {
 	},
 };
 
-struct elem_info ipa3_configure_ul_firewall_rules_ind_msg_data_v01_ei[] = {
+struct elem_info
+	ipa3_configure_ul_firewall_rules_ind_msg_data_v01_ei[] = {
 	{
 		.data_type	= QMI_STRUCT,
 		.elem_len	= 1,

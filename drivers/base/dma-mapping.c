@@ -62,7 +62,7 @@ static int dmam_match(struct device *dev, void *res, void *match_data)
  * RETURNS:
  * Pointer to allocated memory on success, NULL on failure.
  */
-void * dmam_alloc_coherent(struct device *dev, size_t size,
+void *dmam_alloc_coherent(struct device *dev, size_t size,
 			   dma_addr_t *dma_handle, gfp_t gfp)
 {
 	struct dma_devres *dr;
@@ -344,7 +344,7 @@ void dma_common_free_remap(void *cpu_addr, size_t size, unsigned long vm_flags,
 		return;
 	}
 
-	unmap_kernel_range((unsigned long)cpu_addr, size);
+	unmap_kernel_range((unsigned long)cpu_addr, PAGE_ALIGN(size));
 	vunmap(cpu_addr);
 }
 #endif

@@ -75,7 +75,7 @@ config ATMEL_TCB_CLKSRC
 config ATMEL_TCB_CLKSRC_BLOCK
 	int
 	depends on ATMEL_TCB_CLKSRC
-	prompt "TC Block" if ARCH_AT91RM9200 || ARCH_AT91SAM9260 || CPU_AT32AP700X
+	prompt "TC Block" if CPU_AT32AP700X
 	default 0
 	range 0 1
 	help
@@ -271,6 +271,16 @@ config HP_ILO
 	  To compile this driver as a module, choose M here: the
 	  module will be called hpilo.
 
+config QCOM_COINCELL
+	tristate "Qualcomm coincell charger support"
+	depends on MFD_SPMI_PMIC || COMPILE_TEST
+	help
+	  This driver supports the coincell block found inside of
+	  Qualcomm PMICs.  The coincell charger provides a means to
+	  charge a coincell battery or backup capacitor which is used
+	  to maintain PMIC register and RTC state in the absence of
+	  external power.
+
 config SGI_GRU
 	tristate "SGI GRU driver"
 	depends on X86_UV && SMP
@@ -365,16 +375,6 @@ config SENSORS_APDS990X
 	   To compile this driver as a module, choose M here: the
 	   module will be called apds990x. If unsure, say N here.
 
-config APDS9930
-	 tristate "Avago APDS9930 combined als and proximity sensors"
-	 depends on I2C
-	 help
-	   Say Y here if you want to build a driver for Avago APDS9930
-	   combined ambient light and proximity sensor chip.
-
-	   To compile this driver as a module, choose M here: the
-	   module will be called apds9930. If unsure, say N here.
-
 config HMC6352
 	tristate "Honeywell HMC6352 compass"
 	depends on I2C
@@ -412,13 +412,9 @@ config TI_DAC7512
 	  This driver can also be built as a module. If so, the module
 	  will be called ti_dac7512.
 
-config UID_STAT
-	bool "UID based statistics tracking exported to /proc/uid_stat"
-	default n
-
 config VMWARE_BALLOON
 	tristate "VMware Balloon Driver"
-	depends on X86 && HYPERVISOR_GUEST
+	depends on VMWARE_VMCI && X86 && HYPERVISOR_GUEST
 	help
 	  This is VMware physical memory management driver which acts
 	  like a "balloon" that can be inflated to reclaim physical pages
@@ -555,41 +551,11 @@ config VEXPRESS_SYSCFG
 
 config UID_SYS_STATS
 	bool "Per-UID statistics"
-	depends on PROFILING
+	depends on PROFILING && TASK_XACCT && TASK_IO_ACCOUNTING
 	help
 	  Per UID based cpu time statistics exported to /proc/uid_cputime
 	  Per UID based io statistics exported to /proc/uid_io
-
-config USB_EXT_TYPE_C_PERICOM
-	tristate "USB Type-C charger detection support using Pericom chip"
-	depends on I2C && POWER_SUPPLY
-	help
-	  Enables support for the USB Type-C chargers using external
-	  pericom chip connected using I2C.
-
-	  This adds support for detecting USB Type-C chargers that
-	  can supply upto 3A Vbus current for charging.
-
-config USB_EXT_TYPE_C_TI
-	tristate "USB Type-C charger detection support using TI chip"
-	depends on I2C && POWER_SUPPLY
-	help
-	  Enables support for the USB Type-C chargers using external
-	  TI chip connected using I2C.
-
-	  This adds support for detecting USB Type-C chargers that
-	  can supply upto 3A Vbus current for charging.
-
-config TI_DRV2667
-	tristate "TI's DRV2667 haptic controller support"
-	depends on I2C
-	help
-	  The DRV2667 is a piezo haptic controller chip. It can drive
-	  piezo haptics either in digital mode or analog mode. This chip
-	  can be used in variety of devices to provide haptic support.
-
-	  To compile this driver as a module, choose M here: the
-	  module will be called ti_drv2667.
+	  Per UID based procstat control in /proc/uid_procstat
 
 config QPNP_MISC
 	tristate "QPNP Misc Peripheral"
@@ -613,12 +579,15 @@ config MEMORY_STATE_TIME
 	help
 	  Memory time statistics exported to /sys/kernel/memory_state_time
 
+config TSPDRV
+	tristate "TouchSense driver support"
+	default y
+
 source "drivers/misc/c2port/Kconfig"
 source "drivers/misc/eeprom/Kconfig"
 source "drivers/misc/cb710/Kconfig"
 source "drivers/misc/ti-st/Kconfig"
 source "drivers/misc/lis3lv02d/Kconfig"
-source "drivers/misc/carma/Kconfig"
 source "drivers/misc/altera-stapl/Kconfig"
 source "drivers/misc/mei/Kconfig"
 source "drivers/misc/vmw_vmci/Kconfig"
@@ -627,4 +596,5 @@ source "drivers/misc/mic/Kconfig"
 source "drivers/misc/genwqe/Kconfig"
 source "drivers/misc/echo/Kconfig"
 source "drivers/misc/cxl/Kconfig"
+source "drivers/misc/type-c/Kconfig"
 endmenu

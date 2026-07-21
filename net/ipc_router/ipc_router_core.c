@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2016, 2018, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -138,7 +138,6 @@ struct msm_ipc_router_xprt_info {
 	struct msm_ipc_router_xprt *xprt;
 	uint32_t remote_node_id;
 	uint32_t initialized;
-	uint32_t hello_sent;
 	struct list_head pkt_list;
 	struct wakeup_source ws;
 	struct mutex rx_lock_lhb2;
@@ -150,6 +149,7 @@ struct msm_ipc_router_xprt_info {
 	void *log_ctx;
 	struct kref ref;
 	struct completion ref_complete;
+	bool dynamic_ws;
 };
 
 #define RT_HASH_SIZE 4
@@ -216,6 +216,13 @@ enum {
 	DOWN,
 	UP,
 };
+
+static bool is_wakeup_source_allowed;
+
+void msm_ipc_router_set_ws_allowed(bool flag)
+{
+	is_wakeup_source_allowed = flag;
+}
 
 /**
  * is_sensor_port() - Check if the remote port is sensor service or not
@@ -377,6 +384,8 @@ static void ipc_router_log_msg(void *log_ctx, uint32_t xchng_type,
 			svcId = rport_ptr->server->name.service;
 			svcIns = rport_ptr->server->name.instance;
 			port_type = CLIENT_PORT;
+			port_ptr->last_served_svc_id =
+					rport_ptr->server->name.service;
 		} else if (port_ptr && (port_ptr->type == SERVER_PORT)) {
 			svcId = port_ptr->port_name.service;
 			svcIns = port_ptr->port_name.instance;
@@ -602,6 +611,7 @@ struct rr_packet *clone_pkt(struct rr_packet *pkt)
 	}
 	cloned_pkt->pkt_fragment_q = pkt_fragment_q;
 	cloned_pkt->length = pkt->length;
+	cloned_pkt->ws_need = pkt->ws_need;
 	return cloned_pkt;
 
 fail_clone:
@@ -1341,8 +1351,9 @@ struct msm_ipc_port *msm_ipc_router_create_raw_port(void *endpoint,
 	mutex_init(&port_ptr->port_rx_q_lock_lhc3);
 	init_waitqueue_head(&port_ptr->port_rx_wait_q);
 	snprintf(port_ptr->rx_ws_name, MAX_WS_NAME_SZ,
-		 "ipc%08x_%s",
+		 "ipc%08x_%d_%s",
 		 port_ptr->this_port.port_id,
+		 task_pid_nr(current),
 		 current->comm);
 	port_ptr->port_rx_ws = wakeup_source_register(port_ptr->rx_ws_name);
 	if (!port_ptr->port_rx_ws) {
@@ -2486,37 +2497,12 @@ static void do_version_negotiation(struct msm_ipc_router_xprt_info *xprt_info,
 	}
 }
 
-static int send_hello_msg(struct msm_ipc_router_xprt_info *xprt_info)
-{
-	int rc = 0;
-	union rr_control_msg ctl;
-
-	if (xprt_info->hello_sent)
-		return 0;
-
-	xprt_info->hello_sent = 1;
-	/* Send a HELLO message */
-	memset(&ctl, 0, sizeof(ctl));
-	ctl.hello.cmd = IPC_ROUTER_CTRL_CMD_HELLO;
-	ctl.hello.checksum = IPC_ROUTER_HELLO_MAGIC;
-	ctl.hello.versions = (uint32_t)IPC_ROUTER_VER_BITMASK;
-	ctl.hello.checksum = ipc_router_calc_checksum(&ctl);
-	rc = ipc_router_send_ctl_msg(xprt_info, &ctl,
-				     IPC_ROUTER_DUMMY_DEST_NODE);
-	if (rc < 0) {
-		xprt_info->hello_sent = 0;
-		IPC_RTR_ERR("%s: Error sending HELLO message\n",
-			    __func__);
-		return rc;
-	}
-	return rc;
-}
-
 static int process_hello_msg(struct msm_ipc_router_xprt_info *xprt_info,
 				union rr_control_msg *msg,
 				struct rr_header_v1 *hdr)
 {
 	int i, rc = 0;
+	union rr_control_msg ctl;
 	struct msm_ipc_routing_table_entry *rt_entry;
 
 	if (!hdr)
@@ -2531,10 +2517,19 @@ static int process_hello_msg(struct msm_ipc_router_xprt_info *xprt_info,
 	kref_put(&rt_entry->ref, ipc_router_release_rtentry);
 
 	do_version_negotiation(xprt_info, msg);
-	rc = send_hello_msg(xprt_info);
-	if (rc < 0)
+	/* Send a reply HELLO message */
+	memset(&ctl, 0, sizeof(ctl));
+	ctl.hello.cmd = IPC_ROUTER_CTRL_CMD_HELLO;
+	ctl.hello.checksum = IPC_ROUTER_HELLO_MAGIC;
+	ctl.hello.versions = (uint32_t)IPC_ROUTER_VER_BITMASK;
+	ctl.hello.checksum = ipc_router_calc_checksum(&ctl);
+	rc = ipc_router_send_ctl_msg(xprt_info, &ctl,
+				     IPC_ROUTER_DUMMY_DEST_NODE);
+	if (rc < 0) {
+		IPC_RTR_ERR("%s: Error sending reply HELLO message\n",
+								__func__);
 		return rc;
-
+	}
 	xprt_info->initialized = 1;
 
 	/* Send list of servers from the local node and from nodes
@@ -3895,16 +3890,18 @@ static void dump_local_ports(struct seq_file *s)
 	int j;
 	struct msm_ipc_port *port_ptr;
 
-	seq_printf(s, "%-11s|%-11s|\n",
-			"Node_id", "Port_id");
+	seq_printf(s, "%-11s|%-11s|%-32s|%-11s|\n",
+		   "Node_id", "Port_id", "Wakelock", "Last SVCID");
 	seq_puts(s, "------------------------------------------------------------\n");
 	down_read(&local_ports_lock_lhc2);
 	for (j = 0; j < LP_HASH_SIZE; j++) {
 		list_for_each_entry(port_ptr, &local_ports[j], list) {
 			mutex_lock(&port_ptr->port_lock_lhc3);
-			seq_printf(s, "0x%08x |0x%08x |\n",
-				       port_ptr->this_port.node_id,
-				       port_ptr->this_port.port_id);
+			seq_printf(s, "0x%08x |0x%08x |%-32s|0x%08x |\n",
+				   port_ptr->this_port.node_id,
+				   port_ptr->this_port.port_id,
+				   port_ptr->rx_ws_name,
+				   port_ptr->last_served_svc_id);
 			mutex_unlock(&port_ptr->port_lock_lhc3);
 		}
 	}
@@ -4091,7 +4088,6 @@ static int msm_ipc_router_add_xprt(struct msm_ipc_router_xprt *xprt)
 
 	xprt_info->xprt = xprt;
 	xprt_info->initialized = 0;
-	xprt_info->hello_sent = 0;
 	xprt_info->remote_node_id = -1;
 	INIT_LIST_HEAD(&xprt_info->pkt_list);
 	mutex_init(&xprt_info->rx_lock_lhb2);
@@ -4103,6 +4099,9 @@ static int msm_ipc_router_add_xprt(struct msm_ipc_router_xprt *xprt)
 	INIT_LIST_HEAD(&xprt_info->list);
 	kref_init(&xprt_info->ref);
 	init_completion(&xprt_info->ref_complete);
+	xprt_info->dynamic_ws = 0;
+	if (xprt->get_ws_info)
+		xprt_info->dynamic_ws = xprt->get_ws_info(xprt);
 
 	xprt_info->workqueue = create_singlethread_workqueue(xprt->name);
 	if (!xprt_info->workqueue) {
@@ -4131,7 +4130,6 @@ static int msm_ipc_router_add_xprt(struct msm_ipc_router_xprt *xprt)
 	up_write(&routing_table_lock_lha3);
 
 	xprt->priv = xprt_info;
-	send_hello_msg(xprt_info);
 
 	return 0;
 }
@@ -4273,7 +4271,7 @@ void msm_ipc_router_xprt_notify(struct msm_ipc_router_xprt *xprt,
 		return;
 	}
 
-	pkt->ws_need = true;
+	pkt->ws_need = false;
 
 	if (pkt->hdr.type == IPC_ROUTER_CTRL_CMD_DATA)
 		rport_ptr = ipc_router_get_rport_ref(pkt->hdr.src_node_id,
@@ -4281,12 +4279,20 @@ void msm_ipc_router_xprt_notify(struct msm_ipc_router_xprt *xprt,
 
 	mutex_lock(&xprt_info->rx_lock_lhb2);
 	list_add_tail(&pkt->list, &xprt_info->pkt_list);
-	/* check every pkt is from SENSOR services or not*/
-	if (is_sensor_port(rport_ptr))
-		pkt->ws_need = false;
-	else
-		__pm_stay_awake(&xprt_info->ws);
-
+	/* check every pkt is from SENSOR services or not and
+	 * avoid holding both edge and port specific wake-up sources
+	 */
+	if (!is_sensor_port(rport_ptr)) {
+		if (!xprt_info->dynamic_ws) {
+			__pm_stay_awake(&xprt_info->ws);
+			pkt->ws_need = true;
+		} else {
+			if (is_wakeup_source_allowed) {
+				__pm_stay_awake(&xprt_info->ws);
+				pkt->ws_need = true;
+			}
+		}
+	}
 	mutex_unlock(&xprt_info->rx_lock_lhb2);
 	queue_work(xprt_info->workqueue, &xprt_info->read_data);
 }

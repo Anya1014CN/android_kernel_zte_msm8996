@@ -17,6 +17,7 @@
 #include <linux/device.h>
 #include <linux/devfreq.h>
 #include <linux/fault-inject.h>
+#include <linux/blkdev.h>
 
 #include <linux/mmc/core.h>
 #include <linux/mmc/card.h>
@@ -83,47 +84,14 @@ struct mmc_ios {
 #define MMC_SET_DRIVER_TYPE_A	1
 #define MMC_SET_DRIVER_TYPE_C	2
 #define MMC_SET_DRIVER_TYPE_D	3
+
+	bool enhanced_strobe;			/* hs400es selection */
 };
 
 /* states to represent load on the host */
 enum mmc_load {
 	MMC_LOAD_HIGH,
 	MMC_LOAD_LOW,
-};
-
-/* RED error flags to detect type of RED error */
-#define CQ_CMD_RED_ERR	(R1_BLOCK_LEN_ERROR | R1_ERASE_SEQ_ERROR | \
-		R1_ERASE_PARAM | R1_LOCK_UNLOCK_FAILED | R1_ILLEGAL_COMMAND | \
-		R1_CID_CSD_OVERWRITE | R1_SWITCH_ERROR)
-
-#define CQ_WP_RED	(R1_WP_VIOLATION | R1_WP_ERASE_SKIP)
-
-#define CQ_RED_RETRY	(R1_COM_CRC_ERROR | R1_CARD_ECC_FAILED | R1_CC_ERROR |\
-		R1_ERROR | R1_ERASE_RESET | R1_EXCEPTION_EVENT)
-
-#define CQ_ADDR_ERR	(R1_OUT_OF_RANGE | R1_ADDRESS_ERROR)
-
-#define CQ_RED	(CQ_WP_RED | CQ_CMD_RED_ERR | CQ_RED_RETRY | CQ_ADDR_ERR)
-
-struct mmc_cmdq_err_info {
-	bool remove_task;
-	bool fail_comp_task;
-	bool fail_dev_pend;
-	bool timedout;
-	unsigned long comp_status;
-	u32 cq_terri;
-	unsigned long dev_pend;
-	bool resp_err;
-	int tag;
-	int data_cmd;
-	int data_tag;
-	bool data_valid;
-	int cmd;
-	int cmd_tag;
-	bool cmd_valid;
-
-	int max_slot;
-	int dcmd_slot;
 };
 
 struct mmc_cmdq_host_ops {
@@ -135,10 +103,6 @@ struct mmc_cmdq_host_ops {
 	int (*halt)(struct mmc_host *host, bool halt);
 	void (*reset)(struct mmc_host *host, bool soft);
 	void (*dumpstate)(struct mmc_host *host);
-	void (*err_info)(struct mmc_host *host,
-			struct mmc_cmdq_err_info *err_data,
-			struct mmc_request *mrq);
-	struct mmc_request *(*get_mrq_by_tag)(struct mmc_host *mmc, int tag);
 };
 
 struct mmc_host_ops {
@@ -202,7 +166,9 @@ struct mmc_host_ops {
 	/* Prepare HS400 target operating frequency depending host driver */
 	int	(*prepare_hs400_tuning)(struct mmc_host *host, struct mmc_ios *ios);
 	int	(*enhanced_strobe)(struct mmc_host *host);
-	int	(*select_drive_strength)(unsigned int max_dtr, int host_drv, int card_drv);
+	int	(*select_drive_strength)(struct mmc_card *card,
+					 unsigned int max_dtr, int host_drv,
+					 int card_drv, int *drv_type);
 	void	(*hw_reset)(struct mmc_host *host);
 	void	(*card_event)(struct mmc_host *host);
 
@@ -215,9 +181,13 @@ struct mmc_host_ops {
 
 	unsigned long (*get_max_frequency)(struct mmc_host *host);
 	unsigned long (*get_min_frequency)(struct mmc_host *host);
+
 	int	(*notify_load)(struct mmc_host *, enum mmc_load);
 	void	(*notify_halt)(struct mmc_host *mmc, bool halt);
 	void	(*force_err_irq)(struct mmc_host *host, u64 errmask);
+	int	(*check_temp)(struct mmc_host *host);
+	int	(*reg_temp_callback)(struct mmc_host *host);
+	int	(*dereg_temp_callback)(struct mmc_host *host);
 };
 
 struct mmc_card;
@@ -241,12 +211,11 @@ struct mmc_cmdq_req {
 
 	unsigned int		resp_idx;
 	unsigned int		resp_arg;
-	unsigned int		dev_pend;
+	unsigned int		dev_pend_tasks;
 	bool			resp_err;
+	bool			skip_err_handling;
 	int			tag; /* used for command queuing */
 	u8			ctx_id;
-	u32			err_info;
-	unsigned long		cqtcn;
 };
 
 struct mmc_async_req {
@@ -263,7 +232,6 @@ struct mmc_async_req {
  * struct mmc_slot - MMC slot functions
  *
  * @cd_irq:		MMC/SD-card slot hotplug detection IRQ or -EINVAL
- * @lock:		protect the @handler_priv pointer
  * @handler_priv:	MMC/SD-card slot context
  *
  * Some MMC/SD host controllers implement slot-functions like card and
@@ -273,7 +241,6 @@ struct mmc_async_req {
  */
 struct mmc_slot {
 	int cd_irq;
-	struct mutex lock;
 	void *handler_priv;
 };
 
@@ -321,6 +288,7 @@ struct mmc_context_info {
 };
 
 struct regulator;
+struct mmc_pwrseq;
 
 struct mmc_supply {
 	struct regulator *vmmc;		/* Card power supply */
@@ -365,9 +333,11 @@ struct mmc_devfeq_clk_scaling {
 	ktime_t		start_busy;
 	ktime_t		measure_interval_start;
 	atomic_t	devfreq_abort;
-	u32		skip_clk_scale_freq_update;
+	bool		skip_clk_scale_freq_update;
 	int		freq_table_sz;
+	int		pltfm_freq_table_sz;
 	u32		*freq_table;
+	u32		*pltfm_freq_table;
 	unsigned long	total_busy_time_us;
 	unsigned long	target_freq;
 	unsigned long	curr_freq;
@@ -389,6 +359,7 @@ struct mmc_host {
 	int			index;
 	const struct mmc_host_ops *ops;
 	const struct mmc_cmdq_host_ops *cmdq_ops;
+	struct mmc_pwrseq	*pwrseq;
 	unsigned int		f_min;
 	unsigned int		f_max;
 	unsigned int		f_init;
@@ -451,6 +422,7 @@ struct mmc_host {
 #define MMC_CAP_HW_RESET	(1 << 31)	/* Hardware reset */
 
 	u32			caps2;		/* More host capabilities */
+	u32			cached_caps2;
 
 #define MMC_CAP2_BOOTPART_NOACC	(1 << 0)	/* Boot partition no access */
 #define MMC_CAP2_FULL_PWR_CYCLE	(1 << 2)	/* Can do full power cycle */
@@ -470,13 +442,15 @@ struct mmc_host {
 #define MMC_CAP2_HS400_1_2V	(1 << 16)	/* Can support HS400 1.2V */
 #define MMC_CAP2_HS400		(MMC_CAP2_HS400_1_8V | \
 				 MMC_CAP2_HS400_1_2V)
+#define MMC_CAP2_HSX00_1_2V	(MMC_CAP2_HS200_1_2V_SDR | MMC_CAP2_HS400_1_2V)
 #define MMC_CAP2_SDIO_IRQ_NOTHREAD (1 << 17)
-#define MMC_CAP2_PACKED_WR_CONTROL (1 << 18)	/* Allow write packing control */
-#define MMC_CAP2_CLK_SCALE	(1 << 19)	/* Allow dynamic clk scaling */
+#define MMC_CAP2_NO_WRITE_PROTECT (1 << 18)	/* No physical write protect pin, assume that card is always read-write */
+#define MMC_CAP2_PACKED_WR_CONTROL (1 << 19)	/* Allow write packing control */
+#define MMC_CAP2_CLK_SCALE	(1 << 20)	/* Allow dynamic clk scaling */
 /* Allows Asynchronous SDIO irq while card is in 4-bit mode */
-#define MMC_CAP2_ASYNC_SDIO_IRQ_4BIT_MODE (1 << 20)
+#define MMC_CAP2_ASYNC_SDIO_IRQ_4BIT_MODE (1 << 21)
 /* Some hosts need additional tuning */
-#define MMC_CAP2_HS400_POST_TUNING	(1 << 21)
+#define MMC_CAP2_HS400_POST_TUNING	(1 << 22)
 #define MMC_CAP2_NONHOTPLUG	(1 << 25)	/*Don't support hotplug*/
 #define MMC_CAP2_CMD_QUEUE	(1 << 26)	/* support eMMC command queue */
 #define MMC_CAP2_SANITIZE       (1 << 27)               /* Support Sanitize */
@@ -552,7 +526,6 @@ struct mmc_host {
 #define MMC_BUSRESUME_MANUAL_RESUME	(1 << 0)
 #define MMC_BUSRESUME_NEEDS_RESUME	(1 << 1)
 	bool ignore_bus_resume_flags;
-	bool is_bad_card;
 
 	unsigned int		sdio_irqs;
 	struct task_struct	*sdio_irq_thread;
@@ -594,7 +567,6 @@ struct mmc_host {
 		int				num_funcs;
 	} embedded_sdio_data;
 #endif
-
 	/*
 	 * Set to 1 to just stop the SDCLK to the card without
 	 * actually disabling the clock from it's source.
@@ -618,7 +590,7 @@ struct mmc_host {
 	struct mmc_cmdq_context_info	cmdq_ctx;
 	int num_cq_slots;
 	int dcmd_cq_slot;
-	u32			cmdq_thist_enabled;
+	bool			cmdq_thist_enabled;
 	/*
 	 * several cmdq supporting host controllers are extensions
 	 * of legacy controllers. This variable can be used to store
@@ -627,7 +599,15 @@ struct mmc_host {
 	 */
 	void *cmdq_private;
 	struct mmc_request	*err_mrq;
+#ifdef CONFIG_BLOCK
+	int			latency_hist_enabled;
+	struct io_latency_state io_lat_read;
+	struct io_latency_state io_lat_write;
+#endif
+
 	bool sdr104_wa;
+	atomic_t rpmb_req_pending;
+	struct mutex		rpmb_req_mutex;
 	unsigned long		private[0] ____cacheline_aligned;
 };
 
@@ -666,6 +646,7 @@ static inline void *mmc_cmdq_private(struct mmc_host *host)
 #define mmc_bus_manual_resume(host) ((host)->bus_resume_flags & \
 				MMC_BUSRESUME_MANUAL_RESUME)
 
+#ifdef CONFIG_MMC_BLOCK_DEFERRED_RESUME
 static inline void mmc_set_bus_resume_policy(struct mmc_host *host, int manual)
 {
 	if (manual)
@@ -673,6 +654,11 @@ static inline void mmc_set_bus_resume_policy(struct mmc_host *host, int manual)
 	else
 		host->bus_resume_flags &= ~MMC_BUSRESUME_MANUAL_RESUME;
 }
+#else
+static inline void mmc_set_bus_resume_policy(struct mmc_host *host, int manual)
+{
+}
+#endif
 
 extern int mmc_resume_bus(struct mmc_host *host);
 
@@ -686,7 +672,8 @@ static inline void mmc_signal_sdio_irq(struct mmc_host *host)
 {
 	host->ops->enable_sdio_irq(host, 0);
 	host->sdio_irq_pending = true;
-	wake_up_process(host->sdio_irq_thread);
+	if (host->sdio_irq_thread)
+		wake_up_process(host->sdio_irq_thread);
 }
 
 void sdio_run_irqs(struct mmc_host *host);
@@ -696,6 +683,7 @@ int mmc_regulator_get_ocrmask(struct regulator *supply);
 int mmc_regulator_set_ocr(struct mmc_host *mmc,
 			struct regulator *supply,
 			unsigned short vdd_bit);
+int mmc_regulator_set_vqmmc(struct mmc_host *mmc, struct mmc_ios *ios);
 #else
 static inline int mmc_regulator_get_ocrmask(struct regulator *supply)
 {
@@ -707,6 +695,12 @@ static inline int mmc_regulator_set_ocr(struct mmc_host *mmc,
 				 unsigned short vdd_bit)
 {
 	return 0;
+}
+
+static inline int mmc_regulator_set_vqmmc(struct mmc_host *mmc,
+					  struct mmc_ios *ios)
+{
+	return -EINVAL;
 }
 #endif
 
@@ -741,8 +735,8 @@ static inline int mmc_boot_partition_access(struct mmc_host *host)
 
 static inline bool mmc_card_and_host_support_async_int(struct mmc_host *host)
 {
-	return ((host->caps2 & MMC_CAP2_ASYNC_SDIO_IRQ_4BIT_MODE) &&
-			(host->card->cccr.async_intr_sup));
+	return (host->card && (host->caps2 & MMC_CAP2_ASYNC_SDIO_IRQ_4BIT_MODE)
+			&& (host->card->cccr.async_intr_sup));
 }
 
 static inline int mmc_host_uhs(struct mmc_host *host)
@@ -751,6 +745,16 @@ static inline int mmc_host_uhs(struct mmc_host *host)
 		(MMC_CAP_UHS_SDR12 | MMC_CAP_UHS_SDR25 |
 		 MMC_CAP_UHS_SDR50 | MMC_CAP_UHS_SDR104 |
 		 MMC_CAP_UHS_DDR50);
+}
+
+static inline void mmc_host_clear_sdr104(struct mmc_host *host)
+{
+	host->caps &= ~MMC_CAP_UHS_SDR104;
+}
+
+static inline void mmc_host_set_sdr104(struct mmc_host *host)
+{
+	host->caps |= MMC_CAP_UHS_SDR104;
 }
 
 static inline int mmc_host_packed_wr(struct mmc_host *host)
@@ -833,6 +837,11 @@ static inline bool mmc_card_ddr52(struct mmc_card *card)
 static inline bool mmc_card_hs400(struct mmc_card *card)
 {
 	return card->host->ios.timing == MMC_TIMING_MMC_HS400;
+}
+
+static inline bool mmc_card_hs400es(struct mmc_card *card)
+{
+	return card->host->ios.enhanced_strobe;
 }
 
 void mmc_retune_enable(struct mmc_host *host);

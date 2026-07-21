@@ -1,4 +1,4 @@
-/* Copyright (c) 2015-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2016-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -38,7 +38,7 @@ struct nqx_platform_data {
 	const char *clk_src_name;
 };
 
-static struct of_device_id msm_match_table[] = {
+static const struct of_device_id msm_match_table[] = {
 	{.compatible = "qcom,nq-nci"},
 	{}
 };
@@ -267,7 +267,7 @@ static ssize_t nfc_write(struct file *filp, const char __user *buf,
 
 	ret = i2c_master_send(nqx_dev->client, tmp, count);
 	if (ret != count) {
-		dev_err(&nqx_dev->client->dev,
+		dev_dbg(&nqx_dev->client->dev,
 		"%s: failed to write %d\n", __func__, ret);
 		ret = -EIO;
 		goto out_free;
@@ -304,7 +304,7 @@ static int nqx_standby_write(struct nqx_dev *nqx_dev,
 	for (retry_cnt = 1; retry_cnt <= MAX_RETRY_COUNT; retry_cnt++) {
 		ret = i2c_master_send(nqx_dev->client, buf, len);
 		if (ret < 0) {
-			dev_err(&nqx_dev->client->dev,
+			dev_dbg(&nqx_dev->client->dev,
 				"%s: write failed, Maybe in Standby Mode - Retry(%d)\n",
 				 __func__, retry_cnt);
 			usleep_range(1000, 1100);
@@ -315,10 +315,10 @@ static int nqx_standby_write(struct nqx_dev *nqx_dev,
 }
 
 /*
-	Power management of the eSE
-	NFC & eSE ON : NFC_EN high and eSE_pwr_req high.
-	NFC OFF & eSE ON : NFC_EN high and eSE_pwr_req high.
-	NFC OFF & eSE OFF : NFC_EN low and eSE_pwr_req low.
+ * Power management of the eSE
+ * NFC & eSE ON : NFC_EN high and eSE_pwr_req high.
+ * NFC OFF & eSE ON : NFC_EN high and eSE_pwr_req high.
+ * NFC OFF & eSE OFF : NFC_EN low and eSE_pwr_req low.
 */
 static int nqx_ese_pwr(struct nqx_dev *nqx_dev, unsigned long int arg)
 {
@@ -333,7 +333,8 @@ static int nqx_ese_pwr(struct nqx_dev *nqx_dev, unsigned long int arg)
 	}
 
 	if (arg == 0) {
-		/* We want to power on the eSE and to do so we need the
+		/*
+		 * We want to power on the eSE and to do so we need the
 		 * eSE_pwr_req pin and the NFC_EN pin to be high
 		 */
 		if (gpio_get_value(nqx_dev->ese_gpio)) {
@@ -437,7 +438,7 @@ static int nfc_open(struct inode *inode, struct file *filp)
 	return ret;
 }
 
-/**
+/*
  * nfc_ioctl_power_states() - power control
  * @filp:	pointer to the file descriptor
  * @arg:	mode that we want to move to
@@ -456,7 +457,8 @@ int nfc_ioctl_power_states(struct file *filp, unsigned long arg)
 	struct nqx_dev *nqx_dev = filp->private_data;
 
 	if (arg == 0) {
-		/* We are attempting a hardware reset so let us disable
+		/*
+		 * We are attempting a hardware reset so let us disable
 		 * interrupts to avoid spurious notifications to upper
 		 * layers.
 		 */
@@ -464,41 +466,46 @@ int nfc_ioctl_power_states(struct file *filp, unsigned long arg)
 		dev_dbg(&nqx_dev->client->dev,
 			"gpio_set_value disable: %s: info: %p\n",
 			__func__, nqx_dev);
-		if (gpio_is_valid(nqx_dev->firm_gpio))
+		if (gpio_is_valid(nqx_dev->firm_gpio)) {
 			gpio_set_value(nqx_dev->firm_gpio, 0);
+			usleep_range(10000, 10100);
+		}
 
 		if (gpio_is_valid(nqx_dev->ese_gpio)) {
 			if (!gpio_get_value(nqx_dev->ese_gpio)) {
 				dev_dbg(&nqx_dev->client->dev, "disabling en_gpio\n");
 				gpio_set_value(nqx_dev->en_gpio, 0);
+				usleep_range(10000, 10100);
 			} else {
 				dev_dbg(&nqx_dev->client->dev, "keeping en_gpio high\n");
 			}
 		} else {
 			dev_dbg(&nqx_dev->client->dev, "ese_gpio invalid, set en_gpio to low\n");
 			gpio_set_value(nqx_dev->en_gpio, 0);
+			usleep_range(10000, 10100);
 		}
 		r = nqx_clock_deselect(nqx_dev);
 		if (r < 0)
 			dev_err(&nqx_dev->client->dev, "unable to disable clock\n");
 		nqx_dev->nfc_ven_enabled = false;
-		/* hardware dependent delay */
-		msleep(100);
 	} else if (arg == 1) {
 		nqx_enable_irq(nqx_dev);
 		dev_dbg(&nqx_dev->client->dev,
 			"gpio_set_value enable: %s: info: %p\n",
 			__func__, nqx_dev);
-		if (gpio_is_valid(nqx_dev->firm_gpio))
+		if (gpio_is_valid(nqx_dev->firm_gpio)) {
 			gpio_set_value(nqx_dev->firm_gpio, 0);
+			usleep_range(10000, 10100);
+		}
 		gpio_set_value(nqx_dev->en_gpio, 1);
+		usleep_range(10000, 10100);
 		r = nqx_clock_select(nqx_dev);
 		if (r < 0)
 			dev_err(&nqx_dev->client->dev, "unable to enable clock\n");
 		nqx_dev->nfc_ven_enabled = true;
-		msleep(20);
 	} else if (arg == 2) {
-		/* We are switching to Dowload Mode, toggle the enable pin
+		/*
+		 * We are switching to Dowload Mode, toggle the enable pin
 		 * in order to set the NFCC in the new mode
 		 */
 		if (gpio_is_valid(nqx_dev->ese_gpio)) {
@@ -508,14 +515,15 @@ int nfc_ioctl_power_states(struct file *filp, unsigned long arg)
 			}
 		}
 		gpio_set_value(nqx_dev->en_gpio, 1);
-		msleep(20);
-		if (gpio_is_valid(nqx_dev->firm_gpio))
+		usleep_range(10000, 10100);
+		if (gpio_is_valid(nqx_dev->firm_gpio)) {
 			gpio_set_value(nqx_dev->firm_gpio, 1);
-		msleep(20);
+			usleep_range(10000, 10100);
+		}
 		gpio_set_value(nqx_dev->en_gpio, 0);
-		msleep(100);
+		usleep_range(10000, 10100);
 		gpio_set_value(nqx_dev->en_gpio, 1);
-		msleep(20);
+		usleep_range(10000, 10100);
 	} else {
 		r = -ENOIOCTLCMD;
 	}
@@ -550,7 +558,7 @@ static long nfc_compat_ioctl(struct file *pfile, unsigned int cmd,
 }
 #endif
 
-/**
+/*
  * nfc_ioctl_core_reset_ntf()
  * @filp:       pointer to the file descriptor
  *
@@ -567,7 +575,7 @@ int nfc_ioctl_core_reset_ntf(struct file *filp)
 	return nqx_dev->core_reset_ntf;
 }
 
-/**
+/*
  * Inside nfc_ioctl_nfcc_info
  *
  * @brief   nfc_ioctl_nfcc_info
@@ -640,13 +648,14 @@ static int nfcc_hw_check(struct i2c_client *client, struct nqx_dev *nqx_dev)
 	unsigned char nci_reset_rsp[6];
 	unsigned char init_rsp_len = 0;
 	unsigned int enable_gpio = nqx_dev->en_gpio;
+
 	/* making sure that the NFCC starts in a clean state. */
 	gpio_set_value(enable_gpio, 0);/* ULPM: Disable */
 	/* hardware dependent delay */
-	msleep(20);
+	usleep_range(10000, 10100);
 	gpio_set_value(enable_gpio, 1);/* HPD : Enable*/
 	/* hardware dependent delay */
-	msleep(20);
+	usleep_range(10000, 10100);
 
 	/* send NCI CORE RESET CMD with Keep Config parameters */
 	ret = i2c_master_send(client, raw_nci_reset_cmd,
@@ -662,21 +671,17 @@ static int nfcc_hw_check(struct i2c_client *client, struct nqx_dev *nqx_dev)
 	/* Read Response of RESET command */
 	ret = i2c_master_recv(client, nci_reset_rsp,
 		sizeof(nci_reset_rsp));
-	dev_err(&client->dev,
-	"%s: - nq - reset cmd answer : NfcNciRx %x %x %x\n",
-	__func__, nci_reset_rsp[0],
-	nci_reset_rsp[1], nci_reset_rsp[2]);
 	if (ret < 0) {
 		dev_err(&client->dev,
 		"%s: - i2c_master_recv Error\n", __func__);
 		goto err_nfcc_hw_check;
 	}
-	ret = i2c_master_send(client, raw_nci_init_cmd,
-		sizeof(raw_nci_init_cmd));
+	ret = nqx_standby_write(nqx_dev, raw_nci_init_cmd,
+				sizeof(raw_nci_init_cmd));
 	if (ret < 0) {
 		dev_err(&client->dev,
 		"%s: - i2c_master_send Error\n", __func__);
-		goto err_nfcc_hw_check;
+		goto err_nfcc_core_init_fail;
 	}
 	/* hardware dependent delay */
 	msleep(30);
@@ -686,7 +691,7 @@ static int nfcc_hw_check(struct i2c_client *client, struct nqx_dev *nqx_dev)
 	if (ret < 0) {
 		dev_err(&client->dev,
 		"%s: - i2c_master_recv Error\n", __func__);
-		goto err_nfcc_hw_check;
+		goto err_nfcc_core_init_fail;
 	}
 	init_rsp_len = 2 + nci_init_rsp[2]; /*payload + len*/
 	if (init_rsp_len > PAYLOAD_HEADER_LENGTH) {
@@ -699,6 +704,11 @@ static int nfcc_hw_check(struct i2c_client *client, struct nqx_dev *nqx_dev)
 		nqx_dev->nqx_info.info.fw_minor =
 				nci_init_rsp[init_rsp_len];
 	}
+	dev_dbg(&client->dev,
+		"%s: - nq - reset cmd answer : NfcNciRx %x %x %x\n",
+		__func__, nci_reset_rsp[0],
+		nci_reset_rsp[1], nci_reset_rsp[2]);
+
 	dev_dbg(&nqx_dev->client->dev, "NQ NFCC chip_type = %x\n",
 		nqx_dev->nqx_info.info.chip_type);
 	dev_dbg(&nqx_dev->client->dev, "NQ fw version = %x.%x.%x\n",
@@ -738,6 +748,12 @@ static int nfcc_hw_check(struct i2c_client *client, struct nqx_dev *nqx_dev)
 	ret = 0;
 	goto done;
 
+err_nfcc_core_init_fail:
+	dev_err(&client->dev,
+	"%s: - nq - reset cmd answer : NfcNciRx %x %x %x\n",
+	__func__, nci_reset_rsp[0],
+	nci_reset_rsp[1], nci_reset_rsp[2]);
+
 err_nfcc_hw_check:
 	ret = -ENXIO;
 	dev_err(&client->dev,
@@ -747,9 +763,9 @@ done:
 }
 
 /*
-	Routine to enable clock.
-	this routine can be extended to select from multiple
-	sources based on clk_src_name.
+	* Routine to enable clock.
+	* this routine can be extended to select from multiple
+	* sources based on clk_src_name.
 */
 static int nqx_clock_select(struct nqx_dev *nqx_dev)
 {
@@ -774,7 +790,7 @@ err_clk:
 	return r;
 }
 /*
-	Routine to disable clocks
+	* Routine to disable clocks
 */
 static int nqx_clock_deselect(struct nqx_dev *nqx_dev)
 {
@@ -977,14 +993,15 @@ static int nqx_probe(struct i2c_client *client,
 			nqx_dev->ese_gpio = platform_data->ese_gpio;
 			r = gpio_direction_output(platform_data->ese_gpio, 0);
 			if (r) {
-				/* free ese gpio and set invalid
-				   to avoid further use
-				*/
+				/*
+				 * free ese gpio and set invalid
+				 * to avoid further use
+				 */
 				gpio_free(platform_data->ese_gpio);
 				nqx_dev->ese_gpio = -EINVAL;
 				dev_err(&client->dev,
-				"%s: cannot set direction for nfc ese gpio [%d]\n",
-				__func__, platform_data->ese_gpio);
+					"%s: cannot set direction for nfc ese gpio [%d]\n",
+					__func__, platform_data->ese_gpio);
 				/* ese gpio optional so we should continue */
 			}
 		}
@@ -1052,7 +1069,7 @@ static int nqx_probe(struct i2c_client *client,
 	 * present before attempting further hardware initialisation.
 	 *
 	 */
-	r = nfcc_hw_check(client , nqx_dev);
+	r = nfcc_hw_check(client, nqx_dev);
 	if (r) {
 		/* make sure NFCC is not enabled */
 		gpio_set_value(platform_data->en_gpio, 0);
@@ -1066,8 +1083,9 @@ static int nqx_probe(struct i2c_client *client,
 		dev_err(&client->dev,
 			"%s: cannot register reboot notifier(err = %d)\n",
 			__func__, r);
-		/* nfcc_hw_check function not doing memory
-		   allocation so using same goto target here
+		/*
+		 * nfcc_hw_check function not doing memory
+		 * allocation so using same goto target here
 		*/
 		goto err_request_hw_check_failed;
 	}
@@ -1232,4 +1250,3 @@ module_exit(nqx_dev_exit);
 
 MODULE_DESCRIPTION("NFC nqx");
 MODULE_LICENSE("GPL v2");
-

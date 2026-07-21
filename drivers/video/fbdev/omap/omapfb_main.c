@@ -276,11 +276,6 @@ static int _setcolreg(struct fb_info *info, u_int regno, u_int red, u_int green,
 		if (r != 0)
 			break;
 
-		if (regno < 0) {
-			r = -EINVAL;
-			break;
-		}
-
 		if (regno < 16) {
 			u16 pal;
 			pal = ((red >> (16 - var->red.length)) <<
@@ -982,7 +977,7 @@ int omapfb_register_client(struct omapfb_notifier_block *omapfb_nb,
 {
 	int r;
 
-	if ((unsigned)omapfb_nb->plane_idx > OMAPFB_PLANE_NUM)
+	if ((unsigned)omapfb_nb->plane_idx >= OMAPFB_PLANE_NUM)
 		return -EINVAL;
 
 	if (!notifier_inited) {
@@ -1869,7 +1864,6 @@ static struct platform_driver omapfb_driver = {
 	.resume		= omapfb_resume,
 	.driver		= {
 		.name	= MODULE_NAME,
-		.owner	= THIS_MODULE,
 	},
 };
 

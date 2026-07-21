@@ -112,7 +112,6 @@
 	(min(1270, ((ql) > 0) ? (QLA_TGT_DATASEGS_PER_CMD_24XX + \
 		QLA_TGT_DATASEGS_PER_CONT_24XX*((ql) - 1)) : 0))
 #endif
-#endif
 
 #define GET_TARGET_ID(ha, iocb) ((HAS_EXTENDED_IDS(ha))			\
 			 ? le16_to_cpu((iocb)->u.isp2x.target.extended)	\
@@ -323,6 +322,7 @@ struct ctio_to_2xxx {
 #ifndef CTIO_RET_TYPE
 #define CTIO_RET_TYPE	0x17		/* CTIO return entry */
 #define ATIO_TYPE7 0x06 /* Accept target I/O entry for 24xx */
+#endif
 
 struct fcp_hdr {
 	uint8_t  r_ctl;
@@ -954,7 +954,6 @@ struct qla_tgt_cmd {
 	int sg_cnt;		/* SG segments count */
 	int bufflen;		/* cmd buffer length */
 	int offset;
-	uint32_t tag;
 	uint32_t unpacked_lun;
 	enum dma_data_direction dma_data_direction;
 	uint32_t reset_count;
@@ -992,6 +991,9 @@ struct qla_tgt_cmd {
 	 * BIT_14 - Back end data received/sent.
 	 * BIT_15 - SRR prepare ctio
 	 * BIT_16 - complete free
+	 * BIT_17 - flush - qlt_abort_cmd_on_host_reset
+	 * BIT_18 - completion w/abort status
+	 * BIT_19 - completion w/unknown status
 	 */
 	uint32_t cmd_flags;
 };

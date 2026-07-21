@@ -72,15 +72,16 @@ static int setup_cmdline(struct kimage *image, struct boot_params *params,
 			 unsigned long cmdline_len)
 {
 	char *cmdline_ptr = ((char *)params) + cmdline_offset;
-	unsigned long cmdline_ptr_phys, len;
+	unsigned long cmdline_ptr_phys, len = 0;
 	uint32_t cmdline_low_32, cmdline_ext_32;
 
-	memcpy(cmdline_ptr, cmdline, cmdline_len);
 	if (image->type == KEXEC_TYPE_CRASH) {
-		len = sprintf(cmdline_ptr + cmdline_len - 1,
-			" elfcorehdr=0x%lx", image->arch.elf_load_addr);
-		cmdline_len += len;
+		len = sprintf(cmdline_ptr,
+			"elfcorehdr=0x%lx ", image->arch.elf_load_addr);
 	}
+	memcpy(cmdline_ptr + len, cmdline, cmdline_len);
+	cmdline_len += len;
+
 	cmdline_ptr[cmdline_len - 1] = '\0';
 
 	pr_debug("Final command line is: %s\n", cmdline_ptr);
@@ -167,6 +168,9 @@ setup_efi_state(struct boot_params *params, unsigned long params_load_addr,
 	struct efi_info *current_ei = &boot_params.efi_info;
 	struct efi_info *ei = &params->efi_info;
 
+	if (!efi_enabled(EFI_RUNTIME_SERVICES))
+		return 0;
+
 	if (!current_ei->efi_memmap_size)
 		return 0;
 
@@ -208,8 +212,7 @@ setup_boot_parameters(struct kimage *image, struct boot_params *params,
 	params->hdr.hardware_subarch = boot_params.hdr.hardware_subarch;
 
 	/* Copying screen_info will do? */
-	memcpy(&params->screen_info, &boot_params.screen_info,
-				sizeof(struct screen_info));
+	memcpy(&params->screen_info, &screen_info, sizeof(struct screen_info));
 
 	/* Fill in memsize later */
 	params->screen_info.ext_mem_k = 0;
@@ -221,9 +224,6 @@ setup_boot_parameters(struct kimage *image, struct boot_params *params,
 	/* Default drive info */
 	memset(&params->hd0_info, 0, sizeof(params->hd0_info));
 	memset(&params->hd1_info, 0, sizeof(params->hd1_info));
-
-	/* Default sysdesc table */
-	params->sys_desc_table.length = 0;
 
 	if (image->type == KEXEC_TYPE_CRASH) {
 		ret = crash_setup_memmap_entries(image, params);
@@ -535,7 +535,9 @@ static int bzImage64_verify_sig(const char *kernel, unsigned long kernel_len)
 	int ret;
 
 	ret = verify_pefile_signature(kernel, kernel_len,
-				      system_trusted_keyring, &trusted);
+				      system_trusted_keyring,
+				      VERIFYING_KEXEC_PE_SIGNATURE,
+				      &trusted);
 	if (ret < 0)
 		return ret;
 	if (!trusted)

@@ -282,7 +282,7 @@ static const struct pci_device_id intel_gpio_ids[] = {
 };
 MODULE_DEVICE_TABLE(pci, intel_gpio_ids);
 
-static void intel_mid_irq_handler(unsigned irq, struct irq_desc *desc)
+static void intel_mid_irq_handler(struct irq_desc *desc)
 {
 	struct gpio_chip *gc = irq_desc_get_handler_data(desc);
 	struct intel_mid_gpio *priv = to_intel_gpio_priv(gc);
@@ -326,7 +326,7 @@ static void intel_mid_irq_init_hw(struct intel_mid_gpio *priv)
 	}
 }
 
-static int intel_gpio_runtime_idle(struct device *dev)
+static int __maybe_unused intel_gpio_runtime_idle(struct device *dev)
 {
 	int err = pm_schedule_suspend(dev, 500);
 	return err ?: -EBUSY;

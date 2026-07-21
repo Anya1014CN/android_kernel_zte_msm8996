@@ -2,7 +2,7 @@
  * drivers/staging/android/ion/ion_priv.h
  *
  * Copyright (C) 2011 Google, Inc.
- * Copyright (c) 2011-2017, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2011-2018, The Linux Foundation. All rights reserved.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -30,10 +30,10 @@
 #include <linux/sched.h>
 #include <linux/shrinker.h>
 #include <linux/types.h>
-#include <linux/device.h>
 #ifdef CONFIG_ION_POOL_CACHE_POLICY
 #include <asm/cacheflush.h>
 #endif
+#include <linux/device.h>
 
 #include "ion.h"
 
@@ -41,7 +41,7 @@ struct ion_buffer *ion_handle_buffer(struct ion_handle *handle);
 
 /**
  * struct ion_buffer - metadata for a particular buffer
- * @ref:		refernce count
+ * @ref:		reference count
  * @node:		node in the ion_device buffers tree
  * @dev:		back pointer to the ion_device
  * @heap:		back pointer to the heap the buffer came from
@@ -262,9 +262,11 @@ int ion_heap_map_user(struct ion_heap *, struct ion_buffer *,
 int ion_heap_buffer_zero(struct ion_buffer *buffer);
 int ion_heap_pages_zero(struct page *page, size_t size, pgprot_t pgprot);
 
-int msm_ion_heap_high_order_page_zero(struct page *page, int order);
+int msm_ion_heap_high_order_page_zero(struct device *dev, struct page *page,
+				      int order);
 struct ion_heap *get_ion_heap(int heap_id);
-int msm_ion_heap_sg_table_zero(struct sg_table *, size_t size);
+int msm_ion_heap_sg_table_zero(struct device *dev, struct sg_table *,
+			       size_t size);
 int msm_ion_heap_pages_zero(struct page **pages, int num_pages);
 int msm_ion_heap_alloc_pages_mem(struct pages_mem *pages_mem);
 void msm_ion_heap_free_pages_mem(struct pages_mem *pages_mem);
@@ -318,7 +320,7 @@ void ion_heap_freelist_add(struct ion_heap *heap, struct ion_buffer *buffer);
 /**
  * ion_heap_freelist_drain - drain the deferred free list
  * @heap:		the heap
- * @size:		ammount of memory to drain in bytes
+ * @size:		amount of memory to drain in bytes
  *
  * Drains the indicated amount of memory from the deferred freelist immediately.
  * Returns the total amount freed.  The total freed may be higher depending
@@ -406,14 +408,13 @@ void ion_carveout_free(struct ion_heap *heap, ion_phys_addr_t addr,
  * to keep a pool of pre allocated memory to use from your heap.  Keeping
  * a pool of memory that is ready for dma, ie any cached mapping have been
  * invalidated from the cache, provides a significant performance benefit on
- * many systems */
+ * many systems
+ */
 
 /**
  * struct ion_page_pool - pagepool struct
  * @high_count:		number of highmem items in the pool
  * @low_count:		number of lowmem items in the pool
- * @nr_unreserved:	number of items in the pool which have not been reserved
- *			by a prefetch allocation
  * @high_items:		list of highmem items
  * @low_items:		list of lowmem items
  * @mutex:		lock protecting this struct and especially the count
@@ -430,23 +431,24 @@ void ion_carveout_free(struct ion_heap *heap, ion_phys_addr_t addr,
 struct ion_page_pool {
 	int high_count;
 	int low_count;
-	int nr_unreserved;
 	struct list_head high_items;
 	struct list_head low_items;
 	struct mutex mutex;
+	struct device *dev;
 	gfp_t gfp_mask;
 	unsigned int order;
 	struct plist_node list;
 };
 
-struct ion_page_pool *ion_page_pool_create(gfp_t gfp_mask, unsigned int order);
+struct ion_page_pool *ion_page_pool_create(struct device *dev, gfp_t gfp_mask,
+					   unsigned int order);
 void ion_page_pool_destroy(struct ion_page_pool *);
 void *ion_page_pool_alloc(struct ion_page_pool *, bool *from_pool);
 void *ion_page_pool_alloc_pool_only(struct ion_page_pool *);
-void ion_page_pool_free(struct ion_page_pool *, struct page *, bool prefetch);
+void ion_page_pool_free(struct ion_page_pool *, struct page *);
 void ion_page_pool_free_immediate(struct ion_page_pool *, struct page *);
 int ion_page_pool_total(struct ion_page_pool *pool, bool high);
-void *ion_page_pool_prefetch(struct ion_page_pool *pool, bool *from_pool);
+size_t ion_system_heap_secure_page_pool_total(struct ion_heap *heap, int vmid);
 
 #ifdef CONFIG_ION_POOL_CACHE_POLICY
 static inline void ion_page_pool_alloc_set_cache_policy
@@ -503,9 +505,34 @@ int ion_walk_heaps(struct ion_client *client, int heap_id,
 			enum ion_heap_type type, void *data,
 			int (*f)(struct ion_heap *heap, void *data));
 
-struct ion_handle *ion_handle_get_by_id(struct ion_client *client,
-					int id);
+struct ion_handle *ion_handle_get_by_id_nolock(struct ion_client *client,
+					       int id);
 
 int ion_handle_put(struct ion_handle *handle);
+
+bool ion_handle_validate(struct ion_client *client, struct ion_handle *handle);
+
+void lock_client(struct ion_client *client);
+
+void unlock_client(struct ion_client *client);
+
+struct ion_buffer *get_buffer(struct ion_handle *handle);
+
+/**
+ * This function is same as ion_free() except it won't use client->lock.
+ */
+void ion_free_nolock(struct ion_client *client, struct ion_handle *handle);
+
+/**
+ * This function is same as ion_phys() except it won't use client->lock.
+ */
+int ion_phys_nolock(struct ion_client *client, struct ion_handle *handle,
+		    ion_phys_addr_t *addr, size_t *len);
+
+/**
+ * This function is same as ion_import_dma_buf() except it won't use
+ * client->lock.
+ */
+struct ion_handle *ion_import_dma_buf_nolock(struct ion_client *client, int fd);
 
 #endif /* _ION_PRIV_H */

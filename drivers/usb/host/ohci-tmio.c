@@ -58,7 +58,7 @@
 #define CCR_PM_CKRNEN    0x0002
 #define CCR_PM_USBPW1    0x0004
 #define CCR_PM_USBPW2    0x0008
-#define CCR_PM_USBPW3    0x0008
+#define CCR_PM_USBPW3    0x0010
 #define CCR_PM_PMEE      0x0100
 #define CCR_PM_PMES      0x8000
 
@@ -199,8 +199,11 @@ static int ohci_hcd_tmio_drv_probe(struct platform_device *dev)
 	if (usb_disabled())
 		return -ENODEV;
 
-	if (!cell)
+	if (!cell || !regs || !config || !sram)
 		return -EINVAL;
+
+	if (irq < 0)
+		return irq;
 
 	hcd = usb_create_hcd(&ohci_tmio_hc_driver, &dev->dev, dev_name(&dev->dev));
 	if (!hcd) {
@@ -368,6 +371,5 @@ static struct platform_driver ohci_hcd_tmio_driver = {
 	.resume		= ohci_hcd_tmio_drv_resume,
 	.driver		= {
 		.name	= "tmio-ohci",
-		.owner	= THIS_MODULE,
 	},
 };

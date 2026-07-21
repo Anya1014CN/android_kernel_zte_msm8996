@@ -754,7 +754,7 @@ static int r592_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 		goto error2;
 
 	pci_set_master(pdev);
-	error = pci_set_dma_mask(pdev, DMA_BIT_MASK(32));
+	error = dma_set_mask(&pdev->dev, DMA_BIT_MASK(32));
 	if (error)
 		goto error3;
 
@@ -763,8 +763,10 @@ static int r592_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 		goto error3;
 
 	dev->mmio = pci_ioremap_bar(pdev, 0);
-	if (!dev->mmio)
+	if (!dev->mmio) {
+		error = -ENOMEM;
 		goto error4;
+	}
 
 	dev->irq = pdev->irq;
 	spin_lock_init(&dev->irq_lock);
@@ -787,16 +789,18 @@ static int r592_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	}
 
 	/* This is just a precation, so don't fail */
-	dev->dummy_dma_page = pci_alloc_consistent(pdev, PAGE_SIZE,
-		&dev->dummy_dma_page_physical_address);
+	dev->dummy_dma_page = dma_alloc_coherent(&pdev->dev, PAGE_SIZE,
+		&dev->dummy_dma_page_physical_address, GFP_KERNEL);
 	r592_stop_dma(dev , 0);
 
-	if (request_irq(dev->irq, &r592_irq, IRQF_SHARED,
-			  DRV_NAME, dev))
+	error = request_irq(dev->irq, &r592_irq, IRQF_SHARED,
+			  DRV_NAME, dev);
+	if (error)
 		goto error6;
 
 	r592_update_card_detect(dev);
-	if (memstick_add_host(host))
+	error = memstick_add_host(host);
+	if (error)
 		goto error7;
 
 	message("driver successfully loaded");
@@ -805,7 +809,7 @@ error7:
 	free_irq(dev->irq, dev);
 error6:
 	if (dev->dummy_dma_page)
-		pci_free_consistent(pdev, PAGE_SIZE, dev->dummy_dma_page,
+		dma_free_coherent(&pdev->dev, PAGE_SIZE, dev->dummy_dma_page,
 			dev->dummy_dma_page_physical_address);
 
 	kthread_stop(dev->io_thread);
@@ -838,15 +842,15 @@ static void r592_remove(struct pci_dev *pdev)
 	}
 	memstick_remove_host(dev->host);
 
+	if (dev->dummy_dma_page)
+		dma_free_coherent(&pdev->dev, PAGE_SIZE, dev->dummy_dma_page,
+			dev->dummy_dma_page_physical_address);
+
 	free_irq(dev->irq, dev);
 	iounmap(dev->mmio);
 	pci_release_regions(pdev);
 	pci_disable_device(pdev);
 	memstick_free_host(dev->host);
-
-	if (dev->dummy_dma_page)
-		pci_free_consistent(pdev, PAGE_SIZE, dev->dummy_dma_page,
-			dev->dummy_dma_page_physical_address);
 }
 
 #ifdef CONFIG_PM_SLEEP

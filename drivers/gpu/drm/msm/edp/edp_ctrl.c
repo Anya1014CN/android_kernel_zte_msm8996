@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2014-2015, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -332,7 +332,7 @@ static int edp_regulator_enable(struct edp_ctrl *ctrl)
 		goto vdda_set_fail;
 	}
 
-	ret = regulator_set_optimum_mode(ctrl->vdda_vreg, VDDA_UA_ON_LOAD);
+	ret = regulator_set_load(ctrl->vdda_vreg, VDDA_UA_ON_LOAD);
 	if (ret < 0) {
 		pr_err("%s: vdda_vreg set regulator mode failed.\n", __func__);
 		goto vdda_set_fail;
@@ -356,7 +356,7 @@ static int edp_regulator_enable(struct edp_ctrl *ctrl)
 lvl_enable_fail:
 	regulator_disable(ctrl->vdda_vreg);
 vdda_enable_fail:
-	regulator_set_optimum_mode(ctrl->vdda_vreg, VDDA_UA_OFF_LOAD);
+	regulator_set_load(ctrl->vdda_vreg, VDDA_UA_OFF_LOAD);
 vdda_set_fail:
 	return ret;
 }
@@ -365,7 +365,7 @@ static void edp_regulator_disable(struct edp_ctrl *ctrl)
 {
 	regulator_disable(ctrl->lvl_vreg);
 	regulator_disable(ctrl->vdda_vreg);
-	regulator_set_optimum_mode(ctrl->vdda_vreg, VDDA_UA_OFF_LOAD);
+	regulator_set_load(ctrl->vdda_vreg, VDDA_UA_OFF_LOAD);
 }
 
 static int edp_gpio_config(struct edp_ctrl *ctrl)
@@ -1095,7 +1095,7 @@ void msm_edp_ctrl_power(struct edp_ctrl *ctrl, bool on)
 int msm_edp_ctrl_init(struct msm_edp *edp)
 {
 	struct edp_ctrl *ctrl = NULL;
-	struct device *dev = &edp->pdev->dev;
+	struct device *dev;
 	int ret;
 
 	if (!edp) {
@@ -1103,6 +1103,7 @@ int msm_edp_ctrl_init(struct msm_edp *edp)
 		return -EINVAL;
 	}
 
+	dev = &edp->pdev->dev;
 	ctrl = devm_kzalloc(dev, sizeof(*ctrl), GFP_KERNEL);
 	if (!ctrl)
 		return -ENOMEM;

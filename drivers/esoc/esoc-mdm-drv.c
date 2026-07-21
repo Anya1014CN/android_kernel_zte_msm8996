@@ -250,7 +250,7 @@ int esoc_ssr_probe(struct esoc_clink *esoc_clink, struct esoc_drv *drv)
 	struct esoc_eng *esoc_eng;
 
 	mdm_drv = devm_kzalloc(&esoc_clink->dev, sizeof(*mdm_drv), GFP_KERNEL);
-	if (IS_ERR(mdm_drv))
+	if (IS_ERR_OR_NULL(mdm_drv))
 		return PTR_ERR(mdm_drv);
 	esoc_eng = &mdm_drv->cmd_eng;
 	esoc_eng->handle_clink_evt = mdm_handle_clink_evt;

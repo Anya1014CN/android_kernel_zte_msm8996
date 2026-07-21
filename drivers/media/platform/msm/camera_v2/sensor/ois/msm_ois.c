@@ -1,4 +1,5 @@
 /* Copyright (c) 2014-2017, The Linux Foundation. All rights reserved.
+ * Copyright (C) 2018 XiaoMi, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -17,12 +18,10 @@
 #include "msm_sd.h"
 #include "msm_ois.h"
 #include "msm_cci.h"
-
-#include <linux/of.h>
-#include <linux/of_gpio.h>
-#include <linux/gpio.h>
-#include "zte_camera_ois_util.h"
-
+#include "OIS_head.h"
+#include "OIS_user.c"
+#include "OIS_func.c"
+#include <linux/syscore_ops.h>
 
 DEFINE_MSM_MUTEX(msm_ois_mutex);
 /*#define MSM_OIS_DEBUG*/
@@ -33,6 +32,7 @@ DEFINE_MSM_MUTEX(msm_ois_mutex);
 #define CDBG(fmt, args...) pr_debug(fmt, ##args)
 #endif
 
+static void msm_ois_fw_dl(struct work_struct *work);
 static struct v4l2_file_operations msm_ois_v4l2_subdev_fops;
 static int32_t msm_ois_power_up(struct msm_ois_ctrl_t *o_ctrl);
 static int32_t msm_ois_power_down(struct msm_ois_ctrl_t *o_ctrl);
@@ -83,7 +83,7 @@ static int32_t msm_ois_download(struct msm_ois_ctrl_t *o_ctrl)
 			&o_ctrl->i2c_client, o_ctrl->oboard_info->opcode.prog,
 			 ptr, bytes_in_tx);
 		if (rc < 0) {
-			pr_err("Failed: remaining bytes to be downloaded: %d",
+			pr_err("Failed:remaining bytes to be downloaded:%d\n",
 				bytes_in_tx);
 			/* abort download fw and return error*/
 			goto release_firmware;
@@ -105,7 +105,7 @@ static int32_t msm_ois_download(struct msm_ois_ctrl_t *o_ctrl)
 			&o_ctrl->i2c_client, o_ctrl->oboard_info->opcode.coeff,
 			ptr, bytes_in_tx);
 		if (rc < 0) {
-			pr_err("Failed: remaining bytes to be downloaded: %d",
+			pr_err("Failed:remaining bytes to be downloaded:%d\n",
 				total_bytes);
 			/* abort download fw*/
 			break;
@@ -126,13 +126,13 @@ static int32_t msm_ois_data_config(struct msm_ois_ctrl_t *o_ctrl,
 
 	CDBG("Enter\n");
 	if (!slave_info) {
-		pr_err("failed : invalid slave_info ");
+		pr_err("failed : invalid slave_info\n");
 		return -EINVAL;
 	}
 	/* fill ois slave info*/
 	if (strlcpy(o_ctrl->oboard_info->ois_name, slave_info->ois_name,
 		sizeof(o_ctrl->oboard_info->ois_name)) < 0) {
-		pr_err("failed: copy_from_user");
+		pr_err("failed: copy_from_user\n");
 		return -EFAULT;
 	}
 	memcpy(&(o_ctrl->oboard_info->opcode), &(slave_info->opcode),
@@ -163,26 +163,13 @@ static int32_t msm_ois_write_settings(struct msm_ois_ctrl_t *o_ctrl,
 	int32_t rc = -EFAULT;
 	int32_t i = 0;
 	struct msm_camera_i2c_seq_reg_array *reg_setting;
-    uint16_t read_data = 0;
-
 	CDBG("Enter\n");
+
+	CDBG("%s: size = %d\n", __func__, size);
 	for (i = 0; i < size; i++) {
 		switch (settings[i].i2c_operation) {
 		case MSM_OIS_WRITE: {
 			switch (settings[i].data_type) {
-			case MSM_CAMERA_I2C_NO_DATA:
-				settings[i].reg_addr = settings[i].reg_addr >> 8;
-				settings[i].data_type = MSM_CAMERA_I2C_BYTE_DATA;
-				o_ctrl->i2c_client.addr_type = MSM_CAMERA_I2C_BYTE_ADDR;
-				pr_err("MSM_CAMERA_I2C_NO_DATA: E\n");
-				rc = o_ctrl->i2c_client.i2c_func_tbl->i2c_write(
-					&o_ctrl->i2c_client,
-					settings[i].reg_addr,
-					settings[i].reg_data,
-					settings[i].data_type);
-				o_ctrl->i2c_client.addr_type = MSM_CAMERA_I2C_WORD_ADDR;
-				pr_err("MSM_CAMERA_I2C_NO_DATA: X  rc = %d\n", rc);
-				break;
 			case MSM_CAMERA_I2C_BYTE_DATA:
 			case MSM_CAMERA_I2C_WORD_DATA:
 				rc = o_ctrl->i2c_client.i2c_func_tbl->i2c_write(
@@ -221,6 +208,17 @@ static int32_t msm_ois_write_settings(struct msm_ois_ctrl_t *o_ctrl,
 				if (rc < 0)
 					return rc;
 				break;
+			case MSM_CAMERA_I2C_NO_DATA:
+				o_ctrl->i2c_client.addr_type = MSM_CAMERA_I2C_BYTE_ADDR;
+				rc = o_ctrl->i2c_client.i2c_func_tbl->i2c_write(
+					&o_ctrl->i2c_client,
+					(settings[i].reg_addr & 0x0000FF00) >> 8,
+					settings[i].reg_addr & 0x000000FF,
+					MSM_CAMERA_I2C_BYTE_DATA);
+				o_ctrl->i2c_client.addr_type = MSM_CAMERA_I2C_WORD_ADDR;
+				if (rc < 0)
+					return rc;
+				break;
 
 			default:
 				pr_err("Unsupport data type: %d\n",
@@ -246,8 +244,6 @@ static int32_t msm_ois_write_settings(struct msm_ois_ctrl_t *o_ctrl,
 					settings[i].reg_data,
 					settings[i].data_type,
 					settings[i].delay);
-				if (rc < 0)
-					return rc;
 				break;
 
 			default:
@@ -256,29 +252,10 @@ static int32_t msm_ois_write_settings(struct msm_ois_ctrl_t *o_ctrl,
 				break;
 			}
 		}
-
-		break;
-		case MSM_OIS_READ: {
-			switch (settings[i].data_type) {
-			case MSM_CAMERA_I2C_BYTE_DATA:
-			case MSM_CAMERA_I2C_WORD_DATA:
-				rc = o_ctrl->i2c_client.i2c_func_tbl
-					->i2c_read(&o_ctrl->i2c_client,
-					settings[i].reg_addr, &(read_data), settings[i].data_type);
-				settings[i].reg_data = read_data;
-				if (rc < 0)
-					return rc;
-				break;
-
-			default:
-				pr_err("Unsupport data type: %d\n",
-					settings[i].data_type);
-				break;
-			}
-		}
-		break;
 		}
 
+		if (rc < 0)
+			break;
 	}
 
 	CDBG("Exit\n");
@@ -364,6 +341,69 @@ static int32_t msm_ois_power_down(struct msm_ois_ctrl_t *o_ctrl)
 	return rc;
 }
 
+int g_fadj_gyro_kd = 1;
+static void msm_ois_fw_dl(struct work_struct *work)
+{
+	struct msm_camera_cci_client *cci_client = NULL;
+	struct msm_ois_ctrl_t *o_ctrl = NULL;
+
+	CDBG("Enter, work:%p\n", work);
+	o_ctrl = container_of(work, struct msm_ois_ctrl_t, work);
+
+	mutex_lock(o_ctrl->ois_mutex);
+
+	g_i2c_ctrl->i2c_client.addr_type = MSM_CAMERA_I2C_BYTE_ADDR;
+
+	cci_client = o_ctrl->i2c_client.cci_client;
+	cci_client->sid = 0x1C >> 1;
+	cci_client->retries = 3;
+	cci_client->id_map = 0;
+	cci_client->cci_i2c_master = o_ctrl->cci_master;
+	cci_client->i2c_freq_mode = I2C_FAST_MODE;
+
+	get_FADJ_MEM_from_non_volatile_memory();
+	VCOSET0();
+	func_PROGRAM_DOWNLOAD();
+	func_COEF_DOWNLOAD(0);
+	VCOSET1();
+
+	pr_info("sleep 30ms for gyro \n");
+	usleep_range(30000, 32000);
+	pr_info("Gyro active \n");
+	I2C_OIS_per_write(0x18, 0x000F);
+	I2C_OIS_per_write(0x1B, 0x6B01);
+	I2C_OIS_per_write(0x1C, 0x0000);
+	pr_info("sleep 30ms for gyro \n");
+	usleep_range(30000, 32000);
+
+	I2C_OIS_spcl_cmnd(1, _cmd_8C_EI);
+	pr_info("%s ois goff 0x%x, 0x%x\n", __func__, FADJ_MEM.gl_GX_OFS, FADJ_MEM.gl_GY_OFS);
+	if (g_fadj_gyro_kd == 0) {
+		g_fadj_gyro_kd = fadj_ois_gyro_offset_calibraion();
+	}
+	SET_FADJ_PARAM(&FADJ_MEM);
+
+	func_SET_SCENE_PARAM_for_NewGYRO_Fil(_SCENE_SPORT_3, 1, 0, 0, &FADJ_MEM);
+	DisableShiftOIS();
+
+	o_ctrl->ois_state = OIS_OPS_ACTIVE;
+
+	mutex_unlock(o_ctrl->ois_mutex);
+	CDBG("Exit\n");
+}
+
+void msm_ois_shift_gain(int distance)
+{
+
+	if (!g_i2c_ctrl || g_i2c_ctrl->ois_state != OIS_OPS_ACTIVE) {
+		pr_info("ois not ready");
+		return;
+	}
+	mutex_lock(g_i2c_ctrl->ois_mutex);
+	ChangeShiftOISGain(distance);
+	mutex_unlock(g_i2c_ctrl->ois_mutex);
+}
+
 static int msm_ois_init(struct msm_ois_ctrl_t *o_ctrl)
 {
 	int rc = 0;
@@ -380,41 +420,33 @@ static int msm_ois_init(struct msm_ois_ctrl_t *o_ctrl)
 		if (rc < 0)
 			pr_err("cci_init failed\n");
 	}
-	o_ctrl->ois_state = OIS_OPS_ACTIVE;
+
+	if (!g_i2c_ctrl) {
+		g_i2c_ctrl = o_ctrl;
+		o_ctrl->work_queue =
+			alloc_workqueue("ois_fw_dl", WQ_HIGHPRI|WQ_UNBOUND, 0);
+		if (!o_ctrl->work_queue) {
+			pr_err("Can not register workqueue\n");
+			rc = -ENOMEM;
+			goto error_alloc_workqueue;
+		}
+		INIT_WORK(&o_ctrl->work, msm_ois_fw_dl);
+		queue_work(o_ctrl->work_queue, &o_ctrl->work);
+	}
+
+error_alloc_workqueue:
 	CDBG("Exit\n");
 	return rc;
 }
 
-static int msm_ois_deinit(struct msm_ois_ctrl_t *o_ctrl)
-{
-	int rc = 0;
-
-	CDBG("Enter\n");
-	if (!o_ctrl) {
-		pr_err("failed\n");
-		return -EINVAL;
-	}
-	mutex_lock(o_ctrl->ois_mutex);
-	if (o_ctrl->ois_device_type == MSM_CAMERA_PLATFORM_DEVICE &&
-		o_ctrl->ois_state == OIS_OPS_ACTIVE) {
-		rc = o_ctrl->i2c_client.i2c_func_tbl->i2c_util(
-			&o_ctrl->i2c_client, MSM_CCI_RELEASE);
-		if (rc < 0)
-			pr_err("cci_deinit failed\n");
-	}
-	o_ctrl->ois_state = OIS_OPS_INACTIVE;
-	mutex_unlock(o_ctrl->ois_mutex);
-	CDBG("Exit\n");
-	return rc;
-}
 static int32_t msm_ois_control(struct msm_ois_ctrl_t *o_ctrl,
 	struct msm_ois_set_info_t *set_info)
 {
 	struct reg_settings_ois_t *settings = NULL;
 	int32_t rc = 0;
 	struct msm_camera_cci_client *cci_client = NULL;
-
 	CDBG("Enter\n");
+
 	if (o_ctrl->ois_device_type == MSM_CAMERA_PLATFORM_DEVICE) {
 		cci_client = o_ctrl->i2c_client.cci_client;
 		cci_client->sid =
@@ -465,69 +497,6 @@ static int32_t msm_ois_control(struct msm_ois_ctrl_t *o_ctrl,
 	return rc;
 }
 
-static int32_t msm_ois_read(struct msm_ois_ctrl_t *o_ctrl,
-	struct msm_ois_set_info_t *set_info)
-{
-	struct reg_settings_ois_t *settings = NULL;
-	int32_t rc = 0;
-	struct msm_camera_cci_client *cci_client = NULL;
-
-	CDBG("Enter\n");
-	if (o_ctrl->ois_device_type == MSM_CAMERA_PLATFORM_DEVICE) {
-		cci_client = o_ctrl->i2c_client.cci_client;
-		cci_client->sid =
-			set_info->ois_params.i2c_addr >> 1;
-		cci_client->retries = 3;
-		cci_client->id_map = 0;
-		cci_client->cci_i2c_master = o_ctrl->cci_master;
-		cci_client->i2c_freq_mode = set_info->ois_params.i2c_freq_mode;
-	} else {
-		o_ctrl->i2c_client.client->addr =
-			set_info->ois_params.i2c_addr;
-	}
-	o_ctrl->i2c_client.addr_type = MSM_CAMERA_I2C_WORD_ADDR;
-
-	if (set_info->ois_params.setting_size > 0 &&
-		set_info->ois_params.setting_size
-		< MAX_OIS_REG_SETTINGS) {
-		settings = kmalloc(
-			sizeof(struct reg_settings_ois_t) *
-			(set_info->ois_params.setting_size),
-			GFP_KERNEL);
-		if (settings == NULL) {
-			pr_err("Error allocating memory\n");
-			return -EFAULT;
-		}
-		if (copy_from_user(settings,
-			(void *)set_info->ois_params.settings,
-			set_info->ois_params.setting_size *
-			sizeof(struct reg_settings_ois_t))) {
-			kfree(settings);
-			pr_err("Error copying\n");
-			return -EFAULT;
-		}
-
-		rc = msm_ois_write_settings(o_ctrl,
-			set_info->ois_params.setting_size,
-			settings);
-		if (copy_to_user((void *)set_info->ois_params.settings, settings,
-			set_info->ois_params.setting_size *
-			sizeof(struct reg_settings_ois_t))) {
-			kfree(settings);
-			pr_err("Error copying\n");
-			return -EFAULT;
-		}
-		kfree(settings);
-		if (rc < 0) {
-			pr_err("Error\n");
-			return -EFAULT;
-		}
-	}
-
-	CDBG("Exit\n");
-
-	return rc;
-}
 
 static int32_t msm_ois_config(struct msm_ois_ctrl_t *o_ctrl,
 	void __user *argp)
@@ -536,7 +505,6 @@ static int32_t msm_ois_config(struct msm_ois_ctrl_t *o_ctrl,
 		(struct msm_ois_cfg_data *)argp;
 	int32_t rc = 0;
 	mutex_lock(o_ctrl->ois_mutex);
-
 	CDBG("Enter\n");
 	CDBG("%s type %d\n", __func__, cdata->cfgtype);
 	switch (cdata->cfgtype) {
@@ -544,11 +512,6 @@ static int32_t msm_ois_config(struct msm_ois_ctrl_t *o_ctrl,
 		rc = msm_ois_init(o_ctrl);
 		if (rc < 0)
 			pr_err("msm_ois_init failed %d\n", rc);
-		break;
-	case CFG_OIS_DEINIT:
-		rc = msm_ois_deinit(o_ctrl);
-		if (rc < 0)
-			pr_err("msm_ois_deinit failed %d\n", rc);
 		break;
 	case CFG_OIS_POWERDOWN:
 		rc = msm_ois_power_down(o_ctrl);
@@ -564,11 +527,6 @@ static int32_t msm_ois_config(struct msm_ois_ctrl_t *o_ctrl,
 		rc = msm_ois_control(o_ctrl, &cdata->cfg.set_info);
 		if (rc < 0)
 			pr_err("Failed ois control%d\n", rc);
-		break;
-	case CFG_OIS_READ:
-		rc = msm_ois_read(o_ctrl, &(cdata->cfg.set_info));
-		if (rc < 0)
-			pr_err("Failed ois read%d\n", rc);
 		break;
 	case CFG_OIS_I2C_WRITE_SEQ_TABLE: {
 		struct msm_camera_i2c_seq_reg_setting conf_array;
@@ -619,9 +577,13 @@ static int32_t msm_ois_config(struct msm_ois_ctrl_t *o_ctrl,
 		kfree(reg_setting);
 		break;
 	}
+	case CFG_OIS_CALIBRATION:
+		fadj_ois_gyro_offset_calibraion();
+		break;
 	default:
 		break;
 	}
+
 	mutex_unlock(o_ctrl->ois_mutex);
 	CDBG("Exit\n");
 	return rc;
@@ -714,6 +676,7 @@ static int msm_ois_close(struct v4l2_subdev *sd,
 		pr_err("failed\n");
 		return -EINVAL;
 	}
+	g_i2c_ctrl = NULL;
 	mutex_lock(o_ctrl->ois_mutex);
 	if (o_ctrl->ois_device_type == MSM_CAMERA_PLATFORM_DEVICE &&
 		o_ctrl->ois_state != OIS_DISABLE_STATE) {
@@ -723,6 +686,12 @@ static int msm_ois_close(struct v4l2_subdev *sd,
 			pr_err("cci_init failed\n");
 	}
 	o_ctrl->ois_state = OIS_DISABLE_STATE;
+
+	if (o_ctrl->work_queue) {
+		destroy_workqueue(o_ctrl->work_queue);
+		o_ctrl->work_queue = NULL;
+	}
+
 	mutex_unlock(o_ctrl->ois_mutex);
 	CDBG("Exit\n");
 	return rc;
@@ -935,22 +904,6 @@ static long msm_ois_subdev_do_ioctl(
 				settings);
 			parg = &ois_data;
 			break;
-		case CFG_OIS_READ:
-			ois_data.cfg.set_info.ois_params.setting_size =
-				u32->cfg.set_info.ois_params.setting_size;
-			ois_data.cfg.set_info.ois_params.i2c_addr =
-				u32->cfg.set_info.ois_params.i2c_addr;
-			ois_data.cfg.set_info.ois_params.i2c_freq_mode =
-				u32->cfg.set_info.ois_params.i2c_freq_mode;
-			ois_data.cfg.set_info.ois_params.i2c_addr_type =
-				u32->cfg.set_info.ois_params.i2c_addr_type;
-			ois_data.cfg.set_info.ois_params.i2c_data_type =
-				u32->cfg.set_info.ois_params.i2c_data_type;
-			ois_data.cfg.set_info.ois_params.settings =
-				compat_ptr(u32->cfg.set_info.ois_params.
-				settings);
-			parg = &ois_data;
-			break;
 		case CFG_OIS_I2C_WRITE_SEQ_TABLE:
 			if (copy_from_user(&settings32,
 				(void *)compat_ptr(u32->cfg.settings),
@@ -1046,16 +999,15 @@ static int32_t msm_ois_platform_probe(struct platform_device *pdev)
 
 	rc = msm_sensor_driver_get_gpio_data(&(msm_ois_t->gconf),
 		(&pdev->dev)->of_node);
-	if (-ENODEV == rc) {
-		pr_notice("No valid OIS GPIOs data\n");
-	} else if (rc < 0) {
-		pr_err("Error OIS GPIO\n");
+	if (rc <= 0) {
+		pr_err("%s: No/Error OIS GPIO\n", __func__);
 	} else {
 		msm_ois_t->cam_pinctrl_status = 1;
 		rc = msm_camera_pinctrl_init(
 			&(msm_ois_t->pinctrl_info), &(pdev->dev));
 		if (rc < 0) {
-			pr_err("ERR: Error in reading OIS pinctrl\n");
+			pr_err("ERR:%s: Error in reading OIS pinctrl\n",
+				__func__);
 			msm_ois_t->cam_pinctrl_status = 0;
 		}
 	}
@@ -1099,9 +1051,6 @@ static int32_t msm_ois_platform_probe(struct platform_device *pdev)
 #endif
 	msm_ois_t->msm_sd.sd.devnode->fops =
 		&msm_ois_v4l2_subdev_fops;
-
-	if (msm_ois_enable_debugfs(msm_ois_t))
-		pr_err("%s:%d creat debugfs fail\n", __func__, __LINE__);
 
 	CDBG("Exit\n");
 	return rc;

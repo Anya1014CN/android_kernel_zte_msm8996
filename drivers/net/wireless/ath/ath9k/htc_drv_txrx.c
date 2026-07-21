@@ -494,7 +494,7 @@ static void ath9k_htc_tx_process(struct ath9k_htc_priv *priv,
 		if (txs->ts_flags & ATH9K_HTC_TXSTAT_SGI)
 			rate->flags |= IEEE80211_TX_RC_SHORT_GI;
 	} else {
-		if (cur_conf->chandef.chan->band == IEEE80211_BAND_5GHZ)
+		if (cur_conf->chandef.chan->band == NL80211_BAND_5GHZ)
 			rate->idx += 4; /* No CCK rates */
 	}
 
@@ -872,14 +872,7 @@ u32 ath9k_htc_calcrxfilter(struct ath9k_htc_priv *priv)
 	if (priv->rxfilter & FIF_PROBE_REQ)
 		rfilt |= ATH9K_RX_FILTER_PROBEREQ;
 
-	/*
-	 * Set promiscuous mode when FIF_PROMISC_IN_BSS is enabled for station
-	 * mode interface or when in monitor mode. AP mode does not need this
-	 * since it receives all in-BSS frames anyway.
-	 */
-	if (((ah->opmode != NL80211_IFTYPE_AP) &&
-	     (priv->rxfilter & FIF_PROMISC_IN_BSS)) ||
-	    ah->is_monitoring)
+	if (ah->is_monitoring)
 		rfilt |= ATH9K_RX_FILTER_PROM;
 
 	if (priv->rxfilter & FIF_CONTROL)
@@ -946,7 +939,7 @@ static inline void convert_htc_flag(struct ath_rx_status *rx_stats,
 static void rx_status_htc_to_ath(struct ath_rx_status *rx_stats,
 				 struct ath_htc_rx_status *rxstatus)
 {
-	rx_stats->rs_datalen	= rxstatus->rs_datalen;
+	rx_stats->rs_datalen	= be16_to_cpu(rxstatus->rs_datalen);
 	rx_stats->rs_status	= rxstatus->rs_status;
 	rx_stats->rs_phyerr	= rxstatus->rs_phyerr;
 	rx_stats->rs_rssi	= rxstatus->rs_rssi;
@@ -979,6 +972,8 @@ static bool ath9k_rx_prepare(struct ath9k_htc_priv *priv,
 	struct ath_htc_rx_status *rxstatus;
 	struct ath_rx_status rx_stats;
 	bool decrypt_error = false;
+	u16 rs_datalen;
+	bool is_phyerr;
 
 	if (skb->len < HTC_RX_FRAME_HEADER_SIZE) {
 		ath_err(common, "Corrupted RX frame, dropping (len: %d)\n",
@@ -988,11 +983,24 @@ static bool ath9k_rx_prepare(struct ath9k_htc_priv *priv,
 
 	rxstatus = (struct ath_htc_rx_status *)skb->data;
 
-	if (be16_to_cpu(rxstatus->rs_datalen) -
-	    (skb->len - HTC_RX_FRAME_HEADER_SIZE) != 0) {
+	rs_datalen = be16_to_cpu(rxstatus->rs_datalen);
+	if (unlikely(rs_datalen -
+	    (skb->len - HTC_RX_FRAME_HEADER_SIZE) != 0)) {
 		ath_err(common,
 			"Corrupted RX data len, dropping (dlen: %d, skblen: %d)\n",
-			rxstatus->rs_datalen, skb->len);
+			rs_datalen, skb->len);
+		goto rx_next;
+	}
+
+	is_phyerr = rxstatus->rs_status & ATH9K_RXERR_PHY;
+	/*
+	 * Discard zero-length packets and packets smaller than an ACK
+	 * which are not PHY_ERROR (short radar pulses have a length of 3)
+	 */
+	if (unlikely(!rs_datalen || (rs_datalen < 10 && !is_phyerr))) {
+		ath_dbg(common, ANY,
+			"Short RX data len, dropping (dlen: %d)\n",
+			rs_datalen);
 		goto rx_next;
 	}
 
@@ -1012,6 +1020,20 @@ static bool ath9k_rx_prepare(struct ath9k_htc_priv *priv,
 	 * separately to avoid doing two lookups for a rate for each frame.
 	 */
 	hdr = (struct ieee80211_hdr *)skb->data;
+
+	/*
+	 * Process PHY errors and return so that the packet
+	 * can be dropped.
+	 */
+	if (unlikely(is_phyerr)) {
+		/* TODO: Not using DFS processing now. */
+		if (ath_cmn_process_fft(&priv->spec_priv, hdr,
+				    &rx_stats, rx_status->mactime)) {
+			/* TODO: Code to collect spectral scan statistics */
+		}
+		goto rx_next;
+	}
+
 	if (!ath9k_cmn_rx_accept(common, hdr, rx_status, &rx_stats,
 			&decrypt_error, priv->rxfilter))
 		goto rx_next;

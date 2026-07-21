@@ -100,7 +100,7 @@ u64 div64_u64_rem(u64 dividend, u64 divisor, u64 *remainder)
 		quot = div_u64_rem(dividend, divisor, &rem32);
 		*remainder = rem32;
 	} else {
-		int n = 1 + fls(high);
+		int n = fls(high);
 		quot = div_u64(dividend >> n, divisor >> n);
 
 		if (quot != 0)
@@ -127,7 +127,7 @@ EXPORT_SYMBOL(div64_u64_rem);
  * by the book 'Hacker's Delight'.  The original source and full proof
  * can be found here and is available for use without restriction.
  *
- * 'http://www.hackersdelight.org/HDcode/newCode/divDouble.c.txt'
+ * 'http://www.hackersdelight.org/hdcodetxt/divDouble.c.txt'
  */
 #ifndef div64_u64
 u64 div64_u64(u64 dividend, u64 divisor)
@@ -138,7 +138,7 @@ u64 div64_u64(u64 dividend, u64 divisor)
 	if (high == 0) {
 		quot = div_u64(dividend, divisor);
 	} else {
-		int n = 1 + fls(high);
+		int n = fls(high);
 		quot = div_u64(dividend >> n, divisor >> n);
 
 		if (quot != 0)
@@ -162,7 +162,7 @@ s64 div64_s64(s64 dividend, s64 divisor)
 {
 	s64 quot, t;
 
-	quot = div64_u64(abs64(dividend), abs64(divisor));
+	quot = div64_u64(abs(dividend), abs(divisor));
 	t = (dividend ^ divisor) >> 63;
 
 	return (quot ^ t) - t;

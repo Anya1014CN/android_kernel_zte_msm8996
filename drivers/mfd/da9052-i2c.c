@@ -118,6 +118,7 @@ static const struct i2c_device_id da9052_i2c_id[] = {
 	{"da9053-bc", DA9053_BC},
 	{}
 };
+MODULE_DEVICE_TABLE(i2c, da9052_i2c_id);
 
 #ifdef CONFIG_OF
 static const struct of_device_id dialog_dt_ids[] = {
@@ -174,11 +175,7 @@ static int da9052_i2c_probe(struct i2c_client *client,
 		return ret;
 	}
 
-	ret = da9052_device_init(da9052, id->driver_data);
-	if (ret != 0)
-		return ret;
-
-	return 0;
+	return da9052_device_init(da9052, id->driver_data);
 }
 
 static int da9052_i2c_remove(struct i2c_client *client)
@@ -195,7 +192,6 @@ static struct i2c_driver da9052_i2c_driver = {
 	.id_table = da9052_i2c_id,
 	.driver = {
 		.name = "da9052",
-		.owner = THIS_MODULE,
 #ifdef CONFIG_OF
 		.of_match_table = dialog_dt_ids,
 #endif

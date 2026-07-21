@@ -1,4 +1,4 @@
-/* Copyright (c) 2012, 2016 The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012, 2016-2017 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -87,7 +87,7 @@ static int coresight_find_link_inport(struct coresight_device *csdev)
 	dev_err(&csdev->dev, "couldn't find inport, parent: %s, child: %s\n",
 		dev_name(&parent->dev), dev_name(&csdev->dev));
 
-	return 0;
+	return -ENODEV;
 }
 
 static int coresight_find_link_outport(struct coresight_device *csdev)
@@ -108,7 +108,7 @@ static int coresight_find_link_outport(struct coresight_device *csdev)
 	dev_err(&csdev->dev, "couldn't find outport, parent: %s, child: %s\n",
 		dev_name(&csdev->dev), dev_name(&child->dev));
 
-	return 0;
+	return -ENODEV;
 }
 
 static int coresight_enable_sink(struct coresight_device *csdev)
@@ -155,6 +155,9 @@ static int coresight_enable_link(struct coresight_device *csdev)
 		refport = outport;
 	else
 		refport = 0;
+
+	if (refport < 0)
+		return refport;
 
 	if (atomic_inc_return(&csdev->refcnt[refport]) == 1) {
 		if (link_ops(csdev)->enable) {
@@ -309,6 +312,9 @@ static int coresight_build_paths(struct coresight_device *csdev,
 	int i, ret = -EINVAL;
 	struct coresight_connection *conn;
 
+	if (!csdev)
+		return ret;
+
 	list_add(&csdev->path_link, path);
 
 	if ((csdev->type == CORESIGHT_DEV_TYPE_SINK ||
@@ -382,6 +388,25 @@ out:
 	mutex_unlock(&coresight_mutex);
 }
 EXPORT_SYMBOL_GPL(coresight_disable);
+
+void coresight_abort(void)
+{
+	if (!mutex_trylock(&coresight_mutex)) {
+		pr_err_ratelimited("coresight: abort could not be processed\n");
+		return;
+	}
+	if (!curr_sink)
+		goto out;
+
+	if (curr_sink->enable && sink_ops(curr_sink)->abort) {
+		sink_ops(curr_sink)->abort(curr_sink);
+		curr_sink->enable = false;
+	}
+
+out:
+	mutex_unlock(&coresight_mutex);
+}
+EXPORT_SYMBOL_GPL(coresight_abort);
 
 static int coresight_disable_all_source(struct device *dev, void *data)
 {
@@ -580,6 +605,8 @@ static void coresight_device_release(struct device *dev)
 {
 	struct coresight_device *csdev = to_coresight_device(dev);
 
+	kfree(csdev->conns);
+	kfree(csdev->refcnt);
 	kfree(csdev);
 }
 
@@ -647,7 +674,7 @@ static int coresight_name_match(struct device *dev, void *data)
 	to_match = data;
 	i_csdev = to_coresight_device(dev);
 
-	if (!strcmp(to_match, dev_name(&i_csdev->dev)))
+	if (to_match && !strcmp(to_match, dev_name(&i_csdev->dev)))
 		return 1;
 
 	return 0;
@@ -667,11 +694,57 @@ static void coresight_fixup_device_conns(struct coresight_device *csdev)
 
 		if (dev) {
 			conn->child_dev = to_coresight_device(dev);
+			/* and put reference from 'bus_find_device()' */
+			put_device(dev);
 		} else {
 			csdev->orphan = true;
 			conn->child_dev = NULL;
 		}
 	}
+}
+
+static int coresight_remove_match(struct device *dev, void *data)
+{
+	int i;
+	struct coresight_device *csdev, *iterator;
+	struct coresight_connection *conn;
+
+	csdev = data;
+	iterator = to_coresight_device(dev);
+
+	/* No need to check oneself */
+	if (csdev == iterator)
+		return 0;
+
+	/*
+	 * Circle throuch all the connection of that component.  If we find
+	 * a connection whose name matches @csdev, remove it.
+	 */
+	for (i = 0; i < iterator->nr_outport; i++) {
+		conn = &iterator->conns[i];
+
+		if (conn->child_dev == NULL)
+			continue;
+
+		if (!strcmp(dev_name(&csdev->dev), conn->child_name)) {
+			iterator->orphan = true;
+			conn->child_dev = NULL;
+			/* No need to continue */
+			break;
+		}
+	}
+
+	/*
+	 * Returning '0' ensures that all known component on the
+	 * bus will be checked.
+	 */
+	return 0;
+}
+
+static void coresight_remove_conns(struct coresight_device *csdev)
+{
+	bus_for_each_dev(&coresight_bustype, NULL,
+			 csdev, coresight_remove_match);
 }
 
 /**
@@ -827,12 +900,9 @@ EXPORT_SYMBOL_GPL(coresight_register);
 
 void coresight_unregister(struct coresight_device *csdev)
 {
-	mutex_lock(&coresight_mutex);
-
-	kfree(csdev->conns);
+	/* Remove references of that device in the topology */
+	coresight_remove_conns(csdev);
 	device_unregister(&csdev->dev);
-
-	mutex_unlock(&coresight_mutex);
 }
 EXPORT_SYMBOL_GPL(coresight_unregister);
 

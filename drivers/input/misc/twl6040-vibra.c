@@ -236,8 +236,7 @@ static void twl6040_vibra_close(struct input_dev *input)
 	mutex_unlock(&info->mutex);
 }
 
-#ifdef CONFIG_PM_SLEEP
-static int twl6040_vibra_suspend(struct device *dev)
+static int __maybe_unused twl6040_vibra_suspend(struct device *dev)
 {
 	struct platform_device *pdev = to_platform_device(dev);
 	struct vibra_info *info = platform_get_drvdata(pdev);
@@ -251,7 +250,6 @@ static int twl6040_vibra_suspend(struct device *dev)
 
 	return 0;
 }
-#endif
 
 static SIMPLE_DEV_PM_OPS(twl6040_vibra_pm_ops, twl6040_vibra_suspend, NULL);
 
@@ -264,7 +262,7 @@ static int twl6040_vibra_probe(struct platform_device *pdev)
 	int vddvibr_uV = 0;
 	int error;
 
-	twl6040_core_node = of_find_node_by_name(twl6040_core_dev->of_node,
+	twl6040_core_node = of_get_child_by_name(twl6040_core_dev->of_node,
 						 "vibra");
 	if (!twl6040_core_node) {
 		dev_err(&pdev->dev, "parent of node is missing?\n");
@@ -310,7 +308,8 @@ static int twl6040_vibra_probe(struct platform_device *pdev)
 	mutex_init(&info->mutex);
 
 	error = devm_request_threaded_irq(&pdev->dev, info->irq, NULL,
-					  twl6040_vib_irq_handler, 0,
+					  twl6040_vib_irq_handler,
+					  IRQF_ONESHOT,
 					  "twl6040_irq_vib", info);
 	if (error) {
 		dev_err(info->dev, "VIB IRQ request failed: %d\n", error);
@@ -388,7 +387,6 @@ static struct platform_driver twl6040_vibra_driver = {
 	.probe		= twl6040_vibra_probe,
 	.driver		= {
 		.name	= "twl6040-vibra",
-		.owner	= THIS_MODULE,
 		.pm	= &twl6040_vibra_pm_ops,
 	},
 };

@@ -180,6 +180,7 @@ static netdev_tx_t rmnet_vnd_start_xmit(struct sk_buff *skb,
 			rmnet_vnd_add_qos_header(skb,
 						 dev,
 						 dev_conf->qos_version);
+		skb_orphan(skb);
 		rmnet_egress_handler(skb, &dev_conf->local_ep);
 	} else {
 		dev->stats.tx_dropped++;
@@ -586,8 +587,9 @@ int rmnet_vnd_create_dev(int id, struct net_device **new_device,
 	else if (prefix && use_name)
 		p = scnprintf(dev_prefix, IFNAMSIZ, "%s", prefix);
 	else if (prefix && !use_name)
-		p = scnprintf(dev_prefix, IFNAMSIZ, "%s%%d",
-			  prefix);
+		p = scnprintf(dev_prefix, IFNAMSIZ, "%s%%d", prefix);
+	else
+		return RMNET_CONFIG_BAD_ARGUMENTS;
 	if (p >= (IFNAMSIZ-1)) {
 		LOGE("Specified prefix longer than IFNAMSIZ");
 		return RMNET_CONFIG_BAD_ARGUMENTS;
@@ -607,8 +609,7 @@ int rmnet_vnd_create_dev(int id, struct net_device **new_device,
 		/* Configuring DL checksum offload on rmnet_data interfaces */
 		dev->hw_features = NETIF_F_RXCSUM;
 		/* Configuring UL checksum offload on rmnet_data interfaces */
-		dev->hw_features |= NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM |
-			NETIF_F_IPV6_UDP_CSUM;
+		dev->hw_features |= NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM;
 		/* Configuring GRO on rmnet_data interfaces */
 		dev->hw_features |= NETIF_F_GRO;
 		/* Configuring Scatter-Gather on rmnet_data interfaces */

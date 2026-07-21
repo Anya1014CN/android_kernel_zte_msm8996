@@ -42,8 +42,8 @@
 #define SMEM_IMAGE_VERSION_NAME_SIZE 75
 #define SMEM_IMAGE_VERSION_VARIANT_SIZE 20
 #define SMEM_IMAGE_VERSION_VARIANT_OFFSET 75
-#define SMEM_IMAGE_VERSION_OEM_SIZE 32
-#define SMEM_IMAGE_VERSION_OEM_OFFSET 96
+#define SMEM_IMAGE_VERSION_OEM_SIZE 33
+#define SMEM_IMAGE_VERSION_OEM_OFFSET 95
 #define SMEM_IMAGE_VERSION_PARTITION_APPS 10
 
 static DECLARE_RWSEM(current_image_rwsem);
@@ -66,7 +66,6 @@ enum {
 	HW_PLATFORM_STP = 23,
 	HW_PLATFORM_SBC = 24,
 	HW_PLATFORM_ADP = 25,
-	HW_PLATFORM_TTP = 30,
 	HW_PLATFORM_INVALID
 };
 
@@ -88,7 +87,6 @@ const char *hw_platform[] = {
 	[HW_PLATFORM_STP] = "STP",
 	[HW_PLATFORM_SBC] = "SBC",
 	[HW_PLATFORM_ADP] = "ADP",
-	[HW_PLATFORM_TTP] = "TTP",
 };
 
 enum {
@@ -529,9 +527,8 @@ static struct msm_soc_info cpu_of_id[] = {
 	[256] = {FSM_CPU_9010, "FSM9010"},
 	[257] = {FSM_CPU_9010, "FSM9010"},
 
-	/* 8952 ID */
-	[264] = {MSM_CPU_8952, "MSM8952"},
-	[289] = {MSM_CPU_8952, "APQ8952"},
+	/* Tellurium ID */
+	[264] = {MSM_CPU_TELLURIUM, "MSMTELLURIUM"},
 
 	/* 8996 IDs */
 	[246] = {MSM_CPU_8996, "MSM8996"},
@@ -542,6 +539,7 @@ static struct msm_soc_info cpu_of_id[] = {
 	[312] = {MSM_CPU_8996, "APQ8096pro"},
 	[315] = {MSM_CPU_8996, "MSM8996pro"},
 	[316] = {MSM_CPU_8996, "APQ8096pro"},
+	[387] = {MSM_CPU_8996, "APQ8096A"},
 
 	/* 8976 ID */
 	[266] = {MSM_CPU_8976, "MSM8976"},
@@ -552,55 +550,29 @@ static struct msm_soc_info cpu_of_id[] = {
 	[270] = {MSM_CPU_8929, "MSM8229"},
 	[271] = {MSM_CPU_8929, "APQ8029"},
 
-	/* Cobalt ID */
-	[292] = {MSM_CPU_COBALT, "MSMCOBALT"},
+	/* Cobalt IDs */
+	[292] = {MSM_CPU_8998, "MSM8998"},
+	[319] = {MSM_CPU_8998, "APQ8098"},
 
-	/* 8953 ID */
-	[293] = {MSM_CPU_8953, "MSM8953"},
-	[304] = {MSM_CPU_8953, "APQ8053"},
+	/* Hamster ID */
+	[306] = {MSM_CPU_HAMSTER, "MSMHAMSTER"},
 
-	/* SDM450 ID */
-	[338] = {MSM_CPU_SDM450, "SDM450"},
-	[351] = {MSM_CPU_SDM450, "SDA450"},
+	/* 660 ID */
+	[317] = {MSM_CPU_660, "SDM660"},
+	[324] = {MSM_CPU_660, "SDA660"},
+	[325] = {MSM_CPU_660, "SDM658"},
+	[326] = {MSM_CPU_660, "SDA658"},
 
+	/* 630 ID */
+	[318] = {MSM_CPU_630, "SDM630"},
+	[327] = {MSM_CPU_630, "SDA630"},
 
-	/* 9607 IDs */
-	[290] = {MSM_CPU_9607, "MDM9607"},
-	[296] = {MSM_CPU_9607, "MDM8207"},
-	[297] = {MSM_CPU_9607, "MDM9207"},
-	[298] = {MSM_CPU_9607, "MDM9307"},
-	[299] = {MSM_CPU_9607, "MDM9628"},
-	[322] = {MSM_CPU_9607, "MDM9206"},
+	/* 636 ID */
+	[345] = {MSM_CPU_636, "SDM636"},
+	[346] = {MSM_CPU_636, "SDA636"},
 
-	/* 9650 IDs */
-	[279] = {MSM_CPU_9650, "MDM9650"},
-	[283] = {MSM_CPU_9650, "MDM9650"},
-	[284] = {MSM_CPU_9650, "MDM9650"},
-	[285] = {MSM_CPU_9650, "MDM9650"},
-	[286] = {MSM_CPU_9650, "MDM9650"},
-
-	/* SDX20 IDs */
-	[314] = {SDX_CPU_20, "SDX20"},
-	[333] = {SDX_CPU_20, "SDX20"},
-
-	/*MSM8937 ID  */
-	[294] = {MSM_CPU_8937, "MSM8937"},
-	[295] = {MSM_CPU_8937, "APQ8937"},
-
-	/* MSM8917 IDs */
-	[303] = {MSM_CPU_8917, "MSM8917"},
-	[307] = {MSM_CPU_8917, "APQ8017"},
-	[308] = {MSM_CPU_8917, "MSM8217"},
-	[309] = {MSM_CPU_8917, "MSM8617"},
-
-	/* MSM8920 IDs */
-	[320] = {MSM_CPU_8920, "MSM8920"},
-
-	/* MSM8940 IDs */
-	[313] = {MSM_CPU_8940, "MSM8940"},
-
-	/* MDM9150 IDs */
-	[359] = {MSM_CPU_9150, "MDM9150"},
+	/* 455 ID */
+	[385] = {MSM_CPU_455, "SDM455"},
 
 	/* Uninitialized IDs are not known to run Linux.
 	   MSM_CPU_UNKNOWN is set to 0 to ensure these IDs are
@@ -615,155 +587,6 @@ static struct socinfo_v0_1 dummy_socinfo = {
 	.format = SOCINFO_VERSION(0, 1),
 	.version = 1,
 };
-
-//#ifdef CONFIG_ZTE_BOOT_MODE
-static int __init bootmode_init(char *mode)
-{
-        int boot_mode = 0;
-
-        if (!strncmp(mode, ANDROID_BOOT_MODE_NORMAL, strlen(ANDROID_BOOT_MODE_NORMAL)))
-        {
-                boot_mode = ENUM_BOOT_MODE_NORMAL;
-                pr_err("KERENEL:boot_mode:NORMAL\n");
-        }
-        else if (!strncmp(mode, ANDROID_BOOT_MODE_FTM, strlen(ANDROID_BOOT_MODE_FTM)))
-        {
-                boot_mode = ENUM_BOOT_MODE_FTM;
-                pr_err("KERENEL:boot_mode:FTM\n");
-        }
-        else if (!strncmp(mode, ANDROID_BOOT_MODE_RECOVERY, strlen(ANDROID_BOOT_MODE_RECOVERY)))
-        {
-                boot_mode = ENUM_BOOT_MODE_RECOVERY;
-                pr_err("KERENEL:boot_mode:RECOVERY\n");
-        }
-        else if (!strncmp(mode, ANDROID_BOOT_MODE_FFBM, strlen(ANDROID_BOOT_MODE_FFBM)))
-        {
-                boot_mode = ENUM_BOOT_MODE_FFBM;
-                pr_err("KERENEL:boot_mode:FFBM\n");
-        }
-        else if (!strncmp(mode, ANDROID_BOOT_MODE_CHARGER, strlen(ANDROID_BOOT_MODE_CHARGER)))
-        {
-                boot_mode = ENUM_BOOT_MODE_CHARGER;
-                pr_err("KERENEL:boot_mode:CHARGER\n");
-        }
-
-        else
-        {
-                boot_mode = ENUM_BOOT_MODE_NORMAL;
-                pr_err("KERENEL:boot_mode:DEFAULT NORMAL\n");
-        }
-
-        socinfo_set_boot_mode(boot_mode);
-
-        return 0;
-}
-__setup(ANDROID_BOOT_MODE, bootmode_init);
-
-/*zte_pm add code for pv version*/
-static int pv_flag = 0;
-
-void socinfo_set_pv_flag(int val)
-{
-	pv_flag = val;
-}
-
-int socinfo_get_pv_flag(void)
-{
-    return pv_flag;
-}
-EXPORT_SYMBOL(socinfo_get_pv_flag);
-
-#define SOCINFO_CMDLINE_PV_FLAG "androidboot.pv-version="
-#define SOCINFO_CMDLINE_PV_VERSION   "1"
-#define SOCINFO_CMDLINE_NON_PV_VERSION      "0"
-static int __init zte_pv_flag_init(char *ver)
-{
-        int is_pv_ver = 0;
-
-        if (!strncmp(ver, SOCINFO_CMDLINE_PV_VERSION, strlen(SOCINFO_CMDLINE_PV_VERSION)))
-        {
-                is_pv_ver = 1;
-        }
-        printk(KERN_ERR "pv flag: %d ", is_pv_ver);
-        socinfo_set_pv_flag(is_pv_ver);
-        return 0;
-}
-__setup(SOCINFO_CMDLINE_PV_FLAG, zte_pv_flag_init);
-
-/*
-#define SOCINFO_CMDLINE_FP_HW               "androidboot.fingerprinthw="
-#define SOCINFO_CMDLINE_FP_HW_SYNAFP        "synafp"
-#define SOCINFO_CMDLINE_FP_HW_GOODIX        "goodix"
-static int __init zte_fingerprint_hw_init(char *ver)
-{
-	int fp_hw = FINGERPRINT_HW_UNKOWN;
-
-	if (!strncmp(ver, SOCINFO_CMDLINE_FP_HW_SYNAFP, strlen(SOCINFO_CMDLINE_FP_HW_SYNAFP)))
-	{
-		fp_hw = FINGERPRINT_HW_SYNAFP;
-	}
-	else if (!strncmp(ver, SOCINFO_CMDLINE_FP_HW_GOODIX, strlen(SOCINFO_CMDLINE_FP_HW_GOODIX)))
-	{
-		fp_hw = FINGERPRINT_HW_GOODIX;
-	}
-	printk(KERN_ERR "boot_stats fingerprint_hw: %d ", fp_hw);
-	socinfo_set_fp_hw(fp_hw);
-	return 0;
-}
-__setup(SOCINFO_CMDLINE_FP_HW, zte_fingerprint_hw_init);
-*/
-static int g_boot_mode = 0;
-
-void socinfo_set_boot_mode(int boot_mode)
-{
-        g_boot_mode = boot_mode;
-}
-
-int socinfo_get_ftm_flag(void)
-{
-    return g_boot_mode == ENUM_BOOT_MODE_FTM ? 1 : 0;
-}
-EXPORT_SYMBOL(socinfo_get_ftm_flag);
-
-int socinfo_get_recovery_flag(void)
-{
-    return g_boot_mode == ENUM_BOOT_MODE_RECOVERY ? 1 : 0;
-}
-EXPORT_SYMBOL(socinfo_get_recovery_flag);
-
-int socinfo_get_ffbm_flag(void)
-{
-    return g_boot_mode == ENUM_BOOT_MODE_FFBM ? 1 : 0;
-}
-EXPORT_SYMBOL(socinfo_get_ffbm_flag);
-
-int socinfo_get_charger_flag(void)
-{
-    return g_boot_mode == ENUM_BOOT_MODE_CHARGER ? 1 : 0;
-}
-EXPORT_SYMBOL(socinfo_get_charger_flag);
-
-int socinfo_get_normal_flag(void)
-{
-	return ((g_boot_mode == ENUM_BOOT_MODE_NORMAL)
-		|| (g_boot_mode == ENUM_BOOT_MODE_FFBM)) ? 1 : 0;
-}
-EXPORT_SYMBOL(socinfo_get_normal_flag);
-//ZTE fingerprint hw setting
-/*
-static int fingprint_hw_type = -1;
-void socinfo_set_fp_hw(int val)
-{
-    fingprint_hw_type = val;
-}
-
-int socinfo_get_fp_hw(void)
-{
-    return fingprint_hw_type;
-}
-EXPORT_SYMBOL(socinfo_get_fp_hw);
-*/
-//#endif
 
 uint32_t socinfo_get_id(void)
 {
@@ -1010,7 +833,7 @@ msm_get_platform_subtype(struct device *dev,
 		return snprintf(buf, PAGE_SIZE, "%-.32s\n",
 					qrd_hw_platform_subtype[hw_subtype]);
 	}
-	if (HW_PLATFORM_ADP == socinfo_get_platform_type()) {
+	if (socinfo_get_platform_type() == HW_PLATFORM_ADP) {
 		if (hw_subtype >= PLATFORM_SUBTYPE_ADP_INVALID) {
 			pr_err("Invalid hardware platform sub type for adp found\n");
 			hw_subtype = PLATFORM_SUBTYPE_ADP_INVALID;
@@ -1208,7 +1031,7 @@ msm_get_image_crm_version(struct device *dev,
 	string_address += current_image * SMEM_IMAGE_VERSION_SINGLE_BLOCK_SIZE;
 	up_read(&current_image_rwsem);
 	string_address += SMEM_IMAGE_VERSION_OEM_OFFSET;
-	return snprintf(buf, SMEM_IMAGE_VERSION_OEM_SIZE, "%-.32s\n",
+	return snprintf(buf, SMEM_IMAGE_VERSION_OEM_SIZE, "%-.33s\n",
 			string_address);
 }
 
@@ -1234,7 +1057,7 @@ msm_set_image_crm_version(struct device *dev,
 	store_address += current_image * SMEM_IMAGE_VERSION_SINGLE_BLOCK_SIZE;
 	up_read(&current_image_rwsem);
 	store_address += SMEM_IMAGE_VERSION_OEM_OFFSET;
-	snprintf(store_address, SMEM_IMAGE_VERSION_OEM_SIZE, "%-.32s", buf);
+	snprintf(store_address, SMEM_IMAGE_VERSION_OEM_SIZE, "%-.33s", buf);
 	return count;
 }
 
@@ -1296,7 +1119,8 @@ msm_get_images(struct device *dev,
 				image_address);
 		pos += snprintf(buf + pos, PAGE_SIZE - pos, "\tVariant:\t%-.20s\n",
 				image_address + SMEM_IMAGE_VERSION_VARIANT_OFFSET);
-		pos += snprintf(buf + pos, PAGE_SIZE - pos, "\tVersion:\t%-.32s\n\n",
+		pos += snprintf(buf + pos, PAGE_SIZE - pos,
+				"\tVersion:\t%-.33s\n",
 				image_address + SMEM_IMAGE_VERSION_OEM_OFFSET);
 
 		image_address += SMEM_IMAGE_VERSION_SINGLE_BLOCK_SIZE;
@@ -1413,17 +1237,9 @@ static void * __init setup_dummy_socinfo(void)
 		dummy_socinfo.id = 233;
 		strlcpy(dummy_socinfo.build_id, "msm8936 - ",
 			sizeof(dummy_socinfo.build_id));
-	} else if (early_machine_is_mdm9640()) {
+	} else if (early_machine_is_msmzirc()) {
 		dummy_socinfo.id = 238;
-		strlcpy(dummy_socinfo.build_id, "mdm9640 - ",
-			sizeof(dummy_socinfo.build_id));
-	} else if (early_machine_is_mdm9650()) {
-		dummy_socinfo.id = 286;
-		strlcpy(dummy_socinfo.build_id, "mdm9650 - ",
-			sizeof(dummy_socinfo.build_id));
-	} else if (early_machine_is_sdx20()) {
-		dummy_socinfo.id = 314;
-		strlcpy(dummy_socinfo.build_id, "sdx20 - ",
+		strlcpy(dummy_socinfo.build_id, "msmzirc - ",
 			sizeof(dummy_socinfo.build_id));
 	} else if (early_machine_is_msm8994()) {
 		dummy_socinfo.id = 207;
@@ -1437,9 +1253,9 @@ static void * __init setup_dummy_socinfo(void)
 		dummy_socinfo.id = 266;
 		strlcpy(dummy_socinfo.build_id, "msm8976 - ",
 			sizeof(dummy_socinfo.build_id));
-	} else if (early_machine_is_msm8952()) {
+	} else if (early_machine_is_msmtellurium()) {
 		dummy_socinfo.id = 264;
-		strlcpy(dummy_socinfo.build_id, "msm8952 - ",
+		strlcpy(dummy_socinfo.build_id, "msmtellurium - ",
 			sizeof(dummy_socinfo.build_id));
 	} else if (early_machine_is_msm8996()) {
 		dummy_socinfo.id = 246;
@@ -1449,37 +1265,53 @@ static void * __init setup_dummy_socinfo(void)
 		dummy_socinfo.id = 268;
 		strlcpy(dummy_socinfo.build_id, "msm8929 - ",
 			sizeof(dummy_socinfo.build_id));
-	} else if (early_machine_is_msm8953()) {
-		dummy_socinfo.id = 293;
-		strlcpy(dummy_socinfo.build_id, "msm8953 - ",
-			sizeof(dummy_socinfo.build_id));
-	} else if (early_machine_is_sdm450()) {
-		dummy_socinfo.id = 338;
-		strlcpy(dummy_socinfo.build_id, "sdm450 - ",
-			sizeof(dummy_socinfo.build_id));
-	} else if (early_machine_is_mdm9607()) {
-		dummy_socinfo.id = 290;
-		strlcpy(dummy_socinfo.build_id, "mdm9607 - ",
-			sizeof(dummy_socinfo.build_id));
-	} else if (early_machine_is_msmcobalt()) {
+	} else if (early_machine_is_msm8998()) {
 		dummy_socinfo.id = 292;
-		strlcpy(dummy_socinfo.build_id, "msmcobalt - ",
+		strlcpy(dummy_socinfo.build_id, "msm8998 - ",
 			sizeof(dummy_socinfo.build_id));
-	} else if (early_machine_is_msm8937()) {
-		dummy_socinfo.id = 294;
-		strlcpy(dummy_socinfo.build_id, "msm8937 - ",
+	} else if (early_machine_is_msmhamster()) {
+		dummy_socinfo.id = 306;
+		strlcpy(dummy_socinfo.build_id, "msmhamster - ",
 			sizeof(dummy_socinfo.build_id));
-	} else if (early_machine_is_msm8917()) {
-		dummy_socinfo.id = 303;
-		strlcpy(dummy_socinfo.build_id, "msm8917 - ",
+	} else if (early_machine_is_sdm660()) {
+		dummy_socinfo.id = 317;
+		strlcpy(dummy_socinfo.build_id, "sdm660 - ",
 			sizeof(dummy_socinfo.build_id));
-	} else if (early_machine_is_msm8920()) {
-		dummy_socinfo.id = 320;
-		strlcpy(dummy_socinfo.build_id, "msm8920 - ",
+	} else if (early_machine_is_sda660()) {
+		dummy_socinfo.id = 324;
+		strlcpy(dummy_socinfo.build_id, "sda660 - ",
 			sizeof(dummy_socinfo.build_id));
-	} else if (early_machine_is_msm8940()) {
-		dummy_socinfo.id = 313;
-		strlcpy(dummy_socinfo.build_id, "msm8940 - ",
+	}  else if (early_machine_is_sdm455()) {
+		dummy_socinfo.id = 385;
+		strlcpy(dummy_socinfo.build_id, "sdm455 - ",
+			sizeof(dummy_socinfo.build_id));
+	} else if (early_machine_is_sdm658()) {
+		dummy_socinfo.id = 325;
+		strlcpy(dummy_socinfo.build_id, "sdm658 - ",
+			sizeof(dummy_socinfo.build_id));
+	} else if (early_machine_is_sda658()) {
+		dummy_socinfo.id = 326;
+		strlcpy(dummy_socinfo.build_id, "sda658 - ",
+			sizeof(dummy_socinfo.build_id));
+	} else if (early_machine_is_sdm630()) {
+		dummy_socinfo.id = 318;
+		strlcpy(dummy_socinfo.build_id, "sdm630 - ",
+			sizeof(dummy_socinfo.build_id));
+	} else if (early_machine_is_sda630()) {
+		dummy_socinfo.id = 327;
+		strlcpy(dummy_socinfo.build_id, "sda630 - ",
+			sizeof(dummy_socinfo.build_id));
+	} else if (early_machine_is_sdm636()) {
+		dummy_socinfo.id = 345;
+		strlcpy(dummy_socinfo.build_id, "sdm636 - ",
+			sizeof(dummy_socinfo.build_id));
+	} else if (early_machine_is_sda636()) {
+		dummy_socinfo.id = 346;
+		strlcpy(dummy_socinfo.build_id, "sda636 - ",
+			sizeof(dummy_socinfo.build_id));
+	} else if (early_machine_is_apq8098()) {
+		dummy_socinfo.id = 319;
+		strlcpy(dummy_socinfo.build_id, "apq8098 - ",
 			sizeof(dummy_socinfo.build_id));
 	}
 

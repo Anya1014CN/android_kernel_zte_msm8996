@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -61,6 +61,14 @@ static const struct slim_device_id *slim_match(const struct slim_device_id *id,
 	}
 	return NULL;
 }
+
+const struct slim_device_id *slim_get_device_id(const struct slim_device *sdev)
+{
+	const struct slim_driver *sdrv = to_slim_driver(sdev->dev.driver);
+
+	return slim_match(sdrv->id_table, sdev);
+}
+EXPORT_SYMBOL(slim_get_device_id);
 
 static int slim_device_match(struct device *dev, struct device_driver *driver)
 {
@@ -1315,8 +1323,10 @@ int slim_config_mgrports(struct slim_device *sb, u32 *ph, int nports,
 	for (i = 0; i < nports; i++) {
 		u8 pn = SLIM_HDL_TO_PORT(ph[i]);
 
-		if (ctrl->ports[pn].state == SLIM_P_CFG)
+		if (ctrl->ports[pn].state == SLIM_P_CFG) {
+			mutex_unlock(&ctrl->sched.m_reconf);
 			return -EISCONN;
+		}
 		ctrl->ports[pn].cfg = *cfg;
 	}
 	mutex_unlock(&ctrl->sched.m_reconf);
@@ -2329,6 +2339,9 @@ static int slim_sched_chans(struct slim_device *sb, u32 clkgear,
 		int opensl1[6];
 		bool opensl1valid = false;
 		int maxctrlw1, maxctrlw3, i;
+
+		/* intitalize array to zero */
+		memset(opensl1, 0x0, sizeof(opensl1));
 		finalexp = (ctrl->sched.chc3[last3])->rootexp;
 		if (last1 >= 0) {
 			slc1 = ctrl->sched.chc1[coeff1];
@@ -2742,9 +2755,10 @@ static void slim_change_existing_chans(struct slim_controller *ctrl, int coeff)
 	for (i = 0; i < len; i++) {
 		struct slim_ich *slc = arr[i];
 		if (slc->state == SLIM_CH_ACTIVE ||
-			slc->state == SLIM_CH_SUSPENDED)
+			slc->state == SLIM_CH_SUSPENDED) {
 			slc->offset = slc->newoff;
 			slc->interval = slc->newintr;
+		}
 	}
 }
 static void slim_chan_changes(struct slim_device *sb, bool revert)

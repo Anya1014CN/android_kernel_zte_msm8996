@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2018, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2018, 2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -11,7 +11,6 @@
  *
  */
 
-#include <linux/export.h>
 #include <linux/err.h>
 #include <linux/io.h>
 #include <linux/msm_ion.h>
@@ -31,6 +30,7 @@
 #include <linux/vmalloc.h>
 #include <linux/highmem.h>
 #include <linux/cma.h>
+#include <linux/module.h>
 #include <linux/show_mem_notifier.h>
 #include <asm/cacheflush.h>
 #include "../ion_priv.h"
@@ -87,6 +87,10 @@ static struct ion_heap_desc ion_heap_meta[] = {
 	{
 		.id	= ION_QSECOM_HEAP_ID,
 		.name	= ION_QSECOM_HEAP_NAME,
+	},
+	{
+		.id	= ION_SPSS_HEAP_ID,
+		.name	= ION_SPSS_HEAP_NAME,
 	},
 	{
 		.id	= ION_AUDIO_HEAP_ID,
@@ -149,9 +153,30 @@ EXPORT_SYMBOL(msm_ion_client_create);
 int msm_ion_do_cache_op(struct ion_client *client, struct ion_handle *handle,
 			void *vaddr, unsigned long len, unsigned int cmd)
 {
-	return ion_do_cache_op(client, handle, vaddr, 0, len, cmd);
+	int ret;
+
+	lock_client(client);
+	ret = ion_do_cache_op(client, handle, vaddr, 0, len, cmd);
+	unlock_client(client);
+
+	return ret;
 }
 EXPORT_SYMBOL(msm_ion_do_cache_op);
+
+int msm_ion_do_cache_offset_op(
+		struct ion_client *client, struct ion_handle *handle,
+		void *vaddr, unsigned int offset, unsigned long len,
+		unsigned int cmd)
+{
+	int ret;
+
+	lock_client(client);
+	ret = ion_do_cache_op(client, handle, vaddr, offset, len, cmd);
+	unlock_client(client);
+
+	return ret;
+}
+EXPORT_SYMBOL(msm_ion_do_cache_offset_op);
 
 static int ion_no_pages_cache_ops(struct ion_client *client,
 			struct ion_handle *handle,
@@ -166,7 +191,7 @@ static int ion_no_pages_cache_ops(struct ion_client *client,
 	ion_phys_addr_t buff_phys_start = 0;
 	size_t buf_length = 0;
 
-	ret = ion_phys(client, handle, &buff_phys_start, &buf_length);
+	ret = ion_phys_nolock(client, handle, &buff_phys_start, &buf_length);
 	if (ret)
 		return -EINVAL;
 
@@ -280,9 +305,10 @@ static int ion_pages_cache_ops(struct ion_client *client,
 	int i;
 	unsigned int len = 0;
 	void (*op)(const void *, const void *);
+	struct ion_buffer *buffer;
 
-
-	table = ion_sg_table(client, handle);
+	buffer = get_buffer(handle);
+	table = buffer->sg_table;
 	if (IS_ERR_OR_NULL(table))
 		return PTR_ERR(table);
 
@@ -301,13 +327,23 @@ static int ion_pages_cache_ops(struct ion_client *client,
 	};
 
 	for_each_sg(table->sgl, sg, table->nents, i) {
+		unsigned int sg_offset, sg_left, size = 0;
+
 		len += sg->length;
-		if (len < offset)
+		if (len <= offset)
 			continue;
 
-		__do_cache_ops(sg_page(sg), sg->offset, sg->length, op);
+		sg_left = len - offset;
+		sg_offset = sg->length - sg_left;
 
-		if (len > length + offset)
+		size = (length < sg_left) ? length : sg_left;
+
+		__do_cache_ops(sg_page(sg), sg_offset, size, op);
+
+		offset += size;
+		length -= size;
+
+		if (length == 0)
 			break;
 	}
 	return 0;
@@ -321,10 +357,18 @@ int ion_do_cache_op(struct ion_client *client, struct ion_handle *handle,
 	unsigned long flags;
 	struct sg_table *table;
 	struct page *page;
+	struct ion_buffer *buffer;
 
-	ret = ion_handle_get_flags(client, handle, &flags);
-	if (ret)
+	if (!ion_handle_validate(client, handle)) {
+		pr_err("%s: invalid handle passed to %s.\n",
+		       __func__, __func__);
 		return -EINVAL;
+	}
+
+	buffer = get_buffer(handle);
+	mutex_lock(&buffer->lock);
+	flags = buffer->flags;
+	mutex_unlock(&buffer->lock);
 
 	if (!ION_IS_CACHED(flags))
 		return 0;
@@ -332,7 +376,7 @@ int ion_do_cache_op(struct ion_client *client, struct ion_handle *handle,
 	if (get_secure_vmid(flags) > 0)
 		return 0;
 
-	table = ion_sg_table(client, handle);
+	table = buffer->sg_table;
 
 	if (IS_ERR_OR_NULL(table))
 		return PTR_ERR(table);
@@ -622,14 +666,15 @@ int ion_heap_allow_heap_secure(enum ion_heap_type type)
 
 bool is_secure_vmid_valid(int vmid)
 {
-
 	return (vmid == VMID_CP_TOUCH ||
 		vmid == VMID_CP_BITSTREAM ||
 		vmid == VMID_CP_PIXEL ||
 		vmid == VMID_CP_NON_PIXEL ||
 		vmid == VMID_CP_CAMERA ||
 		vmid == VMID_CP_SEC_DISPLAY ||
-		vmid == VMID_CP_APP);
+		vmid == VMID_CP_APP ||
+		vmid == VMID_CP_CAMERA_PREVIEW ||
+		vmid == VMID_CP_SPSS_SP_SHARED);
 }
 
 int get_secure_vmid(unsigned long flags)
@@ -648,8 +693,27 @@ int get_secure_vmid(unsigned long flags)
 		return VMID_CP_SEC_DISPLAY;
 	if (flags & ION_FLAG_CP_APP)
 		return VMID_CP_APP;
+	if (flags & ION_FLAG_CP_CAMERA_PREVIEW)
+		return VMID_CP_CAMERA_PREVIEW;
+	if (flags & ION_FLAG_CP_SPSS_SP_SHARED)
+		return VMID_CP_SPSS_SP_SHARED;
 	return -EINVAL;
 }
+
+bool is_buffer_hlos_assigned(struct ion_buffer *buffer)
+{
+	bool is_hlos = false;
+
+	if (buffer->heap->type == (enum ion_heap_type)ION_HEAP_TYPE_HYP_CMA &&
+	    (buffer->flags & ION_FLAG_CP_HLOS))
+		is_hlos = true;
+
+	if (get_secure_vmid(buffer->flags) <= 0)
+		is_hlos = true;
+
+	return is_hlos;
+}
+
 /* fix up the cases where the ioctl direction bits are incorrect */
 static unsigned int msm_ion_ioctl_dir(unsigned int cmd)
 {
@@ -694,19 +758,23 @@ long msm_ion_custom_ioctl(struct ion_client *client,
 		int ret;
 		struct mm_struct *mm = current->active_mm;
 
+		lock_client(client);
 		if (data.flush_data.handle > 0) {
-			handle = ion_handle_get_by_id(client,
-						(int)data.flush_data.handle);
+			handle = ion_handle_get_by_id_nolock(
+					client, (int)data.flush_data.handle);
 			if (IS_ERR(handle)) {
 				pr_info("%s: Could not find handle: %d\n",
 					__func__, (int)data.flush_data.handle);
+				unlock_client(client);
 				return PTR_ERR(handle);
 			}
 		} else {
-			handle = ion_import_dma_buf(client, data.flush_data.fd);
+			handle = ion_import_dma_buf_nolock(client,
+							   data.flush_data.fd);
 			if (IS_ERR(handle)) {
 				pr_info("%s: Could not import handle: %pK\n",
 					__func__, handle);
+				unlock_client(client);
 				return -EINVAL;
 			}
 		}
@@ -719,7 +787,7 @@ long msm_ion_custom_ioctl(struct ion_client *client,
 
 		if (start && check_vaddr_bounds(start, end)) {
 			pr_err("%s: virtual address %pK is out of bounds\n",
-				__func__, data.flush_data.vaddr);
+			       __func__, data.flush_data.vaddr);
 			ret = -EINVAL;
 		} else {
 			ret = ion_do_cache_op(
@@ -729,8 +797,9 @@ long msm_ion_custom_ioctl(struct ion_client *client,
 		}
 		up_read(&mm->mmap_sem);
 
-		ion_free(client, handle);
+		ion_free_nolock(client, handle);
 
+		unlock_client(client);
 		if (ret < 0)
 			return ret;
 		break;
@@ -740,16 +809,18 @@ long msm_ion_custom_ioctl(struct ion_client *client,
 		int ret;
 
 		ret = ion_walk_heaps(client, data.prefetch_data.heap_id,
-			ION_HEAP_TYPE_SECURE_DMA,
-			(void *)data.prefetch_data.len,
-			ion_secure_cma_prefetch);
+				     (enum ion_heap_type)
+				     ION_HEAP_TYPE_SECURE_DMA,
+				     (void *)data.prefetch_data.len,
+				     ion_secure_cma_prefetch);
 		if (ret)
 			return ret;
 
 		ret = ion_walk_heaps(client, data.prefetch_data.heap_id,
-			ION_HEAP_TYPE_SYSTEM_SECURE,
-			(void *)&data.prefetch_data,
-			ion_system_secure_heap_prefetch);
+				     (enum ion_heap_type)
+				     ION_HEAP_TYPE_SYSTEM_SECURE,
+				     (void *)&data.prefetch_data,
+				     ion_system_secure_heap_prefetch);
 		if (ret)
 			return ret;
 		break;
@@ -759,9 +830,19 @@ long msm_ion_custom_ioctl(struct ion_client *client,
 		int ret;
 
 		ret = ion_walk_heaps(client, data.prefetch_data.heap_id,
-			ION_HEAP_TYPE_SECURE_DMA,
-			(void *)data.prefetch_data.len,
-			ion_secure_cma_drain_pool);
+				     (enum ion_heap_type)
+				     ION_HEAP_TYPE_SECURE_DMA,
+				     (void *)data.prefetch_data.len,
+				     ion_secure_cma_drain_pool);
+
+		if (ret)
+			return ret;
+
+		ret = ion_walk_heaps(client, data.prefetch_data.heap_id,
+				     (enum ion_heap_type)
+				     ION_HEAP_TYPE_SYSTEM_SECURE,
+				     (void *)&data.prefetch_data,
+				     ion_system_secure_heap_drain);
 
 		if (ret)
 			return ret;
@@ -835,7 +916,7 @@ int msm_ion_heap_alloc_pages_mem(struct pages_mem *pages_mem)
 		 */
 		pages = kmalloc(page_tbl_size,
 				__GFP_COMP | __GFP_NORETRY |
-				__GFP_NO_KSWAPD | __GFP_NOWARN);
+				__GFP_NOWARN);
 		if (!pages) {
 			pages = vmalloc(page_tbl_size);
 			pages_mem->free_fn = vfree;
@@ -856,7 +937,8 @@ void msm_ion_heap_free_pages_mem(struct pages_mem *pages_mem)
 	pages_mem->free_fn(pages_mem->pages);
 }
 
-int msm_ion_heap_high_order_page_zero(struct page *page, int order)
+int msm_ion_heap_high_order_page_zero(struct device *dev, struct page *page,
+				      int order)
 {
 	int i, ret;
 	struct pages_mem pages_mem;
@@ -870,13 +952,14 @@ int msm_ion_heap_high_order_page_zero(struct page *page, int order)
 		pages_mem.pages[i] = page + i;
 
 	ret = msm_ion_heap_pages_zero(pages_mem.pages, npages);
-	dma_sync_single_for_device(NULL, page_to_phys(page), pages_mem.size,
+	dma_sync_single_for_device(dev, page_to_phys(page), pages_mem.size,
 				   DMA_BIDIRECTIONAL);
 	msm_ion_heap_free_pages_mem(&pages_mem);
 	return ret;
 }
 
-int msm_ion_heap_sg_table_zero(struct sg_table *table, size_t size)
+int msm_ion_heap_sg_table_zero(struct device *dev, struct sg_table *table,
+			       size_t size)
 {
 	struct scatterlist *sg;
 	int i, j, ret = 0, npages = 0;
@@ -898,7 +981,7 @@ int msm_ion_heap_sg_table_zero(struct sg_table *table, size_t size)
 	}
 
 	ret = msm_ion_heap_pages_zero(pages_mem.pages, npages);
-	dma_sync_sg_for_device(NULL, table->sgl, table->nents,
+	dma_sync_sg_for_device(dev, table->sgl, table->nents,
 			       DMA_BIDIRECTIONAL);
 	msm_ion_heap_free_pages_mem(&pages_mem);
 	return ret;
@@ -1097,4 +1180,3 @@ static void __exit msm_ion_exit(void)
 
 subsys_initcall(msm_ion_init);
 module_exit(msm_ion_exit);
-

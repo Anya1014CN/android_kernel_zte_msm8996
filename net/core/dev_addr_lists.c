@@ -57,8 +57,8 @@ static int __hw_addr_add_ex(struct netdev_hw_addr_list *list,
 		return -EINVAL;
 
 	list_for_each_entry(ha, &list->list, list) {
-		if (!memcmp(ha->addr, addr, addr_len) &&
-		    ha->type == addr_type) {
+		if (ha->type == addr_type &&
+		    !memcmp(ha->addr, addr, addr_len)) {
 			if (global) {
 				/* check if addr is already used as global */
 				if (ha->global_use)
@@ -278,8 +278,8 @@ int __hw_addr_sync_dev(struct netdev_hw_addr_list *list,
 EXPORT_SYMBOL(__hw_addr_sync_dev);
 
 /**
- *  __hw_addr_unsync_dev - Remove synchonized addresses from device
- *  @list: address list to remove syncronized addresses from
+ *  __hw_addr_unsync_dev - Remove synchronized addresses from device
+ *  @list: address list to remove synchronized addresses from
  *  @dev:  device to sync
  *  @unsync: function to call if address should be removed
  *

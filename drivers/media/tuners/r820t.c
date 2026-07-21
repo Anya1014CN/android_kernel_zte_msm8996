@@ -410,9 +410,11 @@ static int r820t_write(struct r820t_priv *priv, u8 reg, const u8 *val,
 	return 0;
 }
 
-static int r820t_write_reg(struct r820t_priv *priv, u8 reg, u8 val)
+static inline int r820t_write_reg(struct r820t_priv *priv, u8 reg, u8 val)
 {
-	return r820t_write(priv, reg, &val, 1);
+	u8 tmp = val; /* work around GCC PR81715 with asan-stack=1 */
+
+	return r820t_write(priv, reg, &tmp, 1);
 }
 
 static int r820t_read_cache_reg(struct r820t_priv *priv, int reg)
@@ -425,17 +427,18 @@ static int r820t_read_cache_reg(struct r820t_priv *priv, int reg)
 		return -EINVAL;
 }
 
-static int r820t_write_reg_mask(struct r820t_priv *priv, u8 reg, u8 val,
+static inline int r820t_write_reg_mask(struct r820t_priv *priv, u8 reg, u8 val,
 				u8 bit_mask)
 {
+	u8 tmp = val;
 	int rc = r820t_read_cache_reg(priv, reg);
 
 	if (rc < 0)
 		return rc;
 
-	val = (rc & ~bit_mask) | (val & bit_mask);
+	tmp = (rc & ~bit_mask) | (tmp & bit_mask);
 
-	return r820t_write(priv, reg, &val, 1);
+	return r820t_write(priv, reg, &tmp, 1);
 }
 
 static int r820t_read(struct r820t_priv *priv, u8 reg, u8 *val, int len)
@@ -775,6 +778,19 @@ static int r820t_sysfreq_sel(struct r820t_priv *priv, u32 freq,
 		div_buf_cur = 0x30;	/* 11, 150u */
 		filter_cur = 0x40;	/* 10, low */
 		break;
+	case SYS_DVBC_ANNEX_A:
+		mixer_top = 0x24;       /* mixer top:13 , top-1, low-discharge */
+		lna_top = 0xe5;
+		lna_vth_l = 0x62;
+		mixer_vth_l = 0x75;
+		air_cable1_in = 0x60;
+		cable2_in = 0x00;
+		pre_dect = 0x40;
+		lna_discharge = 14;
+		cp_cur = 0x38;          /* 111, auto */
+		div_buf_cur = 0x30;     /* 11, 150u */
+		filter_cur = 0x40;      /* 10, low */
+		break;
 	default: /* DVB-T 8M */
 		mixer_top = 0x24;	/* mixer top:13 , top-1, low-discharge */
 		lna_top = 0xe5;		/* detect bw 3, lna top:4, predet top:2 */
@@ -928,8 +944,8 @@ static int r820t_sysfreq_sel(struct r820t_priv *priv, u32 freq,
 		rc = r820t_write_reg_mask(priv, 0x10, 0x00, 0x04);
 		if (rc < 0)
 			return rc;
-	 }
-	 return 0;
+	}
+	return 0;
 }
 
 static int r820t_set_tv_standard(struct r820t_priv *priv,
@@ -957,7 +973,31 @@ static int r820t_set_tv_standard(struct r820t_priv *priv,
 		ext_enable = 0x40;	/* r30[6], ext enable; r30[5]:0 ext at lna max */
 		loop_through = 0x00;	/* r5[7], lt on */
 		lt_att = 0x00;		/* r31[7], lt att enable */
+		flt_ext_widest = 0x80;	/* r15[7]: flt_ext_wide on */
+		polyfil_cur = 0x60;	/* r25[6:5]:min */
+	} else if (delsys == SYS_DVBC_ANNEX_A) {
+		if_khz = 5070;
+		filt_cal_lo = 73500;
+		filt_gain = 0x10;	/* +3db, 6mhz on */
+		img_r = 0x00;		/* image negative */
+		filt_q = 0x10;		/* r10[4]:low q(1'b1) */
+		hp_cor = 0x0b;		/* 1.7m disable, +0cap, 1.0mhz */
+		ext_enable = 0x40;	/* r30[6]=1 ext enable; r30[5]:1 ext at lna max-1 */
+		loop_through = 0x00;	/* r5[7], lt on */
+		lt_att = 0x00;		/* r31[7], lt att enable */
 		flt_ext_widest = 0x00;	/* r15[7]: flt_ext_wide off */
+		polyfil_cur = 0x60;	/* r25[6:5]:min */
+	} else if (delsys == SYS_DVBC_ANNEX_C) {
+		if_khz = 4063;
+		filt_cal_lo = 55000;
+		filt_gain = 0x10;	/* +3db, 6mhz on */
+		img_r = 0x00;		/* image negative */
+		filt_q = 0x10;		/* r10[4]:low q(1'b1) */
+		hp_cor = 0x6a;		/* 1.7m disable, +0cap, 1.0mhz */
+		ext_enable = 0x40;	/* r30[6]=1 ext enable; r30[5]:1 ext at lna max-1 */
+		loop_through = 0x00;	/* r5[7], lt on */
+		lt_att = 0x00;		/* r31[7], lt att enable */
+		flt_ext_widest = 0x80;	/* r15[7]: flt_ext_wide on */
 		polyfil_cur = 0x60;	/* r25[6:5]:min */
 	} else {
 		if (bw <= 6) {
@@ -1174,7 +1214,7 @@ static int r820t_read_gain(struct r820t_priv *priv)
 	if (rc < 0)
 		return rc;
 
-	return ((data[3] & 0x0f) << 1) + ((data[3] & 0xf0) >> 4);
+	return ((data[3] & 0x08) << 1) + ((data[3] & 0xf0) >> 4);
 }
 
 #if 0

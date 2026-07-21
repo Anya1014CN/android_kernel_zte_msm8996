@@ -1,4 +1,4 @@
-/* Copyright (c) 2016-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2016-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -46,7 +46,7 @@ static int32_t msm_ir_led_get_subdev_id(
 		pr_err("subdevice ID is not valid\n");
 		return -EINVAL;
 	}
-	if (MSM_CAMERA_PLATFORM_DEVICE != ir_led_ctrl->ir_led_device_type) {
+	if (ir_led_ctrl->ir_led_device_type != MSM_CAMERA_PLATFORM_DEVICE) {
 		pr_err("device type is not matching\n");
 		return -EINVAL;
 	}
@@ -196,7 +196,7 @@ static int32_t msm_ir_led_handle_init(
 }
 
 static int32_t msm_ir_led_config(struct msm_ir_led_ctrl_t *ir_led_ctrl,
-	void __user *argp)
+	void *argp)
 {
 	int32_t rc = -EINVAL;
 	struct msm_ir_led_cfg_data_t *ir_led_data =
@@ -241,7 +241,7 @@ static long msm_ir_led_subdev_ioctl(struct v4l2_subdev *sd,
 	unsigned int cmd, void *arg)
 {
 	struct msm_ir_led_ctrl_t *fctrl = NULL;
-	void __user *argp = (void __user *)arg;
+	void *argp = arg;
 	struct msm_ir_led_cfg_data_t ir_led_data = {0};
 
 	if (!sd) {
@@ -312,10 +312,6 @@ static long msm_ir_led_subdev_do_ioctl(
 		(struct msm_ir_led_cfg_data_t32 *)arg;
 	struct msm_ir_led_cfg_data_t ir_led_data;
 
-	ir_led_data.cfg_type = u32->cfg_type;
-	ir_led_data.pwm_duty_on_ns = u32->pwm_duty_on_ns;
-	ir_led_data.pwm_period_ns = u32->pwm_period_ns;
-
 	switch (cmd) {
 	case VIDIOC_MSM_IR_LED_CFG32:
 		cmd = VIDIOC_MSM_IR_LED_CFG;
@@ -323,6 +319,10 @@ static long msm_ir_led_subdev_do_ioctl(
 	default:
 		return msm_ir_led_subdev_ioctl(sd, cmd, arg);
 	}
+
+	ir_led_data.cfg_type = u32->cfg_type;
+	ir_led_data.pwm_duty_on_ns = u32->pwm_duty_on_ns;
+	ir_led_data.pwm_period_ns = u32->pwm_period_ns;
 
 	rc = msm_ir_led_subdev_ioctl(sd, cmd, &ir_led_data);
 

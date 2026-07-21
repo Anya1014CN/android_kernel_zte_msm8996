@@ -164,6 +164,10 @@ static int bq4802_probe(struct platform_device *pdev)
 	} else if (p->r->flags & IORESOURCE_MEM) {
 		p->regs = devm_ioremap(&pdev->dev, p->r->start,
 					resource_size(p->r));
+		if (!p->regs){
+			err = -ENOMEM;
+			goto out;
+		}
 		p->read = bq4802_read_mem;
 		p->write = bq4802_write_mem;
 	} else {
@@ -192,7 +196,6 @@ MODULE_ALIAS("platform:rtc-bq4802");
 static struct platform_driver bq4802_driver = {
 	.driver		= {
 		.name	= "rtc-bq4802",
-		.owner	= THIS_MODULE,
 	},
 	.probe		= bq4802_probe,
 };

@@ -6,7 +6,7 @@
 
 #define PRISM_DEV(vid, pid, name)		\
 	{ USB_DEVICE(vid, pid),			\
-	.driver_info = (unsigned long) name }
+	.driver_info = (unsigned long)name }
 
 static struct usb_device_id usb_prism_tbl[] = {
 	PRISM_DEV(0x04bb, 0x0922, "IOData AirPort WN-B11/USBS"),
@@ -60,10 +60,15 @@ static int prism2sta_probe_usb(struct usb_interface *interface,
 			       const struct usb_device_id *id)
 {
 	struct usb_device *dev;
-
+	struct usb_endpoint_descriptor *bulk_in, *bulk_out;
+	struct usb_host_interface *iface_desc = interface->cur_altsetting;
 	wlandevice_t *wlandev = NULL;
 	hfa384x_t *hw = NULL;
 	int result = 0;
+
+	result = usb_find_common_endpoints(iface_desc, &bulk_in, &bulk_out, NULL, NULL);
+	if (result)
+		goto failed;
 
 	dev = interface_to_usbdev(interface);
 	wlandev = create_wlan();
@@ -81,6 +86,8 @@ static int prism2sta_probe_usb(struct usb_interface *interface,
 	}
 
 	/* Initialize the hw data */
+	hw->endp_in = usb_rcvbulkpipe(dev, bulk_in->bEndpointAddress);
+	hw->endp_out = usb_sndbulkpipe(dev, bulk_out->bEndpointAddress);
 	hfa384x_create(hw, dev);
 	hw->wlandev = wlandev;
 
@@ -136,7 +143,7 @@ static void prism2sta_disconnect_usb(struct usb_interface *interface)
 {
 	wlandevice_t *wlandev;
 
-	wlandev = (wlandevice_t *) usb_get_intfdata(interface);
+	wlandev = (wlandevice_t *)usb_get_intfdata(interface);
 	if (wlandev != NULL) {
 		LIST_HEAD(cleanlist);
 		struct list_head *entry;
@@ -229,7 +236,7 @@ static int prism2sta_suspend(struct usb_interface *interface,
 	hfa384x_t *hw = NULL;
 	wlandevice_t *wlandev;
 
-	wlandev = (wlandevice_t *) usb_get_intfdata(interface);
+	wlandev = (wlandevice_t *)usb_get_intfdata(interface);
 	if (!wlandev)
 		return -ENODEV;
 
@@ -252,7 +259,7 @@ static int prism2sta_resume(struct usb_interface *interface)
 	hfa384x_t *hw = NULL;
 	wlandevice_t *wlandev;
 
-	wlandev = (wlandevice_t *) usb_get_intfdata(interface);
+	wlandev = (wlandevice_t *)usb_get_intfdata(interface);
 	if (!wlandev)
 		return -ENODEV;
 

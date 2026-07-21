@@ -14,11 +14,11 @@
 #define ATOMIC_INIT(i)		{ (i) }
 #define ATOMIC64_INIT(i)	{ (i) }
 
-#define atomic_read(v)		ACCESS_ONCE((v)->counter)
-#define atomic64_read(v)	ACCESS_ONCE((v)->counter)
+#define atomic_read(v)		READ_ONCE((v)->counter)
+#define atomic64_read(v)	READ_ONCE((v)->counter)
 
-#define atomic_set(v, i)	(((v)->counter) = i)
-#define atomic64_set(v, i)	(((v)->counter) = i)
+#define atomic_set(v, i)	WRITE_ONCE(((v)->counter), (i))
+#define atomic64_set(v, i)	WRITE_ONCE(((v)->counter), (i))
 
 #define ATOMIC_OP(op)							\
 void atomic_##op(int, atomic_t *);					\
@@ -32,6 +32,10 @@ long atomic64_##op##_return(long, atomic64_t *);
 
 ATOMIC_OPS(add)
 ATOMIC_OPS(sub)
+
+ATOMIC_OP(and)
+ATOMIC_OP(or)
+ATOMIC_OP(xor)
 
 #undef ATOMIC_OPS
 #undef ATOMIC_OP_RETURN
@@ -70,7 +74,11 @@ ATOMIC_OPS(sub)
 #define atomic64_add_negative(i, v) (atomic64_add_return(i, v) < 0)
 
 #define atomic_cmpxchg(v, o, n) (cmpxchg(&((v)->counter), (o), (n)))
-#define atomic_xchg(v, new) (xchg(&((v)->counter), new))
+
+static inline int atomic_xchg(atomic_t *v, int new)
+{
+	return xchg(&v->counter, new);
+}
 
 static inline int __atomic_add_unless(atomic_t *v, int a, int u)
 {

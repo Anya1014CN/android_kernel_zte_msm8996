@@ -1,5 +1,6 @@
 /*
- * Copyright (c) 2013-2016, Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2017, Linux Foundation. All rights reserved.
+ * Copyright (C) 2018 XiaoMi, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -42,12 +43,6 @@
 #define MSM_CPE_MAX_CUSTOM_PARAM_SIZE 2048
 
 #define MSM_CPE_LAB_THREAD_TIMEOUT (3 * (HZ/10))
-
-/*
- * Driver ioctl will parse only so many params
- * size of LSM_PARAMS_MAX is last LSM_PARAM_TYPE + 1
- */
-#define LSM_PARAMS_MAX (LSM_POLLING_ENABLE + 1)
 
 #define MSM_CPE_LSM_GRAB_LOCK(lock, name)		\
 {						\
@@ -137,6 +132,7 @@ struct cpe_lsm_lab {
 	wait_queue_head_t period_wait;
 	struct completion comp;
 	struct completion thread_complete;
+	bool is_buf_allocated;
 };
 
 struct cpe_priv {
@@ -403,14 +399,6 @@ static int msm_cpe_lsm_lab_stop(struct snd_pcm_substream *substream)
 		}
 	}
 
-	rc = dma_data->dai_channel_ctl(dma_data, rtd->cpu_dai,
-				       MSM_DAI_SLIM_PRE_DISABLE);
-	if (rc)
-		dev_err(rtd->dev,
-			"%s: PRE_DISABLE failed, err = %d\n",
-			__func__, rc);
-
-	/* continue with teardown even if any intermediate step fails */
 	rc = lsm_ops->lab_ch_setup(cpe->core_handle,
 				   session,
 				   WCD_CPE_PRE_DISABLE);
@@ -418,13 +406,11 @@ static int msm_cpe_lsm_lab_stop(struct snd_pcm_substream *substream)
 		dev_err(rtd->dev,
 			"%s: PRE ch teardown failed, err = %d\n",
 			__func__, rc);
-
-	rc = dma_data->dai_channel_ctl(dma_data, rtd->cpu_dai,
-				       MSM_DAI_SLIM_DISABLE);
+	/* continue with teardown even if any intermediate step fails */
+	rc = dma_data->dai_channel_ctl(dma_data, rtd->cpu_dai, false);
 	if (rc)
 		dev_err(rtd->dev,
-			"%s: DISABLE failed, err = %d\n",
-			__func__, rc);
+			"%s: open data failed %d\n", __func__, rc);
 	dma_data->ph = 0;
 
 	/*
@@ -636,8 +622,7 @@ static int msm_cpe_lab_thread(void *data)
 		goto done;
 	}
 
-	rc = dma_data->dai_channel_ctl(dma_data, rtd->cpu_dai,
-				       MSM_DAI_SLIM_ENABLE);
+	rc = dma_data->dai_channel_ctl(dma_data, rtd->cpu_dai, true);
 	if (rc) {
 		dev_err(rtd->dev,
 			"%s: open data failed %d\n", __func__, rc);
@@ -1136,25 +1121,29 @@ static int msm_cpe_lsm_ioctl_shared(struct snd_pcm_substream *substream,
 		}
 
 		if (session->lab_enable) {
-			rc = msm_cpe_lab_buf_alloc(substream,
-						   session, dma_data);
-			if (IS_ERR_VALUE(rc)) {
-				dev_err(rtd->dev,
-					"%s: lab buffer alloc failed, err = %d\n",
-					__func__, rc);
-				return rc;
+			if (!lab_d->is_buf_allocated) {
+				rc = msm_cpe_lab_buf_alloc(substream,
+							   session, dma_data);
+				if (IS_ERR_VALUE(rc)) {
+					dev_err(rtd->dev,
+						"%s: lab buffer alloc failed, err = %d\n",
+						__func__, rc);
+					return rc;
+				}
+
+				lab_d->is_buf_allocated = true;
+				dma_buf->dev.type = SNDRV_DMA_TYPE_DEV;
+				dma_buf->dev.dev = substream->pcm->card->dev;
+				dma_buf->private_data = NULL;
+				dma_buf->area = lab_d->pcm_buf[0].mem;
+				dma_buf->addr =  lab_d->pcm_buf[0].phys;
+				dma_buf->bytes = (lsm_d->hw_params.buf_sz *
+						lsm_d->hw_params.period_count);
+				init_completion(&lab_d->thread_complete);
+				snd_pcm_set_runtime_buffer(substream,
+						&substream->dma_buffer);
 			}
 
-			dma_buf->dev.type = SNDRV_DMA_TYPE_DEV;
-			dma_buf->dev.dev = substream->pcm->card->dev;
-			dma_buf->private_data = NULL;
-			dma_buf->area = lab_d->pcm_buf[0].mem;
-			dma_buf->addr =  lab_d->pcm_buf[0].phys;
-			dma_buf->bytes = (lsm_d->hw_params.buf_sz *
-					lsm_d->hw_params.period_count);
-			init_completion(&lab_d->thread_complete);
-			snd_pcm_set_runtime_buffer(substream,
-						   &substream->dma_buffer);
 			rc = lsm_ops->lsm_lab_control(cpe->core_handle,
 					session, true);
 			if (IS_ERR_VALUE(rc)) {
@@ -1189,6 +1178,8 @@ static int msm_cpe_lsm_ioctl_shared(struct snd_pcm_substream *substream,
 					__func__, rc);
 				return rc;
 			}
+
+			lab_d->is_buf_allocated = false;
 		}
 	break;
 	case SNDRV_LSM_REG_SND_MODEL_V2:
@@ -1341,6 +1332,13 @@ static int msm_cpe_lsm_ioctl_shared(struct snd_pcm_substream *substream,
 		dev_dbg(rtd->dev,
 			"%s: %s\n",
 			__func__, "SNDRV_LSM_EVENT_STATUS(_V3)");
+		if (!arg) {
+			dev_err(rtd->dev,
+				"%s: Invalid argument to ioctl %s\n",
+				__func__,
+				"SNDRV_LSM_EVENT_STATUS(_V3)");
+			return -EINVAL;
+		}
 
 		/*
 		 * Release the api lock before wait to allow
@@ -2423,7 +2421,7 @@ struct lsm_params_info_32 {
 	u32 param_id;
 	u32 param_size;
 	compat_uptr_t param_data;
-	enum LSM_PARAM_TYPE param_type;
+	uint32_t param_type;
 };
 
 struct snd_lsm_module_params_32 {
@@ -2657,12 +2655,15 @@ static int msm_cpe_lsm_ioctl_compat(struct snd_pcm_substream *substream,
 				u_event_status32.payload_size;
 			err = msm_cpe_lsm_ioctl_shared(substream,
 						       cmd, event_status);
-			if (err)
+			if (err) {
 				dev_err(rtd->dev,
 					"%s: %s failed, error = %d\n",
 					__func__,
 					"SNDRV_LSM_EVENT_STATUS_V3_32",
 					err);
+				kfree(event_status);
+				goto done;
+			}
 		}
 
 		if (!err) {
@@ -2682,7 +2683,7 @@ static int msm_cpe_lsm_ioctl_compat(struct snd_pcm_substream *substream,
 					event_status->payload_size;
 				memcpy(udata_32->payload,
 				       event_status->payload,
-				       u_pld_size);
+				       event_status->payload_size);
 			}
 		}
 

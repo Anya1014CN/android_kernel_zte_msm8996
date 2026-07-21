@@ -1,6 +1,7 @@
 /* rc-main.c - Remote Controller core module
  *
  * Copyright (C) 2009-2010 by Mauro Carvalho Chehab
+ * Copyright (C) 2018 XiaoMi, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -18,17 +19,15 @@
 #include <linux/input.h>
 #include <linux/leds.h>
 #include <linux/slab.h>
+#include <linux/idr.h>
 #include <linux/device.h>
 #include <linux/module.h>
 #include "rc-core-priv.h"
 
-/* Bitmap to store allocated device numbers from 0 to IRRCV_NUM_DEVICES - 1 */
-#define IRRCV_NUM_DEVICES      256
-static DECLARE_BITMAP(ir_core_dev_number, IRRCV_NUM_DEVICES);
-
 /* Sizes are in bytes, 256 bytes allows for 32 entries on x64 */
 #define IR_TAB_MIN_SIZE	256
 #define IR_TAB_MAX_SIZE	8192
+#define RC_DEV_MAX	256
 
 /* FIXME: IR_KEYPRESS_TIMEOUT should be protocol specific */
 #define IR_KEYPRESS_TIMEOUT 250
@@ -37,6 +36,9 @@ static DECLARE_BITMAP(ir_core_dev_number, IRRCV_NUM_DEVICES);
 static LIST_HEAD(rc_map_list);
 static DEFINE_SPINLOCK(rc_map_lock);
 static struct led_trigger *led_feedback;
+
+/* Used to keep track of rc devices */
+static DEFINE_IDA(rc_ida);
 
 static struct rc_map_list *seek_rc_map(const char *name)
 {
@@ -60,7 +62,7 @@ struct rc_map *rc_map_get(const char *name)
 	struct rc_map_list *map;
 
 	map = seek_rc_map(name);
-#ifdef MODULE
+#ifdef CONFIG_MODULES
 	if (!map) {
 		int rc = request_module("%s", name);
 		if (rc < 0) {
@@ -737,8 +739,16 @@ EXPORT_SYMBOL_GPL(rc_open);
 static int ir_open(struct input_dev *idev)
 {
 	struct rc_dev *rdev = input_get_drvdata(idev);
+	int rc = 0;
 
-	return rc_open(rdev);
+	mutex_lock(&rdev->lock);
+	if (!rdev->open_count++)
+		rc = rdev->open(rdev);
+	if (rc < 0)
+		rdev->open_count--;
+	mutex_unlock(&rdev->lock);
+
+	return rc;
 }
 
 void rc_close(struct rc_dev *rdev)
@@ -746,7 +756,7 @@ void rc_close(struct rc_dev *rdev)
 	if (rdev) {
 		mutex_lock(&rdev->lock);
 
-		 if (!--rdev->users && rdev->close != NULL)
+		if (!--rdev->users && rdev->close != NULL)
 			rdev->close(rdev);
 
 		mutex_unlock(&rdev->lock);
@@ -757,7 +767,13 @@ EXPORT_SYMBOL_GPL(rc_close);
 static void ir_close(struct input_dev *idev)
 {
 	struct rc_dev *rdev = input_get_drvdata(idev);
-	rc_close(rdev);
+
+	 if (rdev) {
+		mutex_lock(&rdev->lock);
+		if (!--rdev->open_count)
+			rdev->close(rdev);
+		mutex_unlock(&rdev->lock);
+	}
 }
 
 /* class for /sys/class/rc */
@@ -799,7 +815,6 @@ static struct {
 	{ RC_BIT_SANYO,		"sanyo"		},
 	{ RC_BIT_SHARP,		"sharp"		},
 	{ RC_BIT_MCE_KBD,	"mce_kbd"	},
-	{ RC_BIT_LIRC,		"lirc"		},
 	{ RC_BIT_XMP,		"xmp"		},
 };
 
@@ -827,6 +842,23 @@ struct rc_filter_attribute {
 		.type = (_type),					\
 		.mask = (_mask),					\
 	}
+
+static bool lirc_is_present(void)
+{
+#if defined(CONFIG_LIRC_MODULE)
+	struct module *lirc;
+
+	mutex_lock(&module_mutex);
+	lirc = find_module("lirc_dev");
+	mutex_unlock(&module_mutex);
+
+	return lirc ? true : false;
+#elif defined(CONFIG_LIRC)
+	return true;
+#else
+	return false;
+#endif
+}
 
 /**
  * show_protocols() - shows the current/wakeup IR protocol(s)
@@ -882,6 +914,9 @@ static ssize_t show_protocols(struct device *device,
 			allowed &= ~proto_names[i].type;
 	}
 
+	if (dev->driver_type == RC_DRIVER_IR_RAW && lirc_is_present())
+		tmp += sprintf(tmp, "[lirc] ");
+
 	if (tmp != buf)
 		tmp--;
 	*tmp = '\n';
@@ -933,8 +968,12 @@ static int parse_protocol_change(u64 *protocols, const char *buf)
 		}
 
 		if (i == ARRAY_SIZE(proto_names)) {
-			IR_dprintk(1, "Unknown protocol: '%s'\n", tmp);
-			return -EINVAL;
+			if (!strcasecmp(tmp, "lirc"))
+				mask = 0;
+			else {
+				IR_dprintk(1, "Unknown protocol: '%s'\n", tmp);
+				return -EINVAL;
+			}
 		}
 
 		count++;
@@ -1295,8 +1334,7 @@ void rc_free_device(struct rc_dev *dev)
 	if (!dev)
 		return;
 
-	if (dev->input_dev)
-		input_free_device(dev->input_dev);
+	input_free_device(dev->input_dev);
 
 	put_device(&dev->dev);
 
@@ -1310,7 +1348,9 @@ int rc_register_device(struct rc_dev *dev)
 	static bool raw_init = false; /* raw decoders loaded? */
 	struct rc_map *rc_map;
 	const char *path;
-	int rc, devno, attr = 0;
+	int attr = 0;
+	int minor;
+	int rc;
 
 	if (!dev || !dev->map_name)
 		return -EINVAL;
@@ -1330,13 +1370,13 @@ int rc_register_device(struct rc_dev *dev)
 	if (dev->close)
 		dev->input_dev->close = ir_close;
 
-	do {
-		devno = find_first_zero_bit(ir_core_dev_number,
-					    IRRCV_NUM_DEVICES);
-		/* No free device slots */
-		if (devno >= IRRCV_NUM_DEVICES)
-			return -ENOMEM;
-	} while (test_and_set_bit(devno, ir_core_dev_number));
+	minor = ida_simple_get(&rc_ida, 0, RC_DEV_MAX, GFP_KERNEL);
+	if (minor < 0)
+		return minor;
+
+	dev->minor = minor;
+	dev_set_name(&dev->dev, "rc%u", dev->minor);
+	dev_set_drvdata(&dev->dev, dev);
 
 	dev->dev.groups = dev->sysfs_groups;
 	dev->sysfs_groups[attr++] = &rc_dev_protocol_attr_grp;
@@ -1356,9 +1396,6 @@ int rc_register_device(struct rc_dev *dev)
 	 */
 	mutex_lock(&dev->lock);
 
-	dev->devno = devno;
-	dev_set_name(&dev->dev, "rc%ld", dev->devno);
-	dev_set_drvdata(&dev->dev, dev);
 	rc = device_add(&dev->dev);
 	if (rc)
 		goto out_unlock;
@@ -1411,15 +1448,16 @@ int rc_register_device(struct rc_dev *dev)
 			ir_raw_init();
 			raw_init = true;
 		}
+		/* calls ir_register_device so unlock mutex here*/
+		mutex_unlock(&dev->lock);
 		rc = ir_raw_event_register(dev);
+		mutex_lock(&dev->lock);
 		if (rc < 0)
 			goto out_input;
 	}
 
 	if (dev->change_protocol) {
-		u64 rc_type = (1 << rc_map->rc_type);
-		if (dev->driver_type == RC_DRIVER_IR_RAW)
-			rc_type |= RC_BIT_LIRC;
+		u64 rc_type = (1ll << rc_map->rc_type);
 		rc = dev->change_protocol(dev, &rc_type);
 		if (rc < 0)
 			goto out_raw;
@@ -1428,8 +1466,8 @@ int rc_register_device(struct rc_dev *dev)
 
 	mutex_unlock(&dev->lock);
 
-	IR_dprintk(1, "Registered rc%ld (driver: %s, remote: %s, mode %s)\n",
-		   dev->devno,
+	IR_dprintk(1, "Registered rc%u (driver: %s, remote: %s, mode %s)\n",
+		   dev->minor,
 		   dev->driver_name ? dev->driver_name : "unknown",
 		   rc_map->name ? rc_map->name : "unknown",
 		   dev->driver_type == RC_DRIVER_IR_RAW ? "raw" : "cooked");
@@ -1448,7 +1486,7 @@ out_dev:
 	device_del(&dev->dev);
 out_unlock:
 	mutex_unlock(&dev->lock);
-	clear_bit(dev->devno, ir_core_dev_number);
+	ida_simple_remove(&rc_ida, minor);
 	return rc;
 }
 EXPORT_SYMBOL_GPL(rc_register_device);
@@ -1459,8 +1497,6 @@ void rc_unregister_device(struct rc_dev *dev)
 		return;
 
 	del_timer_sync(&dev->timer_keyup);
-
-	clear_bit(dev->devno, ir_core_dev_number);
 
 	if (dev->driver_type == RC_DRIVER_IR_RAW)
 		ir_raw_event_unregister(dev);
@@ -1473,6 +1509,8 @@ void rc_unregister_device(struct rc_dev *dev)
 	dev->input_dev = NULL;
 
 	device_del(&dev->dev);
+
+	ida_simple_remove(&rc_ida, dev->minor);
 
 	rc_free_device(dev);
 }

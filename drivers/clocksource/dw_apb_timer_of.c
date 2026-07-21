@@ -108,7 +108,7 @@ static void __init add_clocksource(struct device_node *source_timer)
 
 static u64 notrace read_sched_clock(void)
 {
-	return ~__raw_readl(sched_io_base);
+	return ~readl_relaxed(sched_io_base);
 }
 
 static const struct of_device_id sptimer_ids[] __initconst = {
@@ -134,16 +134,14 @@ static int num_called;
 static void __init dw_apb_timer_init(struct device_node *timer)
 {
 	switch (num_called) {
-	case 0:
-		pr_debug("%s: found clockevent timer\n", __func__);
-		add_clockevent(timer);
-		break;
 	case 1:
 		pr_debug("%s: found clocksource timer\n", __func__);
 		add_clocksource(timer);
 		init_sched_clock();
 		break;
 	default:
+		pr_debug("%s: found clockevent timer\n", __func__);
+		add_clockevent(timer);
 		break;
 	}
 

@@ -60,7 +60,8 @@ static int ds1672_get_datetime(struct i2c_client *client, struct rtc_time *tm)
 		"%s: raw read data - counters=%02x,%02x,%02x,%02x\n",
 		__func__, buf[0], buf[1], buf[2], buf[3]);
 
-	time = (buf[3] << 24) | (buf[2] << 16) | (buf[1] << 8) | buf[0];
+	time = ((unsigned long)buf[3] << 24) | (buf[2] << 16) |
+	       (buf[1] << 8) | buf[0];
 
 	rtc_time_to_tm(time, tm);
 
@@ -198,6 +199,7 @@ static struct i2c_device_id ds1672_id[] = {
 	{ "ds1672", 0 },
 	{ }
 };
+MODULE_DEVICE_TABLE(i2c, ds1672_id);
 
 static struct i2c_driver ds1672_driver = {
 	.driver = {

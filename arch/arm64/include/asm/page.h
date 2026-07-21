@@ -19,11 +19,16 @@
 #ifndef __ASM_PAGE_H
 #define __ASM_PAGE_H
 
+#include <linux/const.h>
+
 /* PAGE_SHIFT determines the page size */
 /* CONT_SHIFT determines the number of pages which can be tracked together  */
 #ifdef CONFIG_ARM64_64K_PAGES
 #define PAGE_SHIFT		16
 #define CONT_SHIFT		5
+#elif defined(CONFIG_ARM64_16K_PAGES)
+#define PAGE_SHIFT		14
+#define CONT_SHIFT		7
 #else
 #define PAGE_SHIFT		12
 #define CONT_SHIFT		4

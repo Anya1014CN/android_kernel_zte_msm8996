@@ -39,18 +39,18 @@ int __opal_async_get_token(void)
 	int token;
 
 	spin_lock_irqsave(&opal_async_comp_lock, flags);
-	token = find_first_bit(opal_async_complete_map, opal_max_async_tokens);
+	token = find_first_zero_bit(opal_async_token_map, opal_max_async_tokens);
 	if (token >= opal_max_async_tokens) {
 		token = -EBUSY;
 		goto out;
 	}
 
-	if (__test_and_set_bit(token, opal_async_token_map)) {
+	if (!__test_and_clear_bit(token, opal_async_complete_map)) {
 		token = -EBUSY;
 		goto out;
 	}
 
-	__clear_bit(token, opal_async_complete_map);
+	__set_bit(token, opal_async_token_map);
 
 out:
 	spin_unlock_irqrestore(&opal_async_comp_lock, flags);
@@ -71,6 +71,7 @@ int opal_async_get_token_interruptible(void)
 
 	return token;
 }
+EXPORT_SYMBOL_GPL(opal_async_get_token_interruptible);
 
 int __opal_async_release_token(int token)
 {
@@ -102,6 +103,7 @@ int opal_async_release_token(int token)
 
 	return 0;
 }
+EXPORT_SYMBOL_GPL(opal_async_release_token);
 
 int opal_async_wait_response(uint64_t token, struct opal_msg *msg)
 {
@@ -120,6 +122,7 @@ int opal_async_wait_response(uint64_t token, struct opal_msg *msg)
 
 	return 0;
 }
+EXPORT_SYMBOL_GPL(opal_async_wait_response);
 
 static int opal_async_comp_event(struct notifier_block *nb,
 		unsigned long msg_type, void *msg)
@@ -148,7 +151,7 @@ static struct notifier_block opal_async_comp_nb = {
 		.priority	= 0,
 };
 
-static int __init opal_async_comp_init(void)
+int __init opal_async_comp_init(void)
 {
 	struct device_node *opal_node;
 	const __be32 *async;
@@ -202,4 +205,3 @@ out_opal_node:
 out:
 	return err;
 }
-machine_subsys_initcall(powernv, opal_async_comp_init);

@@ -1,4 +1,4 @@
-/* Copyright (c) 2014-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014, 2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -24,10 +24,10 @@
 #define FMDERR(fmt, args...) pr_err("silabs_radio: " fmt, ##args)
 
 /* For bounds checking. */
-const unsigned char MIN_RDS_STD = 0x00;
-const unsigned char MAX_RDS_STD = 0x02;
-const unsigned char MIN_SRCH_MODE = 0x00;
-const unsigned char MAX_SRCH_MODE = 0x02;
+static const unsigned char MIN_RDS_STD;
+static const unsigned char MAX_RDS_STD = 0x02;
+static const unsigned char MIN_SRCH_MODE;
+static const unsigned char MAX_SRCH_MODE = 0x02;
 
 /* Standard buffer size */
 #define STD_BUF_SIZE               (256)

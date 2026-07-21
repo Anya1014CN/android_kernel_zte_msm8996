@@ -19,7 +19,6 @@
 #include <linux/backlight.h>
 #include <linux/gfp.h>
 #include <linux/module.h>
-#include <linux/platform_data/atmel.h>
 #include <linux/of.h>
 #include <linux/of_device.h>
 #include <linux/of_gpio.h>
@@ -999,7 +998,7 @@ static const char *atmel_lcdfb_wiring_modes[] = {
 	[ATMEL_LCDC_WIRING_RGB]	= "RGB",
 };
 
-const int atmel_lcdfb_get_of_wiring_modes(struct device_node *np)
+static int atmel_lcdfb_get_of_wiring_modes(struct device_node *np)
 {
 	const char *mode;
 	int err, i;
@@ -1121,7 +1120,7 @@ static int atmel_lcdfb_of_init(struct atmel_lcdfb_info *sinfo)
 		goto put_display_node;
 	}
 
-	timings_np = of_find_node_by_name(display_np, "display-timings");
+	timings_np = of_get_child_by_name(display_np, "display-timings");
 	if (!timings_np) {
 		dev_err(dev, "failed to find display-timings node\n");
 		ret = -ENODEV;
@@ -1141,6 +1140,12 @@ static int atmel_lcdfb_of_init(struct atmel_lcdfb_info *sinfo)
 
 		fb_add_videomode(&fb_vm, &info->modelist);
 	}
+
+	/*
+	 * FIXME: Make sure we are not referencing any fields in display_np
+	 * and timings_np and drop our references to them before returning to
+	 * avoid leaking the nodes on probe deferral and driver unbind.
+	 */
 
 	return 0;
 
@@ -1266,7 +1271,8 @@ static int __init atmel_lcdfb_probe(struct platform_device *pdev)
 			goto stop_clk;
 		}
 
-		info->screen_base = ioremap(info->fix.smem_start, info->fix.smem_len);
+		info->screen_base = ioremap_wc(info->fix.smem_start,
+					       info->fix.smem_len);
 		if (!info->screen_base) {
 			ret = -ENOMEM;
 			goto release_intmem;
@@ -1465,7 +1471,6 @@ static struct platform_driver atmel_lcdfb_driver = {
 	.id_table	= atmel_lcdfb_devtypes,
 	.driver		= {
 		.name	= "atmel_lcdfb",
-		.owner	= THIS_MODULE,
 		.of_match_table	= of_match_ptr(atmel_lcdfb_dt_ids),
 	},
 };

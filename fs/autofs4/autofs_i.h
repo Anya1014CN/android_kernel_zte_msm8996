@@ -18,6 +18,7 @@
 #include <linux/mutex.h>
 #include <linux/spinlock.h>
 #include <linux/list.h>
+#include <linux/magic.h>
 
 /* This is the range of ioctl() numbers we claim as ours */
 #define AUTOFS_IOC_FIRST     AUTOFS_IOC_READY
@@ -135,7 +136,8 @@ struct autofs_sb_info {
 
 static inline struct autofs_sb_info *autofs4_sbi(struct super_block *sb)
 {
-	return (struct autofs_sb_info *)(sb->s_fs_info);
+	return sb->s_magic != AUTOFS_SUPER_MAGIC ?
+		NULL : (struct autofs_sb_info *)(sb->s_fs_info);
 }
 
 static inline struct autofs_info *autofs4_dentry_ino(struct dentry *dentry)
@@ -217,7 +219,7 @@ void autofs4_clean_ino(struct autofs_info *);
 
 static inline int autofs_prepare_pipe(struct file *pipe)
 {
-	if (!pipe->f_op->write)
+	if (!(pipe->f_mode & FMODE_CAN_WRITE))
 		return -EINVAL;
 	if (!S_ISFIFO(file_inode(pipe)->i_mode))
 		return -EINVAL;
@@ -239,12 +241,7 @@ static inline u32 autofs4_get_dev(struct autofs_sb_info *sbi)
 
 static inline u64 autofs4_get_ino(struct autofs_sb_info *sbi)
 {
-	return sbi->sb->s_root->d_inode->i_ino;
-}
-
-static inline int simple_positive(struct dentry *dentry)
-{
-	return dentry->d_inode && !d_unhashed(dentry);
+	return d_inode(sbi->sb->s_root)->i_ino;
 }
 
 static inline void __autofs4_add_expiring(struct dentry *dentry)

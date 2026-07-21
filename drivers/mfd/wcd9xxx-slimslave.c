@@ -32,7 +32,7 @@ static int wcd9xxx_dealloc_slim_sh_ch(struct slim_device *slim,
 static int wcd9xxx_configure_ports(struct wcd9xxx *wcd9xxx)
 {
 	if (wcd9xxx->codec_type->slim_slave_type ==
-	    WCD9XXX_SLIM_SLAVE_ADDR_TYPE_TABLA) {
+	    WCD9XXX_SLIM_SLAVE_ADDR_TYPE_0) {
 		sh_ch.rx_port_ch_reg_base = 0x180;
 		sh_ch.port_rx_cfg_reg_base = 0x040;
 		sh_ch.port_tx_cfg_reg_base = 0x040;
@@ -228,7 +228,8 @@ int wcd9xxx_cfg_slim_sch_rx(struct wcd9xxx *wcd9xxx,
 		 __func__, ch_cnt, rate, WATER_MARK_VAL);
 	/* slim_define_ch api */
 	prop.prot = SLIM_AUTO_ISO;
-	if (rate == 44100) {
+	if ((rate == 44100) || (rate == 88200) || (rate == 176400) ||
+	    (rate == 352800)) {
 		prop.baser = SLIM_RATE_11025HZ;
 		prop.ratem = (rate/11025);
 	} else {

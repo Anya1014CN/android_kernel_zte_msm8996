@@ -94,7 +94,7 @@ void iwlagn_temperature(struct iwl_priv *priv)
 	iwl_tt_handler(priv);
 }
 
-int iwlagn_hwrate_to_mac80211_idx(u32 rate_n_flags, enum ieee80211_band band)
+int iwlagn_hwrate_to_mac80211_idx(u32 rate_n_flags, enum nl80211_band band)
 {
 	int idx = 0;
 	int band_offset = 0;
@@ -105,7 +105,7 @@ int iwlagn_hwrate_to_mac80211_idx(u32 rate_n_flags, enum ieee80211_band band)
 		return idx;
 	/* Legacy rate format, search for match in table */
 	} else {
-		if (band == IEEE80211_BAND_5GHZ)
+		if (band == NL80211_BAND_5GHZ)
 			band_offset = IWL_FIRST_OFDM_RATE;
 		for (idx = band_offset; idx < IWL_RATE_COUNT_LEGACY; idx++)
 			if (iwl_rates[idx].plcp == (rate_n_flags & 0xFF))
@@ -419,8 +419,8 @@ void iwlagn_bt_adjust_rssi_monitor(struct iwl_priv *priv, bool rssi_ena)
 
 static bool iwlagn_bt_traffic_is_sco(struct iwl_bt_uart_msg *uart_msg)
 {
-	return BT_UART_MSG_FRAME3SCOESCO_MSK & uart_msg->frame3 >>
-			BT_UART_MSG_FRAME3SCOESCO_POS;
+	return (BT_UART_MSG_FRAME3SCOESCO_MSK & uart_msg->frame3) >>
+		BT_UART_MSG_FRAME3SCOESCO_POS;
 }
 
 static void iwlagn_bt_traffic_change_work(struct work_struct *work)
@@ -659,9 +659,8 @@ static bool iwlagn_fill_txpower_mode(struct iwl_priv *priv,
 	return need_update;
 }
 
-int iwlagn_bt_coex_profile_notif(struct iwl_priv *priv,
-				  struct iwl_rx_cmd_buffer *rxb,
-				  struct iwl_device_cmd *cmd)
+static void iwlagn_bt_coex_profile_notif(struct iwl_priv *priv,
+					 struct iwl_rx_cmd_buffer *rxb)
 {
 	struct iwl_rx_packet *pkt = rxb_addr(rxb);
 	struct iwl_bt_coex_profile_notif *coex = (void *)pkt->data;
@@ -669,7 +668,7 @@ int iwlagn_bt_coex_profile_notif(struct iwl_priv *priv,
 
 	if (priv->bt_enable_flag == IWLAGN_BT_FLAG_COEX_MODE_DISABLED) {
 		/* bt coex disabled */
-		return 0;
+		return;
 	}
 
 	IWL_DEBUG_COEX(priv, "BT Coex notification:\n");
@@ -714,7 +713,6 @@ int iwlagn_bt_coex_profile_notif(struct iwl_priv *priv,
 	/* FIXME: based on notification, adjust the prio_boost */
 
 	priv->bt_ci_compliance = coex->bt_ci_compliance;
-	return 0;
 }
 
 void iwlagn_bt_rx_handler_setup(struct iwl_priv *priv)
@@ -880,7 +878,7 @@ u8 iwl_toggle_tx_ant(struct iwl_priv *priv, u8 ant, u8 valid)
 	int i;
 	u8 ind = ant;
 
-	if (priv->band == IEEE80211_BAND_2GHZ &&
+	if (priv->band == NL80211_BAND_2GHZ &&
 	    priv->bt_traffic_load >= IWL_BT_COEX_TRAFFIC_LOAD_HIGH)
 		return 0;
 
@@ -1156,6 +1154,9 @@ int iwlagn_suspend(struct iwl_priv *priv, struct cfg80211_wowlan *wowlan)
 
 	priv->ucode_loaded = false;
 	iwl_trans_stop_device(priv->trans);
+	ret = iwl_trans_start_hw(priv->trans);
+	if (ret)
+		goto out;
 
 	priv->wowlan = true;
 

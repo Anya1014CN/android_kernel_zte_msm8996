@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2018, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -398,7 +398,7 @@ static int32_t msm_actuator_init_focus(struct msm_actuator_ctrl_t *a_ctrl,
 				settings[i].data_type);
 			if (settings[i].delay > 20)
 				msleep(settings[i].delay);
-			else if (0 != settings[i].delay)
+			else if (settings[i].delay != 0)
 				usleep_range(settings[i].delay * 1000,
 					(settings[i].delay * 1000) + 1000);
 			break;
@@ -531,7 +531,7 @@ static int32_t msm_actuator_piezo_move_focus(
 	CDBG("Enter\n");
 
 	if (copy_from_user(&ringing_params_kernel,
-		&(move_params->ringing_params[0]),
+		(void __user *)&(move_params->ringing_params[0]),
 		sizeof(struct damping_params_t))) {
 		pr_err("copy_from_user failed\n");
 		return -EFAULT;
@@ -633,7 +633,7 @@ static int32_t msm_actuator_move_focus(
 		return -EFAULT;
 	}
 	if (copy_from_user(ringing_params_kernel,
-		&(move_params->ringing_params[0]),
+		(void __user *)&(move_params->ringing_params[0]),
 		(sizeof(struct damping_params_t))*(a_ctrl->region_size))) {
 		pr_err("copy_from_user failed\n");
 		/* Free the allocated memory for damping parameters */
@@ -755,7 +755,7 @@ static int32_t msm_actuator_bivcm_move_focus(
 		return -EFAULT;
 	}
 	if (copy_from_user(ringing_params_kernel,
-		&(move_params->ringing_params[0]),
+		(void __user *)&(move_params->ringing_params[0]),
 		(sizeof(struct damping_params_t))*(a_ctrl->region_size))) {
 		pr_err("copy_from_user failed\n");
 		/* Free the allocated memory for damping parameters */
@@ -768,6 +768,8 @@ static int32_t msm_actuator_bivcm_move_focus(
 		a_ctrl->curr_step_pos, dest_step_pos, curr_lens_pos);
 
 	while (a_ctrl->curr_step_pos != dest_step_pos) {
+		if (a_ctrl->curr_region_index >= a_ctrl->region_size)
+			break;
 		step_boundary =
 			a_ctrl->region_params[a_ctrl->curr_region_index].
 			step_bound[dir];
@@ -1312,13 +1314,12 @@ static int32_t msm_actuator_set_param(struct msm_actuator_ctrl_t *a_ctrl,
 	a_ctrl->pwd_step = set_info->af_tuning_params.pwd_step;
 
 	if (copy_from_user(&a_ctrl->region_params,
-		(void *)set_info->af_tuning_params.region_params,
+		(void __user *)set_info->af_tuning_params.region_params,
 		a_ctrl->region_size * sizeof(struct region_params_t))) {
 		a_ctrl->total_steps = 0;
 		pr_err("Error copying region_params\n");
 		return -EFAULT;
-		}
-
+	}
 	if (a_ctrl->act_device_type == MSM_CAMERA_PLATFORM_DEVICE) {
 		cci_client = a_ctrl->i2c_client.cci_client;
 		cci_client->sid =
@@ -1359,7 +1360,7 @@ static int32_t msm_actuator_set_param(struct msm_actuator_ctrl_t *a_ctrl,
 	a_ctrl->total_steps = set_info->af_tuning_params.total_steps;
 
 	if (copy_from_user(&a_ctrl->reg_tbl,
-		(void *)set_info->actuator_params.reg_tbl_params,
+		(void __user *)set_info->actuator_params.reg_tbl_params,
 		a_ctrl->reg_tbl_size *
 		sizeof(struct msm_actuator_reg_params_t))) {
 		kfree(a_ctrl->i2c_reg_tbl);
@@ -1381,7 +1382,8 @@ static int32_t msm_actuator_set_param(struct msm_actuator_ctrl_t *a_ctrl,
 				return -EFAULT;
 			}
 			if (copy_from_user(init_settings,
-				(void *)set_info->actuator_params.init_settings,
+				(void __user *)
+				set_info->actuator_params.init_settings,
 				set_info->actuator_params.init_setting_size *
 				sizeof(struct reg_settings_t))) {
 				kfree(init_settings);
@@ -1438,7 +1440,7 @@ static int msm_actuator_init(struct msm_actuator_ctrl_t *a_ctrl)
 }
 
 static int32_t msm_actuator_config(struct msm_actuator_ctrl_t *a_ctrl,
-	void __user *argp)
+	void *argp)
 {
 	struct msm_actuator_cfg_data *cdata =
 		(struct msm_actuator_cfg_data *)argp;
@@ -1598,7 +1600,7 @@ static long msm_actuator_subdev_ioctl(struct v4l2_subdev *sd,
 {
 	int rc;
 	struct msm_actuator_ctrl_t *a_ctrl = v4l2_get_subdevdata(sd);
-	void __user *argp = (void __user *)arg;
+	void *argp = arg;
 
 	CDBG("Enter\n");
 	CDBG("%s:%d a_ctrl %pK argp %pK\n", __func__, __LINE__, a_ctrl, argp);

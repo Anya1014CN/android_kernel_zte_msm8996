@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2017, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -176,24 +176,22 @@ static int wsa881x_i2c_write_device(struct wsa881x_pdata *wsa881x,
 
 	wsa881x_index = get_i2c_wsa881x_device_index(reg);
 	if (wsa881x_index < 0) {
-		pr_err_ratelimited("%s:invalid register to write\n", __func__);
+		pr_err("%s:invalid register to write\n", __func__);
 		return -EINVAL;
 	}
 	if (wsa881x->regmap_flag) {
 		rc = regmap_write(wsa881x->regmap[wsa881x_index], reg, val);
 		for (i = 0; rc && i < ARRAY_SIZE(delay_array_msec); i++) {
-			pr_err_ratelimited("Failed writing reg=%u-retry(%d)\n",
-							reg, i);
+			pr_err("Failed writing reg=%u - retry(%d)\n", reg, i);
 			/* retry after delay of increasing order */
 			msleep(delay_array_msec[i]);
 			rc = regmap_write(wsa881x->regmap[wsa881x_index],
 								reg, val);
 		}
 		if (rc)
-			pr_err_ratelimited("Failed writing reg=%u rc=%d\n",
-							reg, rc);
+			pr_err("Failed writing reg=%u rc=%d\n", reg, rc);
 		else
-			pr_debug("write success register = %x val = %x\n",
+			pr_err("write success register = %x val = %x\n",
 							reg, val);
 	} else {
 		reg_addr = (u8)reg;
@@ -212,7 +210,7 @@ static int wsa881x_i2c_write_device(struct wsa881x_pdata *wsa881x,
 					wsa881x->client[wsa881x_index]->adapter,
 							wsa881x->xfer_msg, 1);
 			if (ret != 1) {
-				pr_err_ratelimited("failed to write the device\n");
+				pr_err("failed to write the device\n");
 				return ret;
 			}
 		}
@@ -234,22 +232,20 @@ static int wsa881x_i2c_read_device(struct wsa881x_pdata *wsa881x,
 
 	wsa881x_index = get_i2c_wsa881x_device_index(reg);
 	if (wsa881x_index < 0) {
-		pr_err_ratelimited("%s:invalid register to read\n", __func__);
+		pr_err("%s:invalid register to read\n", __func__);
 		return -EINVAL;
 	}
 	if (wsa881x->regmap_flag) {
 		rc = regmap_read(wsa881x->regmap[wsa881x_index], reg, &val);
 		for (i = 0; rc && i < ARRAY_SIZE(delay_array_msec); i++) {
-			pr_err_ratelimited("Failed reading reg=%u - retry(%d)\n",
-								reg, i);
+			pr_err("Failed reading reg=%u - retry(%d)\n", reg, i);
 			/* retry after delay of increasing order */
 			msleep(delay_array_msec[i]);
 			rc = regmap_read(wsa881x->regmap[wsa881x_index],
 						reg, &val);
 		}
 		if (rc) {
-			pr_err_ratelimited("Failed reading reg=%u rc=%d\n",
-								 reg, rc);
+			pr_err("Failed reading reg=%u rc=%d\n", reg, rc);
 			return rc;
 		}
 		pr_debug("read success reg = %x val = %x\n",
@@ -276,7 +272,7 @@ static int wsa881x_i2c_read_device(struct wsa881x_pdata *wsa881x,
 				wsa881x->client[wsa881x_index]->adapter,
 						wsa881x->xfer_msg, 2);
 			if (ret != 2) {
-				pr_err_ratelimited("failed to read wsa register:%d\n",
+				pr_err("failed to read wsa register:%d\n",
 								reg);
 				return ret;
 			}
@@ -294,7 +290,7 @@ static unsigned int wsa881x_i2c_read(struct snd_soc_codec *codec,
 	int ret;
 
 	if (codec == NULL) {
-		pr_err_ratelimited("%s: invalid codec\n", __func__);
+		pr_err("%s: invalid codec\n", __func__);
 		return -EINVAL;
 	}
 	wsa881x = snd_soc_codec_get_drvdata(codec);
@@ -317,7 +313,7 @@ static int wsa881x_i2c_write(struct snd_soc_codec *codec, unsigned int reg,
 	int ret = 0;
 
 	if (codec == NULL) {
-		pr_err_ratelimited("%s: invalid codec\n", __func__);
+		pr_err("%s: invalid codec\n", __func__);
 		return -EINVAL;
 	}
 	wsa881x = snd_soc_codec_get_drvdata(codec);
@@ -1258,10 +1254,8 @@ static int wsa881x_i2c_probe(struct i2c_client *client,
 
 	if ((client->addr == WSA881X_I2C_SPK0_SLAVE1_ADDR ||
 		client->addr == WSA881X_I2C_SPK1_SLAVE1_ADDR) &&
-		(pdata->status == WSA881X_STATUS_PROBING)) {
-		wsa881x_probing_count++;
+		(pdata->status == WSA881X_STATUS_PROBING))
 		return ret;
-	}
 
 	if (pdata->status == WSA881X_STATUS_I2C) {
 		dev_dbg(&client->dev, "%s:probe for other slaves\n"
@@ -1290,7 +1284,6 @@ static int wsa881x_i2c_probe(struct i2c_client *client,
 					pdata->regmap[WSA881X_ANALOG_SLAVE],
 					WSA881X_ANALOG_SLAVE);
 
-		wsa881x_probing_count++;
 		return ret;
 	} else if (pdata->status == WSA881X_STATUS_PROBING) {
 		pdata->index = wsa881x_index;

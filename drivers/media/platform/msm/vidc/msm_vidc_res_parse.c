@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -22,24 +22,14 @@
 #include "msm_vidc_res_parse.h"
 #include "venus_boot.h"
 #include "soc/qcom/secure_buffer.h"
+#include "soc/qcom/cx_ipeak.h"
 
 enum clock_properties {
 	CLOCK_PROP_HAS_SCALING = 1 << 0,
+	CLOCK_PROP_HAS_MEM_RETENTION    = 1 << 1,
 };
 static int msm_vidc_populate_legacy_context_bank(
 			struct msm_vidc_platform_resources *res);
-
-static bool msm_vidc_is_compatible(const char *compat)
-{
-	return !!of_find_compatible_node(NULL, NULL, compat);
-}
-
-static int msm_vidc_load_freq_cmp(const void *a, const void *b)
-{
-	/* Sort descending by load for the clock scaling lookup. */
-	return ((const struct load_freq_table *)b)->load -
-		((const struct load_freq_table *)a)->load;
-}
 
 static size_t get_u32_array_num_elements(struct device_node *np,
 					char *name)
@@ -64,11 +54,16 @@ fail_read:
 	return 0;
 }
 
+static bool is_compatible(char *compat)
+{
+	return !!of_find_compatible_node(NULL, NULL, compat);
+}
+
 static inline enum imem_type read_imem_type(struct platform_device *pdev)
 {
-	return msm_vidc_is_compatible("qcom,msm-ocmem") ? IMEM_OCMEM :
-		msm_vidc_is_compatible("qcom,msm-vmem") ? IMEM_VMEM :
-							IMEM_NONE;
+	return is_compatible("qcom,msm-ocmem") ? IMEM_OCMEM :
+		is_compatible("qcom,msm-vmem") ? IMEM_VMEM :
+						IMEM_NONE;
 
 }
 
@@ -88,12 +83,6 @@ static inline void msm_vidc_free_platform_version_table(
 		struct msm_vidc_platform_resources *res)
 {
 	res->pf_ver_tbl = NULL;
-}
-
-static inline void msm_vidc_free_capability_version_table(
-		struct msm_vidc_platform_resources *res)
-{
-	res->pf_cap_tbl = NULL;
 }
 
 static inline void msm_vidc_free_freq_table(
@@ -175,7 +164,6 @@ void msm_vidc_free_platform_resources(
 	msm_vidc_free_regulator_table(res);
 	msm_vidc_free_freq_table(res);
 	msm_vidc_free_platform_version_table(res);
-	msm_vidc_free_capability_version_table(res);
 	msm_vidc_free_dcvs_table(res);
 	msm_vidc_free_dcvs_limit(res);
 	msm_vidc_free_cycles_per_mb_table(res);
@@ -184,6 +172,8 @@ void msm_vidc_free_platform_resources(
 	msm_vidc_free_qdss_addr_table(res);
 	msm_vidc_free_bus_vectors(res);
 	msm_vidc_free_buffer_usage_table(res);
+	cx_ipeak_unregister(res->cx_ipeak_context);
+	res->cx_ipeak_context = NULL;
 }
 
 static int msm_vidc_load_reg_table(struct msm_vidc_platform_resources *res)
@@ -378,6 +368,7 @@ int msm_vidc_load_u32_table(struct platform_device *pdev,
 
 	return rc;
 }
+EXPORT_SYMBOL(msm_vidc_load_u32_table);
 
 static int msm_vidc_load_platform_version_table(
 		struct msm_vidc_platform_resources *res)
@@ -406,99 +397,6 @@ static int msm_vidc_load_platform_version_table(
 	return 0;
 }
 
-static int msm_vidc_load_capability_version_table(
-		struct msm_vidc_platform_resources *res)
-{
-	int rc = 0;
-	struct platform_device *pdev = res->pdev;
-
-	if (!of_find_property(pdev->dev.of_node,
-			"qcom,capability-version", NULL)) {
-		dprintk(VIDC_DBG, "qcom,capability-version not found\n");
-		return 0;
-	}
-
-	rc = msm_vidc_load_u32_table(pdev, pdev->dev.of_node,
-			"qcom,capability-version",
-			sizeof(*res->pf_cap_tbl),
-			(u32 **)&res->pf_cap_tbl,
-			NULL);
-	if (rc) {
-		dprintk(VIDC_ERR,
-			"%s: failed to read platform version table\n",
-			__func__);
-		return rc;
-	}
-
-	return 0;
-}
-
-static void clock_override(struct platform_device *pdev,
-	struct msm_vidc_platform_resources *platform_res,
-	struct allowed_clock_rates_table *clk_table)
-{
-	struct resource *res;
-	void __iomem *base;
-	u32 config_efuse, bin;
-	u32 venus_uplift_freq;
-	u32 is_speed_bin = 7;
-	int rc = 0;
-
-	res = platform_get_resource_byname(pdev, IORESOURCE_MEM,
-			"efuse");
-	if (!res) {
-		dprintk(VIDC_DBG,
-			"Failed to get resource efuse\n");
-		return;
-	}
-
-	rc = of_property_read_u32(pdev->dev.of_node, "qcom,venus-uplift-freq",
-			&venus_uplift_freq);
-	if (rc) {
-		dprintk(VIDC_DBG,
-			"Failed to determine venus-uplift-freq: %d\n", rc);
-		return;
-	}
-
-	if (!of_find_property(pdev->dev.of_node,
-		"qcom,speedbin-version", NULL)) {
-		dprintk(VIDC_DBG, "qcom,speedbin-version not found\n");
-		return;
-	}
-
-	rc = msm_vidc_load_u32_table(pdev, pdev->dev.of_node,
-		"qcom,speedbin-version",
-		sizeof(*platform_res->pf_speedbin_tbl),
-		(u32 **)&platform_res->pf_speedbin_tbl,
-		NULL);
-	if (rc) {
-		dprintk(VIDC_ERR,
-			"%s: failed to read speedbin version table\n",
-			__func__);
-		return;
-	}
-
-	base = devm_ioremap(&pdev->dev, res->start, resource_size(res));
-	if (!base) {
-		dev_warn(&pdev->dev,
-			"Unable to ioremap efuse reg address. Defaulting to 0.\n");
-		return;
-	}
-
-	config_efuse = readl_relaxed(base);
-	devm_iounmap(&pdev->dev, base);
-
-	bin = (config_efuse >> platform_res->pf_speedbin_tbl->version_shift) &
-		platform_res->pf_speedbin_tbl->version_mask;
-
-	if (bin == is_speed_bin) {
-		dprintk(VIDC_DBG,
-			"Venus speed binning available overwriting %d to %d\n",
-			clk_table[0].clock_rate, venus_uplift_freq);
-		clk_table[0].clock_rate = venus_uplift_freq;
-	}
-}
-
 static int msm_vidc_load_allowed_clocks_table(
 		struct msm_vidc_platform_resources *res)
 {
@@ -521,8 +419,6 @@ static int msm_vidc_load_allowed_clocks_table(
 			"%s: failed to read allowed clocks table\n", __func__);
 		return rc;
 	}
-	if (res->allowed_clks_tbl_size)
-		clock_override(pdev, res, res->allowed_clks_tbl);
 
 	return 0;
 }
@@ -622,6 +518,13 @@ error:
 	return rc;
 }
 
+static int cmp(const void *a, const void *b)
+{
+	/* want to sort in reverse so flip the comparison */
+	return ((struct load_freq_table *)b)->load -
+		((struct load_freq_table *)a)->load;
+}
+
 static int msm_vidc_load_freq_table(struct msm_vidc_platform_resources *res)
 {
 	int rc = 0;
@@ -667,8 +570,30 @@ static int msm_vidc_load_freq_table(struct msm_vidc_platform_resources *res)
 	 * logic to work, just sort it ourselves
 	 */
 	sort(res->load_freq_tbl, res->load_freq_tbl_size,
-			sizeof(*res->load_freq_tbl), msm_vidc_load_freq_cmp, NULL);
+			sizeof(*res->load_freq_tbl), cmp, NULL);
 	return rc;
+}
+
+static int msm_vidc_check_dcvs_enabled(struct msm_vidc_platform_resources *res)
+{
+	struct platform_device *pdev = res->pdev;
+
+	if (of_find_property(pdev->dev.of_node, "disable-dcvs-enc", NULL)) {
+		/*
+		 * disable-dcvs-enc is an optional property.
+		 */
+		dprintk(VIDC_DBG, "disable-dcvs-enc\n");
+		msm_vidc_enc_dcvs_mode = false;
+	}
+	if (of_find_property(pdev->dev.of_node, "disable-dcvs-dec", NULL)) {
+		/*
+		 * disable-dcvs-dec is an optional property.
+		 */
+		dprintk(VIDC_DBG, "disable-dcvs-dec\n");
+		msm_vidc_dec_dcvs_mode = false;
+	}
+
+	return 0;
 }
 
 static int msm_vidc_load_dcvs_table(struct msm_vidc_platform_resources *res)
@@ -1044,6 +969,11 @@ static int msm_vidc_load_clock_table(
 			vc->has_scaling = false;
 		}
 
+		if (clock_props[c] & CLOCK_PROP_HAS_MEM_RETENTION)
+			vc->has_mem_retention = true;
+		else
+			vc->has_mem_retention = false;
+
 		dprintk(VIDC_DBG, "Found clock %s: scale-able = %s\n", vc->name,
 			vc->count ? "yes" : "no");
 	}
@@ -1108,14 +1038,15 @@ int read_platform_resources_from_dt(
 	if (rc)
 		dprintk(VIDC_ERR, "Failed to load pf version table: %d\n", rc);
 
-	rc = msm_vidc_load_capability_version_table(res);
-	if (rc)
-		dprintk(VIDC_ERR,
-			"Failed to load pf capability table: %d\n", rc);
-
 	rc = msm_vidc_load_freq_table(res);
 	if (rc) {
 		dprintk(VIDC_ERR, "Failed to load freq table: %d\n", rc);
+		goto err_load_freq_table;
+	}
+
+	rc = msm_vidc_check_dcvs_enabled(res);
+	if (rc) {
+		dprintk(VIDC_ERR, "Failed to check dcvs flags: %d\n", rc);
 		goto err_load_freq_table;
 	}
 
@@ -1216,6 +1147,11 @@ int read_platform_resources_from_dt(
 	res->never_unload_fw = of_property_read_bool(pdev->dev.of_node,
 			"qcom,never-unload-fw");
 
+	res->debug_timeout = of_property_read_bool(pdev->dev.of_node,
+			"qcom,debug-timeout");
+
+	msm_vidc_debug_timeout |= res->debug_timeout;
+
 	of_property_read_u32(pdev->dev.of_node,
 			"qcom,pm-qos-latency-us", &res->pm_qos_latency_us);
 
@@ -1227,8 +1163,39 @@ int read_platform_resources_from_dt(
 	of_property_read_u32(pdev->dev.of_node,
 			"qcom,max-secure-instances",
 			&res->max_secure_inst_count);
+
+	if (of_find_property(pdev->dev.of_node,
+			"qcom,cx-ipeak-data", NULL)) {
+		res->cx_ipeak_context = cx_ipeak_register(
+			pdev->dev.of_node, "qcom,cx-ipeak-data");
+	}
+
+	if (IS_ERR(res->cx_ipeak_context)) {
+		rc = PTR_ERR(res->cx_ipeak_context);
+		if (rc == -EPROBE_DEFER)
+			dprintk(VIDC_INFO,
+				"cx-ipeak register failed. Deferring probe!");
+		else
+			dprintk(VIDC_ERR,
+				"cx-ipeak register failed. rc: %d", rc);
+
+		res->cx_ipeak_context = NULL;
+		goto err_register_cx_ipeak;
+	} else if (res->cx_ipeak_context) {
+		dprintk(VIDC_INFO, "cx-ipeak register successful");
+	} else {
+		dprintk(VIDC_INFO, "cx-ipeak register not implemented");
+	}
+
+	of_property_read_u32(pdev->dev.of_node,
+			"qcom,clock-freq-threshold",
+			&res->clk_freq_threshold);
+	dprintk(VIDC_DBG, "cx ipeak threshold frequency = %u\n",
+				res->clk_freq_threshold);
+
 	return rc;
 
+err_register_cx_ipeak:
 err_setup_legacy_cb:
 err_load_max_hw_load:
 	msm_vidc_free_allowed_clocks_table(res);
@@ -1267,7 +1234,6 @@ static int msm_vidc_setup_context_bank(struct context_bank_info *cb,
 		struct device *dev)
 {
 	int rc = 0;
-	int disable_htw = 1;
 	int secure_vmid = VMID_INVAL;
 	struct bus_type *bus;
 
@@ -1291,14 +1257,6 @@ static int msm_vidc_setup_context_bank(struct context_bank_info *cb,
 		dprintk(VIDC_ERR, "%s - failed to create mapping\n", __func__);
 		rc = PTR_ERR(cb->mapping) ?: -ENODEV;
 		goto remove_cb;
-	}
-
-	rc = iommu_domain_set_attr(cb->mapping->domain,
-			DOMAIN_ATTR_COHERENT_HTW_DISABLE, &disable_htw);
-	if (rc) {
-		dprintk(VIDC_ERR, "%s - disable coherent HTW failed: %s %d\n",
-				__func__, dev_name(dev), rc);
-		goto release_mapping;
 	}
 
 	if (cb->is_secure) {
@@ -1339,11 +1297,6 @@ int msm_vidc_smmu_fault_handler(struct iommu_domain *domain,
 {
 	struct msm_vidc_core *core = token;
 	struct msm_vidc_inst *inst;
-	struct buffer_info *temp;
-	struct internal_buf *buf;
-	int i = 0;
-	bool is_decode = false;
-	enum vidc_ports port;
 
 	if (!domain || !core) {
 		dprintk(VIDC_ERR, "%s - invalid param %pK %pK\n",
@@ -1358,52 +1311,7 @@ int msm_vidc_smmu_fault_handler(struct iommu_domain *domain,
 
 	mutex_lock(&core->lock);
 	list_for_each_entry(inst, &core->instances, list) {
-		is_decode = inst->session_type == MSM_VIDC_DECODER;
-		port = is_decode ? OUTPUT_PORT : CAPTURE_PORT;
-		dprintk(VIDC_ERR,
-			"%s session, Codec type: %s HxW: %d x %d fps: %d bitrate: %d bit-depth: %s\n",
-			is_decode ? "Decode" : "Encode", inst->fmts[port].name,
-			inst->prop.height[port], inst->prop.width[port],
-			inst->prop.fps, inst->prop.bitrate,
-			!inst->bit_depth ? "8" : "10");
-
-		dprintk(VIDC_ERR,
-			"---Buffer details for inst: %pK of type: %d---\n",
-			inst, inst->session_type);
-		mutex_lock(&inst->registeredbufs.lock);
-		dprintk(VIDC_ERR, "registered buffer list:\n");
-		list_for_each_entry(temp, &inst->registeredbufs.list, list)
-			for (i = 0; i < temp->num_planes; i++)
-				dprintk(VIDC_ERR,
-					"type: %d plane: %d addr: %pa size: %d\n",
-					temp->type, i, &temp->device_addr[i],
-					temp->size[i]);
-
-		mutex_unlock(&inst->registeredbufs.lock);
-
-		mutex_lock(&inst->scratchbufs.lock);
-		dprintk(VIDC_ERR, "scratch buffer list:\n");
-		list_for_each_entry(buf, &inst->scratchbufs.list, list)
-			dprintk(VIDC_ERR, "type: %d addr: %pa size: %zu\n",
-				buf->buffer_type, &buf->handle->device_addr,
-				buf->handle->size);
-		mutex_unlock(&inst->scratchbufs.lock);
-
-		mutex_lock(&inst->persistbufs.lock);
-		dprintk(VIDC_ERR, "persist buffer list:\n");
-		list_for_each_entry(buf, &inst->persistbufs.list, list)
-			dprintk(VIDC_ERR, "type: %d addr: %pa size: %zu\n",
-				buf->buffer_type, &buf->handle->device_addr,
-				buf->handle->size);
-		mutex_unlock(&inst->persistbufs.lock);
-
-		mutex_lock(&inst->outputbufs.lock);
-		dprintk(VIDC_ERR, "dpb buffer list:\n");
-		list_for_each_entry(buf, &inst->outputbufs.list, list)
-			dprintk(VIDC_ERR, "type: %d addr: %pa size: %zu\n",
-				buf->buffer_type, &buf->handle->device_addr,
-				buf->handle->size);
-		mutex_unlock(&inst->outputbufs.lock);
+		msm_comm_print_inst_info(inst);
 	}
 	core->smmu_fault_handled = true;
 	mutex_unlock(&core->lock);

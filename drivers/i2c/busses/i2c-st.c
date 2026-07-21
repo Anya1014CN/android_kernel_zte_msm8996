@@ -10,17 +10,18 @@
  * published by the Free Software Foundation.
  */
 
-#include <linux/module.h>
-#include <linux/platform_device.h>
-#include <linux/i2c.h>
 #include <linux/clk.h>
-#include <linux/io.h>
 #include <linux/delay.h>
-#include <linux/interrupt.h>
 #include <linux/err.h>
-#include <linux/of.h>
+#include <linux/i2c.h>
+#include <linux/interrupt.h>
+#include <linux/io.h>
+#include <linux/module.h>
 #include <linux/of_address.h>
 #include <linux/of_irq.h>
+#include <linux/of.h>
+#include <linux/pinctrl/consumer.h>
+#include <linux/platform_device.h>
 
 /* SSC registers */
 #define SSC_BRG				0x000
@@ -398,6 +399,7 @@ static void st_i2c_wr_fill_tx_fifo(struct st_i2c_dev *i2c_dev)
 /**
  * st_i2c_rd_fill_tx_fifo() - Fill the Tx FIFO in read mode
  * @i2c_dev: Controller's private data
+ * @max: Maximum amount of data to fill into the Tx FIFO
  *
  * This functions fills the Tx FIFO with fixed pattern when
  * in read mode to trigger clock.
@@ -821,7 +823,7 @@ static int st_i2c_probe(struct platform_device *pdev)
 
 	adap = &i2c_dev->adap;
 	i2c_set_adapdata(adap, i2c_dev);
-	snprintf(adap->name, sizeof(adap->name), "ST I2C(0x%pa)", &res->start);
+	snprintf(adap->name, sizeof(adap->name), "ST I2C(%pa)", &res->start);
 	adap->owner = THIS_MODULE;
 	adap->timeout = 2 * HZ;
 	adap->retries = 0;
@@ -863,7 +865,6 @@ MODULE_DEVICE_TABLE(of, st_i2c_match);
 static struct platform_driver st_i2c_driver = {
 	.driver = {
 		.name = "st-i2c",
-		.owner = THIS_MODULE,
 		.of_match_table = st_i2c_match,
 		.pm = ST_I2C_PM,
 	},

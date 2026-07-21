@@ -338,6 +338,7 @@ static const struct go7007_usb_board board_matrix_revolution = {
 	},
 };
 
+#if 0
 static const struct go7007_usb_board board_lifeview_lr192 = {
 	.flags		= GO7007_USB_EZUSB,
 	.main_info	= {
@@ -364,6 +365,7 @@ static const struct go7007_usb_board board_lifeview_lr192 = {
 		},
 	},
 };
+#endif
 
 static const struct go7007_usb_board board_endura = {
 	.flags		= 0,
@@ -1050,6 +1052,7 @@ static int go7007_usb_probe(struct usb_interface *intf,
 	struct go7007_usb *usb;
 	const struct go7007_usb_board *board;
 	struct usb_device *usbdev = interface_to_usbdev(intf);
+	struct usb_host_endpoint *ep;
 	unsigned num_i2c_devs;
 	char *name;
 	int video_pipe, i, v_urb_len;
@@ -1096,8 +1099,10 @@ static int go7007_usb_probe(struct usb_interface *intf,
 	case GO7007_BOARDID_LIFEVIEW_LR192:
 		dev_err(&intf->dev, "The Lifeview TV Walker Ultra is not supported. Sorry!\n");
 		return -ENODEV;
+#if 0
 		name = "Lifeview TV Walker Ultra";
 		board = &board_lifeview_lr192;
+#endif
 		break;
 	case GO7007_BOARDID_SENSORAY_2250:
 		dev_info(&intf->dev, "Sensoray 2250 found\n");
@@ -1143,7 +1148,8 @@ static int go7007_usb_probe(struct usb_interface *intf,
 	if (usb->intr_urb->transfer_buffer == NULL)
 		goto allocfail;
 
-	if (go->board_id == GO7007_BOARDID_SENSORAY_2250)
+	ep = usb->usbdev->ep_in[4];
+	if (usb_endpoint_type(&ep->desc) == USB_ENDPOINT_XFER_BULK)
 		usb_fill_bulk_urb(usb->intr_urb, usb->usbdev,
 			usb_rcvbulkpipe(usb->usbdev, 4),
 			usb->intr_urb->transfer_buffer, 2*sizeof(u16),

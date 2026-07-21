@@ -627,7 +627,7 @@ int32_t msm_fd_hw_set_dt_parms_by_name(struct msm_fd_device *fd,
 			enum msm_fd_mem_resources base_idx)
 {
 	struct device_node *of_node;
-	int32_t i = 0 , rc = 0;
+	int32_t i = 0, rc = 0;
 	uint32_t *dt_reg_settings = NULL;
 	uint32_t dt_count = 0;
 
@@ -939,7 +939,7 @@ error:
 void msm_fd_hw_put(struct msm_fd_device *fd)
 {
 	mutex_lock(&fd->lock);
-	BUG_ON(fd->ref_count == 0);
+	WARN_ON(fd->ref_count == 0);
 
 	if (--fd->ref_count == 0) {
 		msm_fd_hw_halt(fd);
@@ -1295,7 +1295,7 @@ int msm_fd_hw_schedule_next_buffer(struct msm_fd_device *fd)
 	buf = msm_fd_hw_next_buffer(fd);
 	if (buf) {
 		ret = msm_fd_hw_try_enable(fd, buf, MSM_FD_DEVICE_RUNNING);
-		if (0 == ret) {
+		if (ret == 0) {
 			dev_err(fd->dev, "Ouch can not process next buffer\n");
 			spin_unlock(&fd->slock);
 			return -EBUSY;

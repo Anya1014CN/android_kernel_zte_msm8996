@@ -261,6 +261,7 @@ static int softing_handle_1(struct softing *card)
 				++priv->can.can_stats.error_passive;
 			else if (can_state == CAN_STATE_BUS_OFF) {
 				/* this calls can_close_cleanup() */
+				++priv->can.can_stats.bus_off;
 				can_bus_off(netdev);
 				netif_stop_queue(netdev);
 			}
@@ -392,8 +393,13 @@ static int softing_netdev_open(struct net_device *ndev)
 
 	/* check or determine and set bittime */
 	ret = open_candev(ndev);
-	if (!ret)
-		ret = softing_startstop(ndev, 1);
+	if (ret)
+		return ret;
+
+	ret = softing_startstop(ndev, 1);
+	if (ret < 0)
+		close_candev(ndev);
+
 	return ret;
 }
 
@@ -856,7 +862,6 @@ platform_resource_failed:
 static struct platform_driver softing_driver = {
 	.driver = {
 		.name = "softing",
-		.owner = THIS_MODULE,
 	},
 	.probe = softing_pdev_probe,
 	.remove = softing_pdev_remove,

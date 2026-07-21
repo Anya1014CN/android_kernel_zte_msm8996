@@ -203,6 +203,7 @@ static inline kernel_cap_t cap_raise_nfsd_set(const kernel_cap_t a,
 			   cap_intersect(permitted, __cap_nfsd_set));
 }
 
+#ifdef CONFIG_MULTIUSER
 extern bool has_capability(struct task_struct *t, int cap);
 extern bool has_ns_capability(struct task_struct *t,
 			      struct user_namespace *ns, int cap);
@@ -211,8 +212,43 @@ extern bool has_ns_capability_noaudit(struct task_struct *t,
 				      struct user_namespace *ns, int cap);
 extern bool capable(int cap);
 extern bool ns_capable(struct user_namespace *ns, int cap);
+extern bool ns_capable_noaudit(struct user_namespace *ns, int cap);
+#else
+static inline bool has_capability(struct task_struct *t, int cap)
+{
+	return true;
+}
+static inline bool has_ns_capability(struct task_struct *t,
+			      struct user_namespace *ns, int cap)
+{
+	return true;
+}
+static inline bool has_capability_noaudit(struct task_struct *t, int cap)
+{
+	return true;
+}
+static inline bool has_ns_capability_noaudit(struct task_struct *t,
+				      struct user_namespace *ns, int cap)
+{
+	return true;
+}
+static inline bool capable(int cap)
+{
+	return true;
+}
+static inline bool ns_capable(struct user_namespace *ns, int cap)
+{
+	return true;
+}
+static inline bool ns_capable_noaudit(struct user_namespace *ns, int cap)
+{
+	return true;
+}
+#endif /* CONFIG_MULTIUSER */
+extern bool privileged_wrt_inode_uidgid(struct user_namespace *ns, const struct inode *inode);
 extern bool capable_wrt_inode_uidgid(const struct inode *inode, int cap);
 extern bool file_ns_capable(const struct file *file, struct user_namespace *ns, int cap);
+extern bool ptracer_capable(struct task_struct *tsk, struct user_namespace *ns);
 
 /* audit system wants to get cap info from files as well */
 extern int get_vfs_caps_from_disk(const struct dentry *dentry, struct cpu_vfs_cap_data *cpu_caps);

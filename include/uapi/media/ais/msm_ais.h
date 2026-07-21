@@ -52,6 +52,7 @@
 #define MSM_CAMERA_SUBDEV_IR_LED       18
 #define MSM_CAMERA_SUBDEV_IR_CUT       19
 #define MSM_CAMERA_SUBDEV_EXT          20
+#define MSM_CAMERA_SUBDEV_AIS_MNGR     21
 
 #define MSM_MAX_CAMERA_SENSORS  5
 
@@ -60,7 +61,8 @@
  * large value for number of buffer due to data structure corruption
  * we return error to avoid integer overflow. Group processing
  * can have max of 9 groups of 8 bufs each. This value may be
- * configured in future*/
+ * configured in future
+ */
 #define MSM_CAMERA_MAX_STREAM_BUF 72
 
 /* Max batch size of processing */
@@ -118,7 +120,8 @@
 
 /* The msm_v4l2_event_data structure should match the
  * v4l2_event.u.data field.
- * should not exceed 16 elements */
+ * should not exceed 16 elements
+ */
 struct msm_v4l2_event_data {
 	/*word 0*/
 	unsigned int command;
@@ -218,7 +221,7 @@ struct msm_camera_private_ioctl_arg {
 	__u32 size;
 	__u32 result;
 	__u32 reserved;
-	__user __u64 ioctl_ptr;
+	__u64 ioctl_ptr;
 };
 
 #define VIDIOC_MSM_CAMERA_PRIVATE_IOCTL_CMD \

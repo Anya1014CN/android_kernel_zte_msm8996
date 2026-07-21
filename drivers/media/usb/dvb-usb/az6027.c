@@ -394,6 +394,7 @@ static struct rc_map_table rc_map_az6027_table[] = {
 /* remote control stuff (does not work with my box) */
 static int az6027_rc_query(struct dvb_usb_device *d, u32 *event, int *state)
 {
+	*state = REMOTE_NO_KEY_PRESSED;
 	return 0;
 }
 
@@ -778,7 +779,8 @@ static int az6027_read_mac_addr(struct dvb_usb_device *d, u8 mac[6])
 }
 */
 
-static int az6027_set_voltage(struct dvb_frontend *fe, fe_sec_voltage_t voltage)
+static int az6027_set_voltage(struct dvb_frontend *fe,
+			      enum fe_sec_voltage voltage)
 {
 
 	u8 buf;

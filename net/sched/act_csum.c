@@ -62,7 +62,8 @@ static int tcf_csum_init(struct net *n, struct nlattr *nla, struct nlattr *est,
 	parm = nla_data(tb[TCA_CSUM_PARMS]);
 
 	if (!tcf_hash_check(parm->index, a, bind)) {
-		ret = tcf_hash_create(parm->index, est, a, sizeof(*p), bind);
+		ret = tcf_hash_create(parm->index, est, a, sizeof(*p),
+				      bind, false);
 		if (ret)
 			return ret;
 		ret = ACT_P_CREATED;
@@ -104,9 +105,7 @@ static void *tcf_csum_skb_nextlayer(struct sk_buff *skb,
 	int hl = ihl + jhl;
 
 	if (!pskb_may_pull(skb, ipl + ntkoff) || (ipl < hl) ||
-	    (skb_cloned(skb) &&
-	     !skb_clone_writable(skb, hl + ntkoff) &&
-	     pskb_expand_head(skb, 0, 0, GFP_ATOMIC)))
+	    skb_try_make_writable(skb, hl + ntkoff))
 		return NULL;
 	else
 		return (void *)(skb_network_header(skb) + ihl);
@@ -176,6 +175,9 @@ static int tcf_csum_ipv4_tcp(struct sk_buff *skb,
 	struct tcphdr *tcph;
 	const struct iphdr *iph;
 
+	if (skb_is_gso(skb) && skb_shinfo(skb)->gso_type & SKB_GSO_TCPV4)
+		return 1;
+
 	tcph = tcf_csum_skb_nextlayer(skb, ihl, ipl, sizeof(*tcph));
 	if (tcph == NULL)
 		return 0;
@@ -196,6 +198,9 @@ static int tcf_csum_ipv6_tcp(struct sk_buff *skb,
 {
 	struct tcphdr *tcph;
 	const struct ipv6hdr *ip6h;
+
+	if (skb_is_gso(skb) && skb_shinfo(skb)->gso_type & SKB_GSO_TCPV6)
+		return 1;
 
 	tcph = tcf_csum_skb_nextlayer(skb, ihl, ipl, sizeof(*tcph));
 	if (tcph == NULL)
@@ -219,6 +224,9 @@ static int tcf_csum_ipv4_udp(struct sk_buff *skb,
 	struct udphdr *udph;
 	const struct iphdr *iph;
 	u16 ul;
+
+	if (skb_is_gso(skb) && skb_shinfo(skb)->gso_type & SKB_GSO_UDP)
+		return 1;
 
 	/*
 	 * Support both UDP and UDPLITE checksum algorithms, Don't use
@@ -272,6 +280,9 @@ static int tcf_csum_ipv6_udp(struct sk_buff *skb,
 	struct udphdr *udph;
 	const struct ipv6hdr *ip6h;
 	u16 ul;
+
+	if (skb_is_gso(skb) && skb_shinfo(skb)->gso_type & SKB_GSO_UDP)
+		return 1;
 
 	/*
 	 * Support both UDP and UDPLITE checksum algorithms, Don't use
@@ -364,9 +375,7 @@ static int tcf_csum_ipv4(struct sk_buff *skb, u32 update_flags)
 	}
 
 	if (update_flags & TCA_CSUM_UPDATE_FLAG_IPV4HDR) {
-		if (skb_cloned(skb) &&
-		    !skb_clone_writable(skb, sizeof(*iph) + ntkoff) &&
-		    pskb_expand_head(skb, 0, 0, GFP_ATOMIC))
+		if (skb_try_make_writable(skb, sizeof(*iph) + ntkoff))
 			goto fail;
 
 		ip_send_check(ip_hdr(skb));
@@ -509,7 +518,7 @@ static int tcf_csum(struct sk_buff *skb,
 	if (unlikely(action == TC_ACT_SHOT))
 		goto drop;
 
-	switch (skb->protocol) {
+	switch (tc_skb_protocol(skb)) {
 	case cpu_to_be16(ETH_P_IP):
 		if (!tcf_csum_ipv4(skb, update_flags))
 			goto drop;

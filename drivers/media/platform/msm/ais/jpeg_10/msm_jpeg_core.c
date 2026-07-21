@@ -87,7 +87,7 @@ int msm_jpeg_core_fe_buf_update(struct msm_jpeg_device *pgmn_dev,
 {
 	int rc = 0;
 
-	if (0 == buf->cbcr_len)
+	if (buf->cbcr_len == 0)
 		buf->cbcr_buffer_addr = 0x0;
 
 	JPEG_DBG("%s:%d] 0x%08x %d 0x%08x %d\n", __func__, __LINE__,

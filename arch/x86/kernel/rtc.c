@@ -49,11 +49,11 @@ int mach_set_rtc_mmss(const struct timespec *now)
 		retval = set_rtc_time(&tm);
 		if (retval)
 			printk(KERN_ERR "%s: RTC write failed with error %d\n",
-			       __FUNCTION__, retval);
+			       __func__, retval);
 	} else {
 		printk(KERN_ERR
 		       "%s: Invalid RTC value: write of %lx to RTC failed\n",
-			__FUNCTION__, nowtime);
+			__func__, nowtime);
 		retval = -EINVAL;
 	}
 	return retval;
@@ -199,6 +199,9 @@ static __init int add_rtc_cmos(void)
 		return -ENODEV;
 	}
 #endif
+
+	if (paravirt_enabled() && !paravirt_has(RTC))
+		return -ENODEV;
 
 	platform_device_register(&rtc_device);
 	dev_info(&rtc_device.dev,

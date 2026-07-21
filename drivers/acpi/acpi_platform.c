@@ -29,6 +29,7 @@ static const struct acpi_device_id forbidden_id_list[] = {
 	{"PNP0200",  0},	/* AT DMA Controller */
 	{"ACPI0009", 0},	/* IOxAPIC */
 	{"ACPI000A", 0},	/* IOAPIC */
+	{"SMB0001",  0},	/* ACPI SMBUS virtual device */
 	{"", 0},
 };
 
@@ -47,7 +48,7 @@ struct platform_device *acpi_create_platform_device(struct acpi_device *adev)
 	struct platform_device *pdev = NULL;
 	struct acpi_device *acpi_parent;
 	struct platform_device_info pdevinfo;
-	struct resource_list_entry *rentry;
+	struct resource_entry *rentry;
 	struct list_head resource_list;
 	struct resource *resources = NULL;
 	int count;
@@ -73,7 +74,7 @@ struct platform_device *acpi_create_platform_device(struct acpi_device *adev)
 		}
 		count = 0;
 		list_for_each_entry(rentry, &resource_list, node)
-			resources[count++] = rentry->res;
+			resources[count++] = *rentry->res;
 
 		acpi_dev_free_resource_list(&resource_list);
 	}
@@ -104,8 +105,13 @@ struct platform_device *acpi_create_platform_device(struct acpi_device *adev)
 	pdevinfo.id = -1;
 	pdevinfo.res = resources;
 	pdevinfo.num_res = count;
-	pdevinfo.acpi_node.companion = adev;
-	pdevinfo.dma_mask = DMA_BIT_MASK(32);
+	pdevinfo.fwnode = acpi_fwnode_handle(adev);
+
+	if (acpi_dma_supported(adev))
+		pdevinfo.dma_mask = DMA_BIT_MASK(32);
+	else
+		pdevinfo.dma_mask = 0;
+
 	pdev = platform_device_register_full(&pdevinfo);
 	if (IS_ERR(pdev))
 		dev_err(&adev->dev, "platform device creation failed: %ld\n",

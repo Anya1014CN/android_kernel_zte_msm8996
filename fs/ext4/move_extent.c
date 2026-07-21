@@ -166,12 +166,9 @@ mext_page_double_lock(struct inode *inode1, struct inode *inode2,
 	 */
 	wait_on_page_writeback(page[0]);
 	wait_on_page_writeback(page[1]);
-	if (inode1 > inode2) {
-		struct page *tmp;
-		tmp = page[0];
-		page[0] = page[1];
-		page[1] = tmp;
-	}
+	if (inode1 > inode2)
+		swap(page[0], page[1]);
+
 	return 0;
 }
 
@@ -190,7 +187,7 @@ mext_page_mkuptodate(struct page *page, unsigned from, unsigned to)
 	if (PageUptodate(page))
 		return 0;
 
-	blocksize = 1 << inode->i_blkbits;
+	blocksize = i_blocksize(inode);
 	if (!page_has_buffers(page))
 		create_empty_buffers(page, blocksize, 0);
 
@@ -267,7 +264,6 @@ move_extent_per_page(struct file *o_filp, struct inode *donor_inode,
 	handle_t *handle;
 	ext4_lblk_t orig_blk_offset, donor_blk_offset;
 	unsigned long blocksize = orig_inode->i_sb->s_blocksize;
-	unsigned int w_flags = 0;
 	unsigned int tmp_data_size, data_size, replaced_size;
 	int i, err2, jblocks, retries = 0;
 	int replaced_count = 0;
@@ -288,9 +284,6 @@ again:
 		*err = PTR_ERR(handle);
 		return 0;
 	}
-
-	if (segment_eq(get_fs(), KERNEL_DS))
-		w_flags |= AOP_FLAG_UNINTERRUPTIBLE;
 
 	orig_blk_offset = orig_page_offset * blocks_per_page +
 		data_offset_in_page;
@@ -533,9 +526,13 @@ mext_check_arguments(struct inode *orig_inode,
 			orig_inode->i_ino, donor_inode->i_ino);
 		return -EINVAL;
 	}
-	if (orig_eof < orig_start + *len - 1)
+	if (orig_eof <= orig_start)
+		*len = 0;
+	else if (orig_eof < orig_start + *len - 1)
 		*len = orig_eof - orig_start;
-	if (donor_eof < donor_start + *len - 1)
+	if (donor_eof <= donor_start)
+		*len = 0;
+	else if (donor_eof < donor_start + *len - 1)
 		*len = donor_eof - donor_start;
 	if (!*len) {
 		ext4_debug("ext4 move extent: len should not be 0 "
@@ -595,11 +592,14 @@ ext4_move_extents(struct file *o_filp, struct file *d_filp, __u64 orig_blk,
 			orig_inode->i_ino, donor_inode->i_ino);
 		return -EINVAL;
 	}
-	/* TODO: This is non obvious task to swap blocks for inodes with full
-	   jornaling enabled */
+
+	/* TODO: it's not obvious how to swap blocks for inodes with full
+	   journaling enabled */
 	if (ext4_should_journal_data(orig_inode) ||
 	    ext4_should_journal_data(donor_inode)) {
-		return -EINVAL;
+		ext4_msg(orig_inode->i_sb, KERN_ERR,
+			 "Online defrag not supported with data journaling");
+		return -EOPNOTSUPP;
 	}
 
 	if (ext4_encrypted_inode(orig_inode) ||

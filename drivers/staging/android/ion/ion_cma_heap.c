@@ -4,6 +4,8 @@
  * Copyright (C) Linaro 2012
  * Author: <benjamin.gaignard@linaro.org> for ST-Ericsson.
  *
+ * Copyright (c) 2020, The Linux Foundation. All rights reserved.
+ *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
  * may be copied, distributed, and modified under those terms.
@@ -65,8 +67,6 @@ static int ion_cma_allocate(struct ion_heap *heap, struct ion_buffer *buffer,
 	struct device *dev = heap->priv;
 	struct ion_cma_buffer_info *info;
 
-	dev_dbg(dev, "Request buffer allocation len %ld\n", len);
-
 	info = kzalloc(sizeof(struct ion_cma_buffer_info), GFP_KERNEL);
 	if (!info)
 		return ION_CMA_ALLOCATE_FAILED;
@@ -94,7 +94,6 @@ static int ion_cma_allocate(struct ion_heap *heap, struct ion_buffer *buffer,
 
 	/* keep this for memory release */
 	buffer->priv_virt = info;
-	dev_dbg(dev, "Allocate buffer %pK\n", buffer);
 	return 0;
 
 err:
@@ -107,7 +106,6 @@ static void ion_cma_free(struct ion_buffer *buffer)
 	struct device *dev = buffer->heap->priv;
 	struct ion_cma_buffer_info *info = buffer->priv_virt;
 
-	dev_dbg(dev, "Release buffer %pK\n", buffer);
 	/* release memory */
 	dma_free_coherent(dev, buffer->size, info->cpu_addr, info->handle);
 	sg_free_table(info->table);
@@ -225,7 +223,7 @@ struct ion_heap *ion_cma_heap_create(struct ion_platform_heap *data)
 	/* set device as private heaps data, later it will be
 	 * used to make the link with reserved CMA memory */
 	heap->priv = data->priv;
-	heap->type = ION_HEAP_TYPE_DMA;
+	heap->type = (enum ion_heap_type)ION_HEAP_TYPE_DMA;
 	cma_heap_has_outer_cache = data->has_outer_cache;
 	return heap;
 }
@@ -281,11 +279,16 @@ static int ion_secure_cma_allocate(struct ion_heap *heap,
 
 	source_vm = VMID_HLOS;
 	dest_vm = get_secure_vmid(flags);
+
 	if (dest_vm < 0) {
 		pr_err("%s: Failed to get secure vmid\n", __func__);
 		return -EINVAL;
 	}
-	dest_perms = PERM_READ | PERM_WRITE;
+
+	if (dest_vm == VMID_CP_SEC_DISPLAY)
+		dest_perms = PERM_READ;
+	else
+		dest_perms = PERM_READ | PERM_WRITE;
 
 	ret = ion_cma_allocate(heap, buffer, len, align, flags);
 	if (ret) {
@@ -312,14 +315,37 @@ err:
 	return ret;
 }
 
+static void *ion_secure_cma_map_kernel(struct ion_heap *heap,
+				       struct ion_buffer *buffer)
+{
+	if (!is_buffer_hlos_assigned(buffer)) {
+		pr_info("%s: Mapping non-HLOS accessible buffer disallowed\n",
+			__func__);
+		return NULL;
+	}
+	return ion_cma_map_kernel(heap, buffer);
+}
+
+static int ion_secure_cma_map_user(struct ion_heap *mapper,
+				   struct ion_buffer *buffer,
+				   struct vm_area_struct *vma)
+{
+	if (!is_buffer_hlos_assigned(buffer)) {
+		pr_info("%s: Mapping non-HLOS accessible buffer disallowed\n",
+			__func__);
+		return -EINVAL;
+	}
+	return ion_cma_mmap(mapper, buffer, vma);
+}
+
 static struct ion_heap_ops ion_secure_cma_ops = {
 	.allocate = ion_secure_cma_allocate,
 	.free = ion_secure_cma_free,
 	.map_dma = ion_cma_heap_map_dma,
 	.unmap_dma = ion_cma_heap_unmap_dma,
 	.phys = ion_cma_phys,
-	.map_user = ion_cma_mmap,
-	.map_kernel = ion_cma_map_kernel,
+	.map_user = ion_secure_cma_map_user,
+	.map_kernel = ion_secure_cma_map_kernel,
 	.unmap_kernel = ion_cma_unmap_kernel,
 	.print_debug = ion_cma_print_debug,
 };
@@ -339,7 +365,7 @@ struct ion_heap *ion_cma_secure_heap_create(struct ion_platform_heap *data)
 	 * used to make the link with reserved CMA memory
 	 */
 	heap->priv = data->priv;
-	heap->type = ION_HEAP_TYPE_HYP_CMA;
+	heap->type = (enum ion_heap_type)ION_HEAP_TYPE_HYP_CMA;
 	cma_heap_has_outer_cache = data->has_outer_cache;
 	return heap;
 }

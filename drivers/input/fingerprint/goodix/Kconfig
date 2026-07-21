@@ -1,3 +1,0 @@
-config FINGERPRINT_GOODIX_GF3118M
-	tristate "GOODIX fingerprint driver"
-	default n

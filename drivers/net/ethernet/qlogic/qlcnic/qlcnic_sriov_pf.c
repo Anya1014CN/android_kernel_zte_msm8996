@@ -5,9 +5,10 @@
  * See LICENSE.qlcnic for copyright and licensing details.
  */
 
+#include <linux/types.h>
+
 #include "qlcnic_sriov.h"
 #include "qlcnic.h"
-#include <linux/types.h>
 
 #define QLCNIC_SRIOV_VF_MAX_MAC 7
 #define QLC_VF_MIN_TX_RATE	100
@@ -597,7 +598,9 @@ static int __qlcnic_pci_sriov_enable(struct qlcnic_adapter *adapter,
 	if (err)
 		goto del_flr_queue;
 
-	qlcnic_sriov_alloc_vlans(adapter);
+	err = qlcnic_sriov_alloc_vlans(adapter);
+	if (err)
+		goto del_flr_queue;
 
 	return err;
 

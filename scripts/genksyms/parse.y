@@ -303,6 +303,15 @@ direct_declarator:
 		    $$ = $1;
 		  }
 		}
+	| TYPE
+		{ if (current_name != NULL) {
+		    error_with_pos("unexpected second declaration name");
+		    YYERROR;
+		  } else {
+		    current_name = (*$1)->string;
+		    $$ = $1;
+		  }
+		}
 	| direct_declarator '(' parameter_declaration_clause ')'
 		{ $$ = $4; }
 	| direct_declarator '(' error ')'
@@ -310,8 +319,6 @@ direct_declarator:
 	| direct_declarator BRACKET_PHRASE
 		{ $$ = $2; }
 	| '(' declarator ')'
-		{ $$ = $3; }
-	| '(' error ')'
 		{ $$ = $3; }
 	;
 

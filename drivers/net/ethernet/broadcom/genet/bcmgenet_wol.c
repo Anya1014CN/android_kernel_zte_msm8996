@@ -73,15 +73,17 @@ int bcmgenet_set_wol(struct net_device *dev, struct ethtool_wolinfo *wol)
 	if (wol->wolopts & ~(WAKE_MAGIC | WAKE_MAGICSECURE))
 		return -EINVAL;
 
+	reg = bcmgenet_umac_readl(priv, UMAC_MPD_CTRL);
 	if (wol->wolopts & WAKE_MAGICSECURE) {
 		bcmgenet_umac_writel(priv, get_unaligned_be16(&wol->sopass[0]),
 				     UMAC_MPD_PW_MS);
 		bcmgenet_umac_writel(priv, get_unaligned_be32(&wol->sopass[2]),
 				     UMAC_MPD_PW_LS);
-		reg = bcmgenet_umac_readl(priv, UMAC_MPD_CTRL);
 		reg |= MPD_PW_EN;
-		bcmgenet_umac_writel(priv, reg, UMAC_MPD_CTRL);
+	} else {
+		reg &= ~MPD_PW_EN;
 	}
+	bcmgenet_umac_writel(priv, reg, UMAC_MPD_CTRL);
 
 	/* Flag the device and relevant IRQ as wakeup capable */
 	if (wol->wolopts) {
@@ -164,12 +166,6 @@ int bcmgenet_wol_power_down_cfg(struct bcmgenet_priv *priv,
 	/* Receiver must be enabled for WOL MP detection */
 	reg |= CMD_RX_EN;
 	bcmgenet_umac_writel(priv, reg, UMAC_CMD);
-
-	if (priv->hw_params->flags & GENET_HAS_EXT) {
-		reg = bcmgenet_ext_readl(priv, EXT_EXT_PWR_MGMT);
-		reg &= ~EXT_ENERGY_DET_MASK;
-		bcmgenet_ext_writel(priv, reg, EXT_EXT_PWR_MGMT);
-	}
 
 	/* Enable the MPD interrupt */
 	cpu_mask_clear = UMAC_IRQ_MPD_R;

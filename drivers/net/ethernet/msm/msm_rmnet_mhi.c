@@ -275,7 +275,6 @@ static void rmnet_mhi_alloc_work(struct work_struct *work)
 	int retry = 60;
 
 	rmnet_log(rmnet_mhi_ptr, MSG_INFO, "Entered\n");
-
 	do {
 		ret = rmnet_alloc_rx(rmnet_mhi_ptr,
 				     rmnet_mhi_ptr->allocation_flags);
@@ -593,7 +592,7 @@ static int rmnet_mhi_change_mtu(struct net_device *dev, int new_mtu)
 	struct rmnet_mhi_private *rmnet_mhi_ptr =
 			*(struct rmnet_mhi_private **)netdev_priv(dev);
 
-	if (0 > new_mtu || rmnet_mhi_ptr->max_mtu < new_mtu)
+	if (new_mtu < 0 || rmnet_mhi_ptr->max_mtu < new_mtu)
 		return -EINVAL;
 
 	dev->mtu = new_mtu;
@@ -688,10 +687,9 @@ static int rmnet_mhi_ioctl_extended(struct net_device *dev, struct ifreq *ifr)
 
 	switch (ext_cmd.extended_ioctl) {
 	case RMNET_IOCTL_SET_MRU:
-		if ((0 == ext_cmd.u.data) ||
-		    (ext_cmd.u.data > rmnet_mhi_ptr->max_mru)) {
-			rmnet_log(rmnet_mhi_ptr,
-				  MSG_CRITICAL,
+		if (!ext_cmd.u.data ||
+		    ext_cmd.u.data > rmnet_mhi_ptr->max_mru) {
+			rmnet_log(rmnet_mhi_ptr, MSG_CRITICAL,
 				  "Can't set MRU, value:%u is invalid max:%u\n",
 				  ext_cmd.u.data, rmnet_mhi_ptr->max_mru);
 			return -EINVAL;
@@ -944,10 +942,13 @@ net_dev_reg_fail:
 	netif_napi_del(&(rmnet_mhi_ptr->napi));
 	free_netdev(rmnet_mhi_ptr->dev);
 net_dev_alloc_fail:
-	mhi_close_channel(rmnet_mhi_ptr->rx_client_handle);
-	rmnet_mhi_ptr->dev = NULL;
+	if (rmnet_mhi_ptr->rx_client_handle) {
+		mhi_close_channel(rmnet_mhi_ptr->rx_client_handle);
+		rmnet_mhi_ptr->dev = NULL;
+	}
 mhi_rx_chan_start_fail:
-	mhi_close_channel(rmnet_mhi_ptr->tx_client_handle);
+	if (rmnet_mhi_ptr->tx_client_handle)
+		mhi_close_channel(rmnet_mhi_ptr->tx_client_handle);
 mhi_tx_chan_start_fail:
 	rmnet_log(rmnet_mhi_ptr, MSG_INFO, "Exited ret %d.\n", ret);
 	return ret;
@@ -957,6 +958,7 @@ static void rmnet_mhi_cb(struct mhi_cb_info *cb_info)
 {
 	struct rmnet_mhi_private *rmnet_mhi_ptr;
 	struct mhi_result *result;
+	char ifalias[IFALIASZ];
 	int r = 0;
 
 	if (!cb_info || !cb_info->result) {
@@ -978,9 +980,16 @@ static void rmnet_mhi_cb(struct mhi_cb_info *cb_info)
 		 * as we set mhi_enabled = 0, we gurantee rest of
 		 * driver will not touch any critical data.
 		*/
+		snprintf(ifalias, sizeof(ifalias), "%s", "unidentified_netdev");
 		write_lock_irq(&rmnet_mhi_ptr->pm_lock);
 		rmnet_mhi_ptr->mhi_enabled = 0;
 		write_unlock_irq(&rmnet_mhi_ptr->pm_lock);
+		/* Set unidentified_net_dev string to ifalias
+		 * on error notification
+		*/
+		rtnl_lock();
+		dev_set_alias(rmnet_mhi_ptr->dev, ifalias, strlen(ifalias));
+		rtnl_unlock();
 
 		if (cb_info->chan == rmnet_mhi_ptr->rx_channel) {
 			rmnet_log(rmnet_mhi_ptr, MSG_INFO,
@@ -1052,7 +1061,7 @@ static void rmnet_mhi_cb(struct mhi_cb_info *cb_info)
 }
 
 #ifdef CONFIG_DEBUG_FS
-struct dentry *dentry = NULL;
+struct dentry *dentry;
 
 static void rmnet_mhi_create_debugfs(struct rmnet_mhi_private *rmnet_mhi_ptr)
 {
@@ -1161,7 +1170,7 @@ static void rmnet_mhi_create_debugfs(struct rmnet_mhi_private *rmnet_mhi_ptr)
 		return;
 
 	/* Add debug stats table */
-	for (i = 0; debugfs_table[i].name != NULL; i++) {
+	for (i = 0; debugfs_table[i].name; i++) {
 		file = debugfs_create_u64(debugfs_table[i].name,
 					  mode,
 					  rmnet_mhi_ptr->dentry,
@@ -1194,7 +1203,7 @@ static int rmnet_mhi_probe(struct platform_device *pdev)
 	char node_name[32];
 	struct mhi_client_info_t client_info;
 
-	if (unlikely(pdev->dev.of_node == NULL))
+	if (unlikely(!pdev->dev.of_node))
 		return -ENODEV;
 
 	if (!mhi_is_device_ready(&pdev->dev, "qcom,mhi"))
@@ -1205,7 +1214,7 @@ static int rmnet_mhi_probe(struct platform_device *pdev)
 		return -ENODEV;
 
 	rmnet_mhi_ptr = kzalloc(sizeof(*rmnet_mhi_ptr), GFP_KERNEL);
-	if (unlikely(rmnet_mhi_ptr == NULL))
+	if (unlikely(!rmnet_mhi_ptr))
 		return -ENOMEM;
 	rmnet_mhi_ptr->pdev = pdev;
 	spin_lock_init(&rmnet_mhi_ptr->out_chan_full_lock);
@@ -1348,7 +1357,7 @@ probe_fail:
 	return rc;
 }
 
-static struct of_device_id msm_mhi_match_table[] = {
+static const struct of_device_id msm_mhi_match_table[] = {
 	{.compatible = "qcom,mhi-rmnet"},
 	{},
 };

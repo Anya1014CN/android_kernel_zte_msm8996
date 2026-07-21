@@ -2,6 +2,8 @@
  *
  * Copyright (C) 2013 Texas Instruments
  *
+ * Module Author: Mugunthan V N <mugunthanvnm@ti.com>
+ *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
  * version 2 as published by the Free Software Foundation.
@@ -13,7 +15,7 @@
  */
 
 #include <linux/platform_device.h>
-#include <linux/module.h>
+#include <linux/init.h>
 #include <linux/netdevice.h>
 #include <linux/phy.h>
 #include <linux/of.h>
@@ -152,9 +154,12 @@ void cpsw_phy_sel(struct device *dev, phy_interface_t phy_mode, int slave)
 	}
 
 	dev = bus_find_device(&platform_bus_type, NULL, node, match);
+	of_node_put(node);
 	priv = dev_get_drvdata(dev);
 
 	priv->cpsw_phy_sel(priv, phy_mode, slave);
+
+	put_device(dev);
 }
 EXPORT_SYMBOL_GPL(cpsw_phy_sel);
 
@@ -173,7 +178,6 @@ static const struct of_device_id cpsw_phy_sel_id_table[] = {
 	},
 	{}
 };
-MODULE_DEVICE_TABLE(of, cpsw_phy_sel_id_table);
 
 static int cpsw_phy_sel_probe(struct platform_device *pdev)
 {
@@ -214,7 +218,4 @@ static struct platform_driver cpsw_phy_sel_driver = {
 		.of_match_table = cpsw_phy_sel_id_table,
 	},
 };
-
-module_platform_driver(cpsw_phy_sel_driver);
-MODULE_AUTHOR("Mugunthan V N <mugunthanvnm@ti.com>");
-MODULE_LICENSE("GPL v2");
+builtin_platform_driver(cpsw_phy_sel_driver);

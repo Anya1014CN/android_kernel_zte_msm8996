@@ -117,7 +117,7 @@ struct cam_iommu_cb_set {
 	struct list_head payload_list;
 };
 
-static struct of_device_id msm_cam_smmu_dt_match[] = {
+static const struct of_device_id msm_cam_smmu_dt_match[] = {
 	{ .compatible = "qcom,msm-cam-smmu", },
 	{ .compatible = "qcom,msm-cam-smmu-cb", },
 	{ .compatible = "qcom,qsmmu-cam-cb", },
@@ -398,7 +398,7 @@ static int cam_smmu_iommu_fault_handler(struct iommu_domain *domain,
 	}
 
 	cb_name = (char *)token;
-	/* check wether it is in the table */
+	/* check whether it is in the table */
 	for (idx = 0; idx < iommu_cb_set.cb_num; idx++) {
 		if (!strcmp(iommu_cb_set.cb_info[idx].name, cb_name))
 			break;
@@ -466,7 +466,7 @@ static enum dma_data_direction cam_smmu_translate_dir(
 	return DMA_NONE;
 }
 
-void cam_smmu_reset_iommu_table(enum cam_smmu_init_dir ops)
+static void cam_smmu_reset_iommu_table(enum cam_smmu_init_dir ops)
 {
 	unsigned int i;
 	int j = 0;
@@ -617,7 +617,8 @@ static int cam_smmu_alloc_scratch_va(struct scratch_mapping *mapping,
 		 (1 << mapping->order) - 1) >> mapping->order;
 
 	/* Transparently, add a guard page to the total count of pages
-	 * to be allocated */
+	 * to be allocated
+	 */
 	count++;
 
 	if (order > mapping->order)
@@ -654,7 +655,8 @@ static int cam_smmu_free_scratch_va(struct scratch_mapping *mapping,
 	}
 
 	/* Transparently, add a guard page to the total count of pages
-	 * to be freed */
+	 * to be freed
+	 */
 	count++;
 
 	bitmap_clear(mapping->bitmap, start, count);
@@ -1437,7 +1439,6 @@ static int cam_smmu_setup_cb(struct cam_context_bank_info *cb,
 	struct device *dev)
 {
 	int rc = 0;
-	int disable_htw = 1;
 
 	if (!cb || !dev) {
 		pr_err("Error: invalid input params\n");
@@ -1475,21 +1476,8 @@ static int cam_smmu_setup_cb(struct cam_context_bank_info *cb,
 		goto end;
 	}
 
-	/*
-	 * Set the domain attributes
-	 * disable L2 redirect since it decreases
-	 * performance
-	 */
-	if (iommu_domain_set_attr(cb->mapping->domain,
-		DOMAIN_ATTR_COHERENT_HTW_DISABLE,
-		&disable_htw)) {
-		pr_err("Error: couldn't disable coherent HTW\n");
-		rc = -ENODEV;
-		goto err_set_attr;
-	}
 	return 0;
-err_set_attr:
-	arm_iommu_release_mapping(cb->mapping);
+
 end:
 	return rc;
 }
@@ -1575,9 +1563,9 @@ static int cam_populate_smmu_context_banks(struct device *dev,
 
 	/* set the secure/non secure domain type */
 	if (of_property_read_bool(dev->of_node, "qcom,secure-context"))
-		cb->is_secure = CAM_SECURE;
+		cb->is_secure = true;
 	else
-		cb->is_secure = CAM_NON_SECURE;
+		cb->is_secure = false;
 
 	CDBG("cb->name :%s, cb->is_secure :%d, cb->scratch_support :%d\n",
 			cb->name, cb->is_secure, cb->scratch_buf_support);

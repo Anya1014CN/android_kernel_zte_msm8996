@@ -60,14 +60,14 @@ int orinoco_wiphy_register(struct wiphy *wiphy)
 		if (priv->channel_mask & (1 << i)) {
 			priv->channels[i].center_freq =
 				ieee80211_channel_to_frequency(i + 1,
-							   IEEE80211_BAND_2GHZ);
+							   NL80211_BAND_2GHZ);
 			channels++;
 		}
 	}
 	priv->band.channels = priv->channels;
 	priv->band.n_channels = channels;
 
-	wiphy->bands[IEEE80211_BAND_2GHZ] = &priv->band;
+	wiphy->bands[NL80211_BAND_2GHZ] = &priv->band;
 	wiphy->signal_type = CFG80211_SIGNAL_TYPE_MBM;
 
 	i = 0;
@@ -175,7 +175,7 @@ static int orinoco_set_monitor_channel(struct wiphy *wiphy,
 	if (cfg80211_get_chandef_type(chandef) != NL80211_CHAN_NO_HT)
 		return -EINVAL;
 
-	if (chandef->chan->band != IEEE80211_BAND_2GHZ)
+	if (chandef->chan->band != NL80211_BAND_2GHZ)
 		return -EINVAL;
 
 	channel = ieee80211_frequency_to_channel(chandef->chan->center_freq);
@@ -220,7 +220,7 @@ static int orinoco_set_wiphy_params(struct wiphy *wiphy, u32 changed)
 	if (changed & WIPHY_PARAM_FRAG_THRESHOLD) {
 		/* Set fragmentation */
 		if (priv->has_mwo) {
-			if (wiphy->frag_threshold < 0)
+			if (wiphy->frag_threshold == -1)
 				frag_value = 0;
 			else {
 				printk(KERN_WARNING "%s: Fixed fragmentation "
@@ -230,7 +230,7 @@ static int orinoco_set_wiphy_params(struct wiphy *wiphy, u32 changed)
 				frag_value = 1;
 			}
 		} else {
-			if (wiphy->frag_threshold < 0)
+			if (wiphy->frag_threshold == -1)
 				frag_value = 2346;
 			else if ((wiphy->frag_threshold < 257) ||
 				 (wiphy->frag_threshold > 2347))
@@ -252,7 +252,7 @@ static int orinoco_set_wiphy_params(struct wiphy *wiphy, u32 changed)
 		 * the upper limit.
 		 */
 
-		if (wiphy->rts_threshold < 0)
+		if (wiphy->rts_threshold == -1)
 			rts_value = 2347;
 		else if (wiphy->rts_threshold > 2347)
 			err = -EINVAL;

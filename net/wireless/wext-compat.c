@@ -32,13 +32,13 @@ int cfg80211_wext_giwname(struct net_device *dev,
 	if (!wdev)
 		return -EOPNOTSUPP;
 
-	sband = wdev->wiphy->bands[IEEE80211_BAND_5GHZ];
+	sband = wdev->wiphy->bands[NL80211_BAND_5GHZ];
 	if (sband) {
 		is_a = true;
 		is_ht |= sband->ht_cap.ht_supported;
 	}
 
-	sband = wdev->wiphy->bands[IEEE80211_BAND_2GHZ];
+	sband = wdev->wiphy->bands[NL80211_BAND_2GHZ];
 	if (sband) {
 		int i;
 		/* Check for mandatory rates */
@@ -63,7 +63,7 @@ int cfg80211_wext_giwname(struct net_device *dev,
 
 	return 0;
 }
-EXPORT_SYMBOL_GPL(cfg80211_wext_giwname);
+EXPORT_WEXT_HANDLER(cfg80211_wext_giwname);
 
 int cfg80211_wext_siwmode(struct net_device *dev, struct iw_request_info *info,
 			  u32 *mode, char *extra)
@@ -99,7 +99,7 @@ int cfg80211_wext_siwmode(struct net_device *dev, struct iw_request_info *info,
 
 	return cfg80211_change_iface(rdev, dev, type, NULL, &vifparams);
 }
-EXPORT_SYMBOL_GPL(cfg80211_wext_siwmode);
+EXPORT_WEXT_HANDLER(cfg80211_wext_siwmode);
 
 int cfg80211_wext_giwmode(struct net_device *dev, struct iw_request_info *info,
 			  u32 *mode, char *extra)
@@ -134,7 +134,7 @@ int cfg80211_wext_giwmode(struct net_device *dev, struct iw_request_info *info,
 	}
 	return 0;
 }
-EXPORT_SYMBOL_GPL(cfg80211_wext_giwmode);
+EXPORT_WEXT_HANDLER(cfg80211_wext_giwmode);
 
 
 int cfg80211_wext_giwrange(struct net_device *dev,
@@ -143,7 +143,7 @@ int cfg80211_wext_giwrange(struct net_device *dev,
 {
 	struct wireless_dev *wdev = dev->ieee80211_ptr;
 	struct iw_range *range = (struct iw_range *) extra;
-	enum ieee80211_band band;
+	enum nl80211_band band;
 	int i, c = 0;
 
 	if (!wdev)
@@ -215,7 +215,7 @@ int cfg80211_wext_giwrange(struct net_device *dev,
 		}
 	}
 
-	for (band = 0; band < IEEE80211_NUM_BANDS; band ++) {
+	for (band = 0; band < NUM_NL80211_BANDS; band ++) {
 		struct ieee80211_supported_band *sband;
 
 		sband = wdev->wiphy->bands[band];
@@ -248,7 +248,7 @@ int cfg80211_wext_giwrange(struct net_device *dev,
 
 	return 0;
 }
-EXPORT_SYMBOL_GPL(cfg80211_wext_giwrange);
+EXPORT_WEXT_HANDLER(cfg80211_wext_giwrange);
 
 
 /**
@@ -265,11 +265,11 @@ int cfg80211_wext_freq(struct iw_freq *freq)
 	 * -EINVAL for impossible things.
 	 */
 	if (freq->e == 0) {
-		enum ieee80211_band band = IEEE80211_BAND_2GHZ;
+		enum nl80211_band band = NL80211_BAND_2GHZ;
 		if (freq->m < 0)
 			return 0;
 		if (freq->m > 14)
-			band = IEEE80211_BAND_5GHZ;
+			band = NL80211_BAND_5GHZ;
 		return ieee80211_channel_to_frequency(freq->m, band);
 	} else {
 		int i, div = 1000000;
@@ -303,7 +303,7 @@ int cfg80211_wext_siwrts(struct net_device *dev,
 
 	return err;
 }
-EXPORT_SYMBOL_GPL(cfg80211_wext_siwrts);
+EXPORT_WEXT_HANDLER(cfg80211_wext_siwrts);
 
 int cfg80211_wext_giwrts(struct net_device *dev,
 			 struct iw_request_info *info,
@@ -317,7 +317,7 @@ int cfg80211_wext_giwrts(struct net_device *dev,
 
 	return 0;
 }
-EXPORT_SYMBOL_GPL(cfg80211_wext_giwrts);
+EXPORT_WEXT_HANDLER(cfg80211_wext_giwrts);
 
 int cfg80211_wext_siwfrag(struct net_device *dev,
 			  struct iw_request_info *info,
@@ -343,7 +343,7 @@ int cfg80211_wext_siwfrag(struct net_device *dev,
 
 	return err;
 }
-EXPORT_SYMBOL_GPL(cfg80211_wext_siwfrag);
+EXPORT_WEXT_HANDLER(cfg80211_wext_siwfrag);
 
 int cfg80211_wext_giwfrag(struct net_device *dev,
 			  struct iw_request_info *info,
@@ -357,7 +357,7 @@ int cfg80211_wext_giwfrag(struct net_device *dev,
 
 	return 0;
 }
-EXPORT_SYMBOL_GPL(cfg80211_wext_giwfrag);
+EXPORT_WEXT_HANDLER(cfg80211_wext_giwfrag);
 
 static int cfg80211_wext_siwretry(struct net_device *dev,
 				  struct iw_request_info *info,
@@ -427,7 +427,7 @@ int cfg80211_wext_giwretry(struct net_device *dev,
 
 	return 0;
 }
-EXPORT_SYMBOL_GPL(cfg80211_wext_giwretry);
+EXPORT_WEXT_HANDLER(cfg80211_wext_giwretry);
 
 static int __cfg80211_set_encryption(struct cfg80211_registered_device *rdev,
 				     struct net_device *dev, bool pairwise,
@@ -821,7 +821,7 @@ static int cfg80211_wext_giwfreq(struct net_device *dev,
 {
 	struct wireless_dev *wdev = dev->ieee80211_ptr;
 	struct cfg80211_registered_device *rdev = wiphy_to_rdev(wdev->wiphy);
-	struct cfg80211_chan_def chandef;
+	struct cfg80211_chan_def chandef = {};
 	int ret;
 
 	switch (wdev->iftype) {
@@ -1245,7 +1245,7 @@ static int cfg80211_wext_siwrate(struct net_device *dev,
 		maxrate = rate->value / 100000;
 	}
 
-	for (band = 0; band < IEEE80211_NUM_BANDS; band++) {
+	for (band = 0; band < NUM_NL80211_BANDS; band++) {
 		sband = wdev->wiphy->bands[band];
 		if (sband == NULL)
 			continue;
@@ -1300,7 +1300,7 @@ static int cfg80211_wext_giwrate(struct net_device *dev,
 	if (err)
 		return err;
 
-	if (!(sinfo.filled & STATION_INFO_TX_BITRATE))
+	if (!(sinfo.filled & BIT(NL80211_STA_INFO_TX_BITRATE)))
 		return -EOPNOTSUPP;
 
 	rate->value = 100000 * cfg80211_calculate_bitrate(&sinfo.txrate);
@@ -1342,7 +1342,7 @@ static struct iw_statistics *cfg80211_wireless_stats(struct net_device *dev)
 
 	switch (rdev->wiphy.signal_type) {
 	case CFG80211_SIGNAL_TYPE_MBM:
-		if (sinfo.filled & STATION_INFO_SIGNAL) {
+		if (sinfo.filled & BIT(NL80211_STA_INFO_SIGNAL)) {
 			int sig = sinfo.signal;
 			wstats.qual.updated |= IW_QUAL_LEVEL_UPDATED;
 			wstats.qual.updated |= IW_QUAL_QUAL_UPDATED;
@@ -1356,7 +1356,7 @@ static struct iw_statistics *cfg80211_wireless_stats(struct net_device *dev)
 			break;
 		}
 	case CFG80211_SIGNAL_TYPE_UNSPEC:
-		if (sinfo.filled & STATION_INFO_SIGNAL) {
+		if (sinfo.filled & BIT(NL80211_STA_INFO_SIGNAL)) {
 			wstats.qual.updated |= IW_QUAL_LEVEL_UPDATED;
 			wstats.qual.updated |= IW_QUAL_QUAL_UPDATED;
 			wstats.qual.level = sinfo.signal;
@@ -1369,9 +1369,9 @@ static struct iw_statistics *cfg80211_wireless_stats(struct net_device *dev)
 	}
 
 	wstats.qual.updated |= IW_QUAL_NOISE_INVALID;
-	if (sinfo.filled & STATION_INFO_RX_DROP_MISC)
+	if (sinfo.filled & BIT(NL80211_STA_INFO_RX_DROP_MISC))
 		wstats.discard.misc = sinfo.rx_dropped_misc;
-	if (sinfo.filled & STATION_INFO_TX_FAILED)
+	if (sinfo.filled & BIT(NL80211_STA_INFO_TX_FAILED))
 		wstats.discard.retries = sinfo.tx_failed;
 
 	return &wstats;

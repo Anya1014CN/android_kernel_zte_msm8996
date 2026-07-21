@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -27,6 +27,7 @@
 #include <linux/string.h>
 #include <linux/power/qcom/apm.h>
 #include <soc/qcom/scm.h>
+#include <linux/arm-smccc.h>
 
 /*
  *        VDD_APCC
@@ -79,7 +80,6 @@
 
 #define MSM_APM_DRIVER_NAME        "qcom,msm-apm"
 
-asmlinkage int __invoke_psci_fn_smc(u64, u64, u64, u64);
 
 enum {
 	CLOCK_ASSERT_ENABLE,
@@ -239,8 +239,8 @@ free_events:
 	return ret;
 }
 
-/* 8953 register offset definition */
-#define MSM8953_APM_DLY_CNTR	0x2ac
+/* MSM8953 register offset definition */
+#define MSM8953_APM_DLY_CNTR		0x2ac
 
 /* Register field shift definitions */
 #define APM_CTL_SEL_SWITCH_DLY_SHIFT	0
@@ -255,12 +255,12 @@ free_events:
 #define APM_CTL_POST_HALT_DLY_MASK	GENMASK(31, 24)
 
 /*
- * Get the resources associated with the msm8953 APM controller from
+ * Get the resources associated with the MSM8953 APM controller from
  * device tree, remap all I/O addresses, and program the initial
- * register configuration required for the 8953 APM controller device.
+ * register configuration required for the MSM8953 APM controller device.
  */
 static int msm8953_apm_ctrl_init(struct platform_device *pdev,
-				     struct msm_apm_ctrl_dev *ctrl)
+				 struct msm_apm_ctrl_dev *ctrl)
 {
 	struct device *dev = &pdev->dev;
 	struct resource *res;
@@ -619,13 +619,13 @@ done:
 	return ret;
 }
 
-/* 8953 register value definitions */
+/* MSM8953 register value definitions */
 #define MSM8953_APM_MX_MODE_VAL            0x00
 #define MSM8953_APM_APCC_MODE_VAL          0x02
 #define MSM8953_APM_MX_DONE_VAL            0x00
 #define MSM8953_APM_APCC_DONE_VAL          0x03
 
-/* 8953 register offset definitions */
+/* MSM8953 register offset definitions */
 #define MSM8953_APCC_APM_MODE              0x000002a8
 #define MSM8953_APCC_APM_CTL_STS           0x000002b0
 
@@ -904,7 +904,7 @@ static void apm_debugfs_init(struct msm_apm_ctrl_dev *ctrl_dev)
 		return;
 	}
 
-	temp = debugfs_create_file("supply", S_IRUGO, ctrl_dev->debugfs,
+	temp = debugfs_create_file("supply", 0444, ctrl_dev->debugfs,
 				   ctrl_dev, &apm_supply_fops);
 	if (IS_ERR_OR_NULL(temp)) {
 		pr_err("supply mode creation failed\n");
@@ -938,7 +938,7 @@ static void apm_debugfs_base_remove(void)
 
 #endif
 
-static struct of_device_id msm_apm_match_table[] = {
+static const struct of_device_id msm_apm_match_table[] = {
 	{
 		.compatible = "qcom,msm-apm",
 		.data = (void *)(uintptr_t)MSM8996_ID,
@@ -973,10 +973,8 @@ static int msm_apm_probe(struct platform_device *pdev)
 		return -ENODEV;
 
 	ctrl = devm_kzalloc(dev, sizeof(*ctrl), GFP_KERNEL);
-	if (!ctrl) {
-		dev_err(dev, "MSM APM controller memory allocation failed\n");
+	if (!ctrl)
 		return -ENOMEM;
-	}
 
 	INIT_LIST_HEAD(&ctrl->list);
 	spin_lock_init(&ctrl->lock);

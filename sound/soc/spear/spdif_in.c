@@ -203,21 +203,17 @@ static int spdif_in_probe(struct platform_device *pdev)
 	struct spdif_in_dev *host;
 	struct spear_spdif_platform_data *pdata;
 	struct resource *res, *res_fifo;
+	void __iomem *io_base;
 	int ret;
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	if (!res)
-		return -EINVAL;
+	io_base = devm_ioremap_resource(&pdev->dev, res);
+	if (IS_ERR(io_base))
+		return PTR_ERR(io_base);
 
 	res_fifo = platform_get_resource(pdev, IORESOURCE_IO, 0);
 	if (!res_fifo)
 		return -EINVAL;
-
-	if (!devm_request_mem_region(&pdev->dev, res->start,
-				resource_size(res), pdev->name)) {
-		dev_warn(&pdev->dev, "Failed to get memory resourse\n");
-		return -ENOENT;
-	}
 
 	host = devm_kzalloc(&pdev->dev, sizeof(*host), GFP_KERNEL);
 	if (!host) {
@@ -225,16 +221,12 @@ static int spdif_in_probe(struct platform_device *pdev)
 		return -ENOMEM;
 	}
 
-	host->io_base = devm_ioremap(&pdev->dev, res->start,
-				resource_size(res));
-	if (!host->io_base) {
-		dev_warn(&pdev->dev, "ioremap failed\n");
-		return -ENOMEM;
-	}
-
+	host->io_base = io_base;
 	host->irq = platform_get_irq(pdev, 0);
-	if (host->irq < 0)
-		return -EINVAL;
+	if (host->irq < 0) {
+		dev_warn(&pdev->dev, "failed to get IRQ: %d\n", host->irq);
+		return host->irq;
+	}
 
 	host->clk = devm_clk_get(&pdev->dev, NULL);
 	if (IS_ERR(host->clk))
@@ -274,7 +266,6 @@ static struct platform_driver spdif_in_driver = {
 	.probe		= spdif_in_probe,
 	.driver		= {
 		.name	= "spdif-in",
-		.owner	= THIS_MODULE,
 	},
 };
 

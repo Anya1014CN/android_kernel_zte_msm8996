@@ -5,8 +5,6 @@
  * Copyright (C) 2003 Oliver Endriss
  * Copyright (C) 2004 Andrew de Quincey
  *
- * Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
- *
  * based on code originally found in av7110.c & dvb_ci.c:
  * Copyright (C) 1999-2003 Ralph  Metzler
  *                       & Marcus Metzler for convergence integrated media GmbH
@@ -235,9 +233,11 @@ ssize_t dvb_ringbuffer_write_user(struct dvb_ringbuffer *rbuf,
 		 */
 		smp_store_release(&rbuf->pwrite, 0);
 	}
-	status = copy_from_user(rbuf->data+rbuf->pwrite, buf, todo);
-	if (status)
-		return len - todo;
+
+	if (copy_from_user(rbuf->data + rbuf->pwrite, buf, todo)) {
+		smp_store_release(&rbuf->pwrite, oldpwrite);
+		return -EFAULT;
+	}
 	/* smp_store_release() for write pointer update, see above */
 	smp_store_release(&rbuf->pwrite, (rbuf->pwrite + todo) % rbuf->size);
 
@@ -415,4 +415,3 @@ EXPORT_SYMBOL(dvb_ringbuffer_read_user);
 EXPORT_SYMBOL(dvb_ringbuffer_read);
 EXPORT_SYMBOL(dvb_ringbuffer_write);
 EXPORT_SYMBOL(dvb_ringbuffer_write_user);
-

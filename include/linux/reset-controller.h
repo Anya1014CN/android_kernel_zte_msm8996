@@ -6,17 +6,19 @@
 struct reset_controller_dev;
 
 /**
- * struct reset_control_ops
+ * struct reset_control_ops - reset controller driver callbacks
  *
  * @reset: for self-deasserting resets, does all necessary
  *         things to reset the device
  * @assert: manually assert the reset line, if supported
  * @deassert: manually deassert the reset line, if supported
+ * @status: return the status of the reset line, if supported
  */
 struct reset_control_ops {
 	int (*reset)(struct reset_controller_dev *rcdev, unsigned long id);
 	int (*assert)(struct reset_controller_dev *rcdev, unsigned long id);
 	int (*deassert)(struct reset_controller_dev *rcdev, unsigned long id);
+	int (*status)(struct reset_controller_dev *rcdev, unsigned long id);
 };
 
 struct module;

@@ -22,6 +22,7 @@
  *	array as well.
  */
 enum ipahal_reg_name {
+	IPA_CLKON_CFG,
 	IPA_ROUTE,
 	IPA_IRQ_STTS_EE_n,
 	IPA_IRQ_EN_EE_n,
@@ -84,10 +85,17 @@ enum ipahal_reg_name {
 	IPA_QSB_MAX_WRITES,
 	IPA_QSB_MAX_READS,
 	IPA_TX_CFG,
-	IPA_IDLE_INDICATION_CFG,
 	IPA_DPS_SEQUENCER_FIRST,
 	IPA_HPS_SEQUENCER_FIRST,
 	IPA_REG_MAX,
+};
+
+/*
+ * struct ipahal_reg_clkon_cfg - IPA clock on configuration register
+ * @cgc_open_misc: clock gating needs for MISC
+ */
+struct ipahal_reg_clkon_cfg {
+	u32 cgc_open_misc;
 };
 
 /*
@@ -334,16 +342,6 @@ struct ipahal_reg_tx_cfg {
 };
 
 /*
- * struct ipahal_reg_idle_indication_cfg - IPA IDLE_INDICATION_CFG register
- * @const_non_idle_enable: enable the asserting of the IDLE value and DCD
- * @enter_idle_debounce_thresh:  configure the debounce threshold
- */
-struct ipahal_reg_idle_indication_cfg {
-	u16 enter_idle_debounce_thresh;
-	bool const_non_idle_enable;
-};
-
-/*
  * struct ipa_ep_cfg_ctrl_scnd - PA_ENDP_INIT_CTRL_SCND_n register
  * @endp_delay: delay endpoint
  */
@@ -361,6 +359,11 @@ const char *ipahal_reg_name_str(enum ipahal_reg_name reg_name);
  * ipahal_read_reg_n() - Get the raw value of n parameterized reg
  */
 u32 ipahal_read_reg_n(enum ipahal_reg_name reg, u32 n);
+
+/*
+ * ipahal_read_reg_mn() - Get mn parameterized reg value
+ */
+u32 ipahal_read_reg_mn(enum ipahal_reg_name reg, u32 m, u32 n);
 
 /*
  * ipahal_write_reg_mn() - Write to m/n parameterized reg a raw value
@@ -463,8 +466,6 @@ void ipahal_get_aggr_force_close_valmask(int ep_idx,
 	struct ipahal_reg_valmask *valmask);
 void ipahal_get_fltrt_hash_flush_valmask(
 	struct ipahal_reg_fltrt_hash_flush *flush,
-	struct ipahal_reg_valmask *valmask);
-void ipahal_get_status_ep_valmask(int pipe_num,
 	struct ipahal_reg_valmask *valmask);
 
 #endif /* _IPAHAL_REG_H_ */

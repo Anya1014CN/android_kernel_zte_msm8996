@@ -24,7 +24,6 @@
 
 #define MAX_RESERVED_REGIONS	16
 static struct reserved_mem reserved_mem[MAX_RESERVED_REGIONS];
-static struct reserved_mem sorted_reserved_mem[MAX_RESERVED_REGIONS] __initdata;
 static int reserved_mem_count;
 
 #if defined(CONFIG_HAVE_MEMBLOCK)
@@ -128,8 +127,12 @@ static int __init __reserved_mem_alloc_size(unsigned long node,
 	}
 
 	/* Need adjust the alignment to satisfy the CMA requirement */
-	if (IS_ENABLED(CONFIG_CMA) && of_flat_dt_is_compatible(node, "shared-dma-pool"))
-		align = max(align, (phys_addr_t)PAGE_SIZE << max(MAX_ORDER - 1, pageblock_order));
+	if (IS_ENABLED(CONFIG_CMA) && of_flat_dt_is_compatible(node, "shared-dma-pool")) {
+		unsigned long order =
+			max_t(unsigned long, MAX_ORDER - 1, pageblock_order);
+
+		align = max(align, (phys_addr_t)PAGE_SIZE << order);
+	}
 
 	prop = of_get_flat_dt_prop(node, "alloc-ranges", &len);
 	if (prop) {
@@ -215,6 +218,16 @@ static int __init __rmem_cmp(const void *a, const void *b)
 	if (ra->base > rb->base)
 		return 1;
 
+	/*
+	 * Put the dynamic allocations (address == 0, size == 0) before static
+	 * allocations at address 0x0 so that overlap detection works
+	 * correctly.
+	 */
+	if (ra->size < rb->size)
+		return -1;
+	if (ra->size > rb->size)
+		return 1;
+
 	return 0;
 }
 
@@ -225,23 +238,20 @@ static void __init __rmem_check_for_overlap(void)
 	if (reserved_mem_count < 2)
 		return;
 
-	memcpy(sorted_reserved_mem, reserved_mem, sizeof(sorted_reserved_mem));
-	sort(sorted_reserved_mem, reserved_mem_count,
-	     sizeof(sorted_reserved_mem[0]), __rmem_cmp, NULL);
+	sort(reserved_mem, reserved_mem_count, sizeof(reserved_mem[0]),
+	     __rmem_cmp, NULL);
 	for (i = 0; i < reserved_mem_count - 1; i++) {
 		struct reserved_mem *this, *next;
 
-		this = &sorted_reserved_mem[i];
-		next = &sorted_reserved_mem[i + 1];
-		if (!(this->base && next->base))
-			continue;
+		this = &reserved_mem[i];
+		next = &reserved_mem[i + 1];
+
 		if (this->base + this->size > next->base) {
 			phys_addr_t this_end, next_end;
 
 			this_end = this->base + this->size;
 			next_end = next->base + next->size;
-			WARN(1, "Reserved mem: OVERLAP DETECTED!\n");
-			pr_err("%s (%pa--%pa) overlaps with %s (%pa--%pa)\n",
+			pr_err("Reserved memory: OVERLAP DETECTED!\n%s (%pa--%pa) overlaps with %s (%pa--%pa)\n",
 			       this->name, &this->base, &this_end,
 			       next->name, &next->base, &next_end);
 		}

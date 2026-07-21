@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -31,12 +31,13 @@
 #include "msm_vidc_resources.h"
 #include "venus_boot.h"
 #include "vidc_hfi_api.h"
+#include <soc/qcom/boot_stats.h>
 
 #define BASE_DEVICE_NUMBER 32
 
 struct msm_vidc_drv *vidc_driver;
 
-uint32_t msm_vidc_pwr_collapse_delay = 2000;
+uint32_t msm_vidc_pwr_collapse_delay = 3000;
 
 static inline struct msm_vidc_inst *get_vidc_inst(struct file *filp, void *fh)
 {
@@ -137,12 +138,6 @@ int msm_v4l2_reqbufs(struct file *file, void *fh,
 				struct v4l2_requestbuffers *b)
 {
 	struct msm_vidc_inst *vidc_inst = get_vidc_inst(file, fh);
-	int rc = 0;
-	if (!b->count)
-		rc = msm_vidc_release_buffers(vidc_inst, b->type);
-	if (rc)
-		dprintk(VIDC_WARN,
-			"Failed in %s for release output buffers\n", __func__);
 	return msm_vidc_reqbufs((void *)vidc_inst, b);
 }
 
@@ -228,6 +223,22 @@ static int msm_v4l2_enum_framesizes(struct file *file, void *fh,
 	return msm_vidc_enum_framesizes((void *)vidc_inst, fsize);
 }
 
+static int msm_v4l2_queryctrl(struct file *file, void *fh,
+	struct v4l2_queryctrl *ctrl)
+{
+	struct msm_vidc_inst *vidc_inst = get_vidc_inst(file, fh);
+
+	return msm_vidc_query_ctrl((void *)vidc_inst, ctrl);
+}
+
+static int msm_v4l2_query_ext_ctrl(struct file *file, void *fh,
+	struct v4l2_query_ext_ctrl *ctrl)
+{
+	struct msm_vidc_inst *vidc_inst = get_vidc_inst(file, fh);
+
+	return msm_vidc_query_ext_ctrl((void *)vidc_inst, ctrl);
+}
+
 static const struct v4l2_ioctl_ops msm_v4l2_ioctl_ops = {
 	.vidioc_querycap = msm_v4l2_querycap,
 	.vidioc_enum_fmt_vid_cap_mplane = msm_v4l2_enum_fmt,
@@ -244,6 +255,8 @@ static const struct v4l2_ioctl_ops msm_v4l2_ioctl_ops = {
 	.vidioc_streamoff = msm_v4l2_streamoff,
 	.vidioc_s_ctrl = msm_v4l2_s_ctrl,
 	.vidioc_g_ctrl = msm_v4l2_g_ctrl,
+	.vidioc_queryctrl = msm_v4l2_queryctrl,
+	.vidioc_query_ext_ctrl = msm_v4l2_query_ext_ctrl,
 	.vidioc_s_ext_ctrls = msm_v4l2_s_ext_ctrl,
 	.vidioc_subscribe_event = msm_v4l2_subscribe_event,
 	.vidioc_unsubscribe_event = msm_v4l2_unsubscribe_event,
@@ -268,7 +281,7 @@ static const struct v4l2_file_operations msm_v4l2_vidc_fops = {
 	.owner = THIS_MODULE,
 	.open = msm_v4l2_open,
 	.release = msm_v4l2_close,
-	.ioctl = video_ioctl2,
+	.unlocked_ioctl = video_ioctl2,
 	.poll = msm_v4l2_poll,
 };
 
@@ -318,6 +331,7 @@ static int msm_vidc_initialize_core(struct platform_device *pdev,
 		init_completion(&core->completions[i]);
 	}
 
+	msm_comm_sort_ctrl();
 	INIT_DELAYED_WORK(&core->fw_unload_work, msm_vidc_fw_unload_handler);
 	return rc;
 }
@@ -416,29 +430,10 @@ static ssize_t store_platform_version(struct device *dev,
 static DEVICE_ATTR(platform_version, S_IRUGO, show_platform_version,
 		store_platform_version);
 
-static ssize_t show_capability_version(struct device *dev,
-		struct device_attribute *attr, char *buf)
-{
-	return scnprintf(buf, PAGE_SIZE, "%d",
-			vidc_driver->capability_version);
-}
-
-static ssize_t store_capability_version(struct device *dev,
-		struct device_attribute *attr, const char *buf,
-		size_t count)
-{
-	dprintk(VIDC_WARN, "store capability version is not allowed\n");
-	return count;
-}
-
-static DEVICE_ATTR(capability_version, S_IRUGO, show_capability_version,
-		store_capability_version);
-
 static struct attribute *msm_vidc_core_attrs[] = {
 		&dev_attr_pwr_collapse_delay.attr,
 		&dev_attr_thermal_level.attr,
 		&dev_attr_platform_version.attr,
-		&dev_attr_capability_version.attr,
 		NULL
 };
 
@@ -453,38 +448,11 @@ static const struct of_device_id msm_vidc_dt_match[] = {
 	{}
 };
 
-static u32 msm_vidc_read_efuse_version(struct platform_device *pdev,
-	struct version_table *table, const char *fuse_name)
-{
-	void __iomem *base;
-	struct resource *res;
-	u32 ret = 0;
-
-	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, fuse_name);
-	if (!res) {
-		dprintk(VIDC_DBG, "Failed to get resource %s\n", fuse_name);
-		goto exit;
-	}
-	base = devm_ioremap(&pdev->dev, res->start, resource_size(res));
-	if (!base) {
-		dprintk(VIDC_ERR,
-			"failed ioremap: res->start %#x, size %d\n",
-			(u32)res->start, (u32)resource_size(res));
-		goto exit;
-	} else {
-		ret = readl_relaxed(base);
-		ret = (ret & table->version_mask) >>
-			table->version_shift;
-
-		devm_iounmap(&pdev->dev, base);
-	}
-exit:
-	return ret;
-}
-
 static int msm_vidc_probe_vidc_device(struct platform_device *pdev)
 {
 	int rc = 0;
+	void __iomem *base;
+	struct resource *res;
 	struct msm_vidc_core *core;
 	struct device *dev;
 	int nr = BASE_DEVICE_NUMBER;
@@ -495,11 +463,8 @@ static int msm_vidc_probe_vidc_device(struct platform_device *pdev)
 	}
 
 	core = kzalloc(sizeof(*core), GFP_KERNEL);
-	if (!core) {
-		dprintk(VIDC_ERR,
-			"Failed to allocate memory for device core\n");
+	if (!core)
 		return -ENOMEM;
-	}
 
 	dev_set_drvdata(&pdev->dev, core);
 	rc = msm_vidc_initialize_core(pdev, core);
@@ -603,13 +568,32 @@ static int msm_vidc_probe_vidc_device(struct platform_device *pdev)
 	core->debugfs_root = msm_vidc_debugfs_init_core(
 		core, vidc_driver->debugfs_root);
 
-	vidc_driver->platform_version =
-		msm_vidc_read_efuse_version(pdev,
-			core->resources.pf_ver_tbl, "efuse");
+	vidc_driver->platform_version = 0;
+	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "efuse");
+	if (!res) {
+		dprintk(VIDC_DBG, "failed to get efuse resource\n");
+	} else {
+		base = devm_ioremap(&pdev->dev, res->start, resource_size(res));
+		if (!base) {
+			dprintk(VIDC_ERR,
+				"failed efuse ioremap: res->start %#x, size %d\n",
+				(u32)res->start, (u32)resource_size(res));
+		} else {
+			u32 efuse = 0;
+			struct platform_version_table *pf_ver_tbl =
+				core->resources.pf_ver_tbl;
 
-	vidc_driver->capability_version =
-		msm_vidc_read_efuse_version(
-			pdev, core->resources.pf_cap_tbl, "efuse2");
+			efuse = readl_relaxed(base);
+			vidc_driver->platform_version =
+				(efuse & pf_ver_tbl->version_mask) >>
+				pf_ver_tbl->version_shift;
+			dprintk(VIDC_DBG,
+				"efuse 0x%x, platform version 0x%x\n",
+				efuse, vidc_driver->platform_version);
+
+			devm_iounmap(&pdev->dev, base);
+		}
+	}
 
 	dprintk(VIDC_DBG, "populating sub devices\n");
 	/*
@@ -625,6 +609,7 @@ static int msm_vidc_probe_vidc_device(struct platform_device *pdev)
 		goto err_fail_sub_device_probe;
 	}
 
+	place_marker("M - DRIVER Video Ready");
 	return rc;
 
 err_fail_sub_device_probe:
@@ -712,6 +697,7 @@ static int msm_vidc_remove(struct platform_device *pdev)
 	msm_vidc_free_platform_resources(&core->resources);
 	sysfs_remove_group(&pdev->dev.kobj, &msm_vidc_core_attr_group);
 	dev_set_drvdata(&pdev->dev, NULL);
+	mutex_destroy(&core->lock);
 	kfree(core);
 	return rc;
 }
@@ -804,9 +790,12 @@ static void __exit msm_vidc_exit(void)
 {
 	platform_driver_unregister(&msm_vidc_driver);
 	debugfs_remove_recursive(vidc_driver->debugfs_root);
+	mutex_destroy(&vidc_driver->lock);
 	kfree(vidc_driver);
 	vidc_driver = NULL;
 }
 
 module_init(msm_vidc_init);
 module_exit(msm_vidc_exit);
+
+MODULE_LICENSE("GPL v2");

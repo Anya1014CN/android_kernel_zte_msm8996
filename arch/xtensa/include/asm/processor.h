@@ -1,11 +1,10 @@
 /*
- * include/asm-xtensa/processor.h
- *
  * This file is subject to the terms and conditions of the GNU General Public
  * License.  See the file "COPYING" in the main directory of this archive
  * for more details.
  *
  * Copyright (C) 2001 - 2008 Tensilica Inc.
+ * Copyright (C) 2015 Cadence Design Systems Inc.
  */
 
 #ifndef _XTENSA_PROCESSOR_H
@@ -25,7 +24,11 @@
 # error Linux requires the Xtensa Windowed Registers Option.
 #endif
 
-#define ARCH_SLAB_MINALIGN	XCHAL_DATA_WIDTH
+/* Xtensa ABI requires stack alignment to be at least 16 */
+
+#define STACK_ALIGN (XCHAL_DATA_WIDTH > 16 ? XCHAL_DATA_WIDTH : 16)
+
+#define ARCH_SLAB_MINALIGN STACK_ALIGN
 
 /*
  * User space process size: 1 GB.
@@ -43,6 +46,14 @@
 
 #define STACK_TOP	TASK_SIZE
 #define STACK_TOP_MAX	STACK_TOP
+
+/*
+ * General exception cause assigned to fake NMI. Fake NMI needs to be handled
+ * differently from other interrupts, but it uses common kernel entry/exit
+ * code.
+ */
+
+#define EXCCAUSE_MAPPED_NMI	62
 
 /*
  * General exception cause assigned to debug exceptions. Debug exceptions go
@@ -65,10 +76,30 @@
 
 #define VALID_DOUBLE_EXCEPTION_ADDRESS	64
 
+#define XTENSA_INT_LEVEL(intno) _XTENSA_INT_LEVEL(intno)
+#define _XTENSA_INT_LEVEL(intno) XCHAL_INT##intno##_LEVEL
+
+#define XTENSA_INTLEVEL_MASK(level) _XTENSA_INTLEVEL_MASK(level)
+#define _XTENSA_INTLEVEL_MASK(level) (XCHAL_INTLEVEL##level##_MASK)
+
+#define IS_POW2(v) (((v) & ((v) - 1)) == 0)
+
+#define PROFILING_INTLEVEL XTENSA_INT_LEVEL(XCHAL_PROFILING_INTERRUPT)
+
 /* LOCKLEVEL defines the interrupt level that masks all
  * general-purpose interrupts.
  */
+#if defined(CONFIG_XTENSA_VARIANT_HAVE_PERF_EVENTS) && \
+	defined(XCHAL_PROFILING_INTERRUPT) && \
+	PROFILING_INTLEVEL == XCHAL_EXCM_LEVEL && \
+	XCHAL_EXCM_LEVEL > 1 && \
+	IS_POW2(XTENSA_INTLEVEL_MASK(PROFILING_INTLEVEL))
+#define LOCKLEVEL (XCHAL_EXCM_LEVEL - 1)
+#else
 #define LOCKLEVEL XCHAL_EXCM_LEVEL
+#endif
+#define TOPLEVEL XCHAL_EXCM_LEVEL
+#define XTENSA_FAKE_NMI (LOCKLEVEL < TOPLEVEL)
 
 /* WSBITS and WBBITS are the width of the WINDOWSTART and WINDOWBASE
  * registers

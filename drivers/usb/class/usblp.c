@@ -57,6 +57,7 @@
 #include <linux/mutex.h>
 #undef DEBUG
 #include <linux/usb.h>
+#include <linux/usb/ch9.h>
 #include <linux/ratelimit.h>
 
 /*
@@ -79,12 +80,20 @@
 #define IOCNR_SOFT_RESET		7
 /* Get device_id string: */
 #define LPIOC_GET_DEVICE_ID(len) _IOC(_IOC_READ, 'P', IOCNR_GET_DEVICE_ID, len)
-/* The following ioctls were added for http://hpoj.sourceforge.net: */
-/* Get two-int array:
- * [0]=current protocol (1=7/1/1, 2=7/1/2, 3=7/1/3),
- * [1]=supported protocol mask (mask&(1<<n)!=0 means 7/1/n supported): */
+/* The following ioctls were added for http://hpoj.sourceforge.net:
+ * Get two-int array:
+ * [0]=current protocol
+ *     (1=USB_CLASS_PRINTER/1/1, 2=USB_CLASS_PRINTER/1/2,
+ *         3=USB_CLASS_PRINTER/1/3),
+ * [1]=supported protocol mask (mask&(1<<n)!=0 means
+ *     USB_CLASS_PRINTER/1/n supported):
+ */
 #define LPIOC_GET_PROTOCOLS(len) _IOC(_IOC_READ, 'P', IOCNR_GET_PROTOCOLS, len)
-/* Set protocol (arg: 1=7/1/1, 2=7/1/2, 3=7/1/3): */
+/*
+ * Set protocol
+ *     (arg: 1=USB_CLASS_PRINTER/1/1, 2=USB_CLASS_PRINTER/1/2,
+ *         3=USB_CLASS_PRINTER/1/3):
+ */
 #define LPIOC_SET_PROTOCOL _IOC(_IOC_WRITE, 'P', IOCNR_SET_PROTOCOL, 0)
 /* Set channel number (HP Vendor-specific command): */
 #define LPIOC_HP_SET_CHANNEL _IOC(_IOC_WRITE, 'P', IOCNR_HP_SET_CHANNEL, 0)
@@ -146,8 +155,10 @@ struct usblp {
 	int			readcount;		/* Counter for reads */
 	int			ifnum;			/* Interface number */
 	struct usb_interface	*intf;			/* The interface */
-	/* Alternate-setting numbers and endpoints for each protocol
-	 * (7/1/{index=1,2,3}) that the device supports: */
+	/*
+	 * Alternate-setting numbers and endpoints for each protocol
+	 * (USB_CLASS_PRINTER/1/{index=1,2,3}) that the device supports:
+	 */
 	struct {
 		int				alt_setting;
 		struct usb_endpoint_descriptor	*epwrite;
@@ -278,8 +289,25 @@ static int usblp_ctrl_msg(struct usblp *usblp, int request, int type, int dir, i
 #define usblp_reset(usblp)\
 	usblp_ctrl_msg(usblp, USBLP_REQ_RESET, USB_TYPE_CLASS, USB_DIR_OUT, USB_RECIP_OTHER, 0, NULL, 0)
 
-#define usblp_hp_channel_change_request(usblp, channel, buffer) \
-	usblp_ctrl_msg(usblp, USBLP_REQ_HP_CHANNEL_CHANGE_REQUEST, USB_TYPE_VENDOR, USB_DIR_IN, USB_RECIP_INTERFACE, channel, buffer, 1)
+static int usblp_hp_channel_change_request(struct usblp *usblp, int channel, u8 *new_channel)
+{
+	u8 *buf;
+	int ret;
+
+	buf = kzalloc(1, GFP_KERNEL);
+	if (!buf)
+		return -ENOMEM;
+
+	ret = usblp_ctrl_msg(usblp, USBLP_REQ_HP_CHANNEL_CHANGE_REQUEST,
+			USB_TYPE_VENDOR, USB_DIR_IN, USB_RECIP_INTERFACE,
+			channel, buf, 1);
+	if (ret == 0)
+		*new_channel = buf[0];
+
+	kfree(buf);
+
+	return ret;
+}
 
 /*
  * See the description for usblp_select_alts() below for the usage
@@ -447,6 +475,7 @@ static void usblp_cleanup(struct usblp *usblp)
 	kfree(usblp->readbuf);
 	kfree(usblp->device_id_string);
 	kfree(usblp->statusbuf);
+	usb_put_intf(usblp->intf);
 	kfree(usblp);
 }
 
@@ -463,11 +492,14 @@ static int usblp_release(struct inode *inode, struct file *file)
 
 	mutex_lock(&usblp_mutex);
 	usblp->used = 0;
-	if (usblp->present) {
+	if (usblp->present)
 		usblp_unlink_urbs(usblp);
-		usb_autopm_put_interface(usblp->intf);
-	} else		/* finish cleanup from disconnect */
-		usblp_cleanup(usblp);
+
+	usb_autopm_put_interface(usblp->intf);
+
+	if (!usblp->present)		/* finish cleanup from disconnect */
+		usblp_cleanup(usblp);	/* any URBs must be dead */
+
 	mutex_unlock(&usblp_mutex);
 	return 0;
 }
@@ -660,7 +692,8 @@ static long usblp_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		switch (cmd) {
 
 		case LPGETSTATUS:
-			if ((retval = usblp_read_status(usblp, usblp->statusbuf))) {
+			retval = usblp_read_status(usblp, usblp->statusbuf);
+			if (retval) {
 				printk_ratelimited(KERN_ERR "usblp%d:"
 					    "failed reading printer status (%d)\n",
 					    usblp->minor, retval);
@@ -693,9 +726,11 @@ static struct urb *usblp_new_writeurb(struct usblp *usblp, int transfer_length)
 	struct urb *urb;
 	char *writebuf;
 
-	if ((writebuf = kmalloc(transfer_length, GFP_KERNEL)) == NULL)
+	writebuf = kmalloc(transfer_length, GFP_KERNEL);
+	if (writebuf == NULL)
 		return NULL;
-	if ((urb = usb_alloc_urb(0, GFP_KERNEL)) == NULL) {
+	urb = usb_alloc_urb(0, GFP_KERNEL);
+	if (urb == NULL) {
 		kfree(writebuf);
 		return NULL;
 	}
@@ -732,7 +767,8 @@ static ssize_t usblp_write(struct file *file, const char __user *buffer, size_t 
 			transfer_length = USBLP_BUF_SIZE;
 
 		rv = -ENOMEM;
-		if ((writeurb = usblp_new_writeurb(usblp, transfer_length)) == NULL)
+		writeurb = usblp_new_writeurb(usblp, transfer_length);
+		if (writeurb == NULL)
 			goto raise_urb;
 		usb_anchor_urb(writeurb, &usblp->urbs);
 
@@ -821,6 +857,11 @@ static ssize_t usblp_read(struct file *file, char __user *buffer, size_t len, lo
 	if (rv < 0)
 		return rv;
 
+	if (!usblp->present) {
+		count = -ENODEV;
+		goto done;
+	}
+
 	if ((avail = usblp->rstatus) < 0) {
 		printk(KERN_ERR "usblp%d: error %d reading from printer\n",
 		    usblp->minor, (int)avail);
@@ -869,11 +910,11 @@ static int usblp_wwait(struct usblp *usblp, int nonblock)
 
 	add_wait_queue(&usblp->wwait, &waita);
 	for (;;) {
-		set_current_state(TASK_INTERRUPTIBLE);
 		if (mutex_lock_interruptible(&usblp->mut)) {
 			rc = -EINTR;
 			break;
 		}
+		set_current_state(TASK_INTERRUPTIBLE);
 		rc = usblp_wtest(usblp, nonblock);
 		mutex_unlock(&usblp->mut);
 		if (rc <= 0)
@@ -980,7 +1021,8 @@ static int usblp_submit_read(struct usblp *usblp)
 	int rc;
 
 	rc = -ENOMEM;
-	if ((urb = usb_alloc_urb(0, GFP_KERNEL)) == NULL)
+	urb = usb_alloc_urb(0, GFP_KERNEL);
+	if (urb == NULL)
 		goto raise_urb;
 
 	usb_fill_bulk_urb(urb, usblp->dev,
@@ -1102,7 +1144,7 @@ static int usblp_probe(struct usb_interface *intf,
 	init_waitqueue_head(&usblp->wwait);
 	init_usb_anchor(&usblp->urbs);
 	usblp->ifnum = intf->cur_altsetting->desc.bInterfaceNumber;
-	usblp->intf = intf;
+	usblp->intf = usb_get_intf(intf);
 
 	/* Malloc device ID string buffer to the largest expected length,
 	 * since we can re-query it on an ioctl and a dynamic string
@@ -1191,6 +1233,7 @@ abort:
 	kfree(usblp->readbuf);
 	kfree(usblp->statusbuf);
 	kfree(usblp->device_id_string);
+	usb_put_intf(usblp->intf);
 	kfree(usblp);
 abort_ret:
 	return retval;
@@ -1201,19 +1244,23 @@ abort_ret:
  * but our requirements are too intricate for simple match to handle.
  *
  * The "proto_bias" option may be used to specify the preferred protocol
- * for all USB printers (1=7/1/1, 2=7/1/2, 3=7/1/3).  If the device
- * supports the preferred protocol, then we bind to it.
+ * for all USB printers (1=USB_CLASS_PRINTER/1/1, 2=USB_CLASS_PRINTER/1/2,
+ * 3=USB_CLASS_PRINTER/1/3).  If the device supports the preferred protocol,
+ * then we bind to it.
  *
- * The best interface for us is 7/1/2, because it is compatible
- * with a stream of characters. If we find it, we bind to it.
+ * The best interface for us is USB_CLASS_PRINTER/1/2, because it
+ * is compatible with a stream of characters. If we find it, we bind to it.
  *
  * Note that the people from hpoj.sourceforge.net need to be able to
- * bind to 7/1/3 (MLC/1284.4), so we provide them ioctls for this purpose.
+ * bind to USB_CLASS_PRINTER/1/3 (MLC/1284.4), so we provide them ioctls
+ * for this purpose.
  *
- * Failing 7/1/2, we look for 7/1/3, even though it's probably not
- * stream-compatible, because this matches the behaviour of the old code.
+ * Failing USB_CLASS_PRINTER/1/2, we look for USB_CLASS_PRINTER/1/3,
+ * even though it's probably not stream-compatible, because this matches
+ * the behaviour of the old code.
  *
- * If nothing else, we bind to 7/1/1 - the unidirectional interface.
+ * If nothing else, we bind to USB_CLASS_PRINTER/1/1
+ * - the unidirectional interface.
  */
 static int usblp_select_alts(struct usblp *usblp)
 {
@@ -1231,7 +1278,8 @@ static int usblp_select_alts(struct usblp *usblp)
 	for (i = 0; i < if_alt->num_altsetting; i++) {
 		ifd = &if_alt->altsetting[i];
 
-		if (ifd->desc.bInterfaceClass != 7 || ifd->desc.bInterfaceSubClass != 1)
+		if (ifd->desc.bInterfaceClass != USB_CLASS_PRINTER ||
+		    ifd->desc.bInterfaceSubClass != 1)
 			if (!(usblp->quirks & USBLP_QUIRK_BAD_CLASS))
 				continue;
 
@@ -1257,8 +1305,10 @@ static int usblp_select_alts(struct usblp *usblp)
 		if (!epwrite || (ifd->desc.bInterfaceProtocol > 1 && !epread))
 			continue;
 
-		/* Turn off reads for 7/1/1 (unidirectional) interfaces
-		 * and buggy bidirectional printers. */
+		/*
+		 * Turn off reads for USB_CLASS_PRINTER/1/1 (unidirectional)
+		 * interfaces and buggy bidirectional printers.
+		 */
 		if (ifd->desc.bInterfaceProtocol == 1) {
 			epread = NULL;
 		} else if (usblp->quirks & USBLP_QUIRK_BIDIR) {
@@ -1299,14 +1349,17 @@ static int usblp_set_protocol(struct usblp *usblp, int protocol)
 	if (protocol < USBLP_FIRST_PROTOCOL || protocol > USBLP_LAST_PROTOCOL)
 		return -EINVAL;
 
-	alts = usblp->protocol[protocol].alt_setting;
-	if (alts < 0)
-		return -EINVAL;
-	r = usb_set_interface(usblp->dev, usblp->ifnum, alts);
-	if (r < 0) {
-		printk(KERN_ERR "usblp: can't set desired altsetting %d on interface %d\n",
-			alts, usblp->ifnum);
-		return r;
+	/* Don't unnecessarily set the interface if there's a single alt. */
+	if (usblp->intf->num_altsetting > 1) {
+		alts = usblp->protocol[protocol].alt_setting;
+		if (alts < 0)
+			return -EINVAL;
+		r = usb_set_interface(usblp->dev, usblp->ifnum, alts);
+		if (r < 0) {
+			printk(KERN_ERR "usblp: can't set desired altsetting %d on interface %d\n",
+				alts, usblp->ifnum);
+			return r;
+		}
 	}
 
 	usblp->bidir = (usblp->protocol[protocol].epread != NULL);
@@ -1370,9 +1423,11 @@ static void usblp_disconnect(struct usb_interface *intf)
 
 	usblp_unlink_urbs(usblp);
 	mutex_unlock(&usblp->mut);
+	usb_poison_anchored_urbs(&usblp->urbs);
 
 	if (!usblp->used)
 		usblp_cleanup(usblp);
+
 	mutex_unlock(&usblp_mutex);
 }
 
@@ -1401,12 +1456,12 @@ static int usblp_resume(struct usb_interface *intf)
 }
 
 static const struct usb_device_id usblp_ids[] = {
-	{ USB_DEVICE_INFO(7, 1, 1) },
-	{ USB_DEVICE_INFO(7, 1, 2) },
-	{ USB_DEVICE_INFO(7, 1, 3) },
-	{ USB_INTERFACE_INFO(7, 1, 1) },
-	{ USB_INTERFACE_INFO(7, 1, 2) },
-	{ USB_INTERFACE_INFO(7, 1, 3) },
+	{ USB_DEVICE_INFO(USB_CLASS_PRINTER, 1, 1) },
+	{ USB_DEVICE_INFO(USB_CLASS_PRINTER, 1, 2) },
+	{ USB_DEVICE_INFO(USB_CLASS_PRINTER, 1, 3) },
+	{ USB_INTERFACE_INFO(USB_CLASS_PRINTER, 1, 1) },
+	{ USB_INTERFACE_INFO(USB_CLASS_PRINTER, 1, 2) },
+	{ USB_INTERFACE_INFO(USB_CLASS_PRINTER, 1, 3) },
 	{ USB_DEVICE(0x04b8, 0x0202) },	/* Seiko Epson Receipt Printer M129C */
 	{ }						/* Terminating entry */
 };

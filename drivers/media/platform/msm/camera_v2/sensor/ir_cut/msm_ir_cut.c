@@ -1,4 +1,4 @@
-/* Copyright (c) 2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2016, 2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -46,7 +46,7 @@ static int32_t msm_ir_cut_get_subdev_id(
 		pr_err("failed\n");
 		return -EINVAL;
 	}
-	if (MSM_CAMERA_PLATFORM_DEVICE != ir_cut_ctrl->ir_cut_device_type) {
+	if (ir_cut_ctrl->ir_cut_device_type != MSM_CAMERA_PLATFORM_DEVICE) {
 		pr_err("failed\n");
 		return -EINVAL;
 	}
@@ -83,6 +83,7 @@ static int32_t msm_ir_cut_release(
 		return 0;
 	}
 
+	rc = ir_cut_ctrl->func_tbl->camera_ir_cut_on(ir_cut_ctrl, NULL);
 	if (rc < 0) {
 		pr_err("%s:%d camera_ir_cut_on failed rc = %d",
 			__func__, __LINE__, rc);
@@ -269,6 +270,8 @@ static int32_t msm_ir_cut_handle_init(
 		return -EINVAL;
 	}
 
+	rc = ir_cut_ctrl->func_tbl->camera_ir_cut_init(
+			ir_cut_ctrl, ir_cut_data);
 	if (rc < 0) {
 		pr_err("%s:%d camera_ir_cut_init failed rc = %d",
 			__func__, __LINE__, rc);
@@ -496,7 +499,6 @@ static long msm_ir_cut_subdev_do_ioctl(
 	struct msm_ir_cut_cfg_data_t ir_cut_data;
 
 	CDBG("Enter");
-	ir_cut_data.cfg_type = u32->cfg_type;
 
 	switch (cmd) {
 	case VIDIOC_MSM_IR_CUT_CFG32:
@@ -506,6 +508,7 @@ static long msm_ir_cut_subdev_do_ioctl(
 		return msm_ir_cut_subdev_ioctl(sd, cmd, arg);
 	}
 
+	ir_cut_data.cfg_type = u32->cfg_type;
 	rc = msm_ir_cut_subdev_ioctl(sd, cmd, &ir_cut_data);
 
 	CDBG("Exit");

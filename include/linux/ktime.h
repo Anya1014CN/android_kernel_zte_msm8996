@@ -64,6 +64,13 @@ static inline ktime_t ktime_set(const s64 secs, const unsigned long nsecs)
 		({ (ktime_t){ .tv64 = (lhs).tv64 + (rhs).tv64 }; })
 
 /*
+ * Same as ktime_add(), but avoids undefined behaviour on overflow; however,
+ * this means that you must check the result for overflow yourself.
+ */
+#define ktime_add_unsafe(lhs, rhs) \
+		({ (ktime_t){ .tv64 = (u64) (lhs).tv64 + (rhs).tv64 }; })
+
+/*
  * Add a ktime_t variable and a scalar nanosecond value.
  * res = kt + nsval:
  */
@@ -209,6 +216,11 @@ static inline s64 ktime_to_ms(const ktime_t kt)
 static inline s64 ktime_us_delta(const ktime_t later, const ktime_t earlier)
 {
        return ktime_to_us(ktime_sub(later, earlier));
+}
+
+static inline s64 ktime_ms_delta(const ktime_t later, const ktime_t earlier)
+{
+	return ktime_to_ms(ktime_sub(later, earlier));
 }
 
 static inline ktime_t ktime_add_us(const ktime_t kt, const u64 usec)

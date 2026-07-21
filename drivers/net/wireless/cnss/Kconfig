@@ -7,32 +7,12 @@ config CNSS
 	---help---
 	  This module adds support for the CNSS connectivity subsystem used
 	  for wifi devices based on the QCA AR6320 chipset.
-
-config CNSS_SDIO
-	bool "Enable/disable cnss sdio platform driver for wifi module"
-	depends on CNSS
-	depends on MMC
-	---help---
-	 This module adds support for the CNSS wlan module interfaced
-	 with SDIO bus.
-	 This driver also adds support to integrate WLAN module to subsystem
-	 restart framework, power on WLAN chip and registered the WLAN module
-	 as a SDIO client device.
-
-config CNSS_PCI
-	bool "Enable/disable cnss pci platform driver for wifi module"
-	depends on CNSS
-	depends on PCI
-	---help---
-	 This module adds support for the CNSS wlan module interfaced
-	 with PCIe bus.
-	 This driver also adds support to integrate WLAN module to subsystem
-	 restart framework, power on WLAN chip and registered the WLAN module
-	 as a PCIe client device.
+	  This driver also adds support to integrate WLAN module to subsystem
+	  restart framework.
 
 config CNSS_ASYNC
 	bool "Enable/disable cnss pci platform driver asynchronous probe"
-	depends on CNSS_PCI
+	depends on CNSS || CNSS2
 	---help---
 	 If enabled, CNSS PCI platform driver would do asynchronous probe.
 	 Using asynchronous probe will allow CNSS PCI platform driver to
@@ -48,6 +28,13 @@ config CNSS_MAC_BUG
 	  the data, that was read from 0 to 4K. So fill it with zero's;
 	  to an address for which PCIe root complex would honor the read
 	  without any errors.
+
+config CNSS_SDIO
+	bool "Enable/disable sdio driver for wifi module"
+	depends on CNSS
+	depends on MMC
+	---help---
+	  If enabled, sdio will be supported as I/O interface.
 
 config CLD_DEBUG
 	bool "Enable/disable CLD debug features"
@@ -66,7 +53,6 @@ config CLD_HL_SDIO_CORE
 	select WEXT_CORE
 	select WEXT_SPY
 	select NL80211_TESTMODE
-	depends on ARCH_MSM
 	depends on MMC
 
 config CLD_LL_CORE
@@ -107,11 +93,3 @@ config BUS_AUTO_SUSPEND
 	  during system pm.
 	  This config flag controls the feature per target based. The feature
 	  requires CNSS driver support.
-
-source "drivers/net/wireless/cnss/logger/Kconfig"
-
-config WLAN_FEATURE_RX_WAKELOCK
-	bool "Enable RX wake lock feature"
-	help
-	Enable WLAN_FEATURE_HOLD_RX_WAKELOCK which is required to take rx
-	wakelock when driver receives packets from fw.

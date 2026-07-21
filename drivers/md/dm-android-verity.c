@@ -48,7 +48,7 @@ static char buildvariant[BUILD_VARIANT];
 
 static bool target_added;
 static bool verity_enabled = true;
-struct dentry *debug_dir;
+static struct dentry *debug_dir;
 static int android_verity_ctr(struct dm_target *ti, unsigned argc, char **argv);
 
 static struct target_type android_verity_target = {
@@ -59,13 +59,11 @@ static struct target_type android_verity_target = {
 	.dtr                    = verity_dtr,
 	.map                    = verity_map,
 	.status                 = verity_status,
-	.ioctl                  = verity_ioctl,
-	.merge                  = verity_merge,
+	.prepare_ioctl          = verity_prepare_ioctl,
 	.iterate_devices        = verity_iterate_devices,
 	.io_hints               = verity_io_hints,
 };
 
-#ifndef MODULE
 static int __init verified_boot_state_param(char *line)
 {
 	strlcpy(verifiedbootstate, line, sizeof(verifiedbootstate));
@@ -97,7 +95,6 @@ static int __init verity_buildvariant(char *line)
 }
 
 __setup("buildvariant=", verity_buildvariant);
-#endif
 
 static inline bool default_verity_key_id(void)
 {
@@ -541,7 +538,7 @@ blkdev_release:
 }
 
 /* helper functions to extract properties from dts */
-const char *find_dt_value(const char *name)
+static const char *find_dt_value(const char *name)
 {
 	struct device_node *firmware;
 	const char *value;
@@ -594,6 +591,8 @@ static int verify_verity_signature(char *key_id,
 
 	if (IS_ERR(pks)) {
 		DMERR("hashing failed");
+		retval = PTR_ERR(pks);
+		pks = NULL;
 		goto error;
 	}
 
@@ -642,8 +641,7 @@ static int add_as_linear_device(struct dm_target *ti, char *dev)
 	android_verity_target.dtr = dm_linear_dtr,
 	android_verity_target.map = dm_linear_map,
 	android_verity_target.status = dm_linear_status,
-	android_verity_target.ioctl = dm_linear_ioctl,
-	android_verity_target.merge = dm_linear_merge,
+	android_verity_target.prepare_ioctl = dm_linear_prepare_ioctl,
 	android_verity_target.iterate_devices = dm_linear_iterate_devices,
 	android_verity_target.io_hints = NULL;
 
@@ -695,7 +693,7 @@ static int android_verity_ctr(struct dm_target *ti, unsigned argc, char **argv)
 	dev_t uninitialized_var(dev);
 	struct android_metadata *metadata = NULL;
 	int err = 0, i, mode;
-	char *key_id, *table_ptr, dummy, *target_device,
+	char *key_id = NULL, *table_ptr, dummy, *target_device,
 	*verity_table_args[VERITY_TABLE_ARGS + 2 + VERITY_TABLE_OPT_FEC_ARGS];
 	/* One for specifying number of opt args and one for mode */
 	sector_t data_sectors;
@@ -914,7 +912,7 @@ static int __init dm_android_verity_init(void)
 	}
 
 	file = debugfs_create_bool("target_added", S_IRUGO, debug_dir,
-				(u32 *)&target_added);
+				&target_added);
 
 	if (IS_ERR_OR_NULL(file)) {
 		DMERR("Cannot create android_verity debugfs directory: %ld",
@@ -924,7 +922,7 @@ static int __init dm_android_verity_init(void)
 	}
 
 	file = debugfs_create_bool("verity_enabled", S_IRUGO, debug_dir,
-				(u32 *)&verity_enabled);
+				&verity_enabled);
 
 	if (IS_ERR_OR_NULL(file)) {
 		DMERR("Cannot create android_verity debugfs directory: %ld",

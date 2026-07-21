@@ -22,8 +22,6 @@
 #include "xfs_log_format.h"
 #include "xfs_trans_resv.h"
 #include "xfs_bit.h"
-#include "xfs_sb.h"
-#include "xfs_ag.h"
 #include "xfs_mount.h"
 #include "xfs_inode.h"
 #include "xfs_bmap.h"
@@ -36,7 +34,6 @@
 #include "xfs_trace.h"
 #include "xfs_buf.h"
 #include "xfs_icache.h"
-#include "xfs_dinode.h"
 #include "xfs_rtalloc.h"
 
 
@@ -259,6 +256,9 @@ xfs_rtallocate_extent_block(
 		end = XFS_BLOCKTOBIT(mp, bbno + 1) - 1;
 	     i <= end;
 	     i++) {
+		/* Make sure we don't scan off the end of the rt volume. */
+		maxlen = min(mp->m_sb.sb_rextents, i + maxlen) - i;
+
 		/*
 		 * See if there's a free extent of maxlen starting at i.
 		 * If it's not so then next will contain the first non-free.
@@ -450,6 +450,14 @@ xfs_rtallocate_extent_near(
 	 */
 	if (bno >= mp->m_sb.sb_rextents)
 		bno = mp->m_sb.sb_rextents - 1;
+
+	/* Make sure we don't run off the end of the rt volume. */
+	maxlen = min(mp->m_sb.sb_rextents, bno + maxlen) - bno;
+	if (maxlen < minlen) {
+		*rtblock = NULLRTBLOCK;
+		return 0;
+	}
+
 	/*
 	 * Try the exact allocation first.
 	 */
@@ -760,32 +768,30 @@ xfs_rtallocate_extent_size(
 /*
  * Allocate space to the bitmap or summary file, and zero it, for growfs.
  */
-STATIC int				/* error */
+STATIC int
 xfs_growfs_rt_alloc(
-	xfs_mount_t	*mp,		/* file system mount point */
-	xfs_extlen_t	oblocks,	/* old count of blocks */
-	xfs_extlen_t	nblocks,	/* new count of blocks */
-	xfs_inode_t	*ip)		/* inode (bitmap/summary) */
+	struct xfs_mount	*mp,		/* file system mount point */
+	xfs_extlen_t		oblocks,	/* old count of blocks */
+	xfs_extlen_t		nblocks,	/* new count of blocks */
+	struct xfs_inode	*ip)		/* inode (bitmap/summary) */
 {
-	xfs_fileoff_t	bno;		/* block number in file */
-	xfs_buf_t	*bp;		/* temporary buffer for zeroing */
-	int		committed;	/* transaction committed flag */
-	xfs_daddr_t	d;		/* disk block address */
-	int		error;		/* error return value */
-	xfs_fsblock_t	firstblock;	/* first block allocated in xaction */
-	xfs_bmap_free_t	flist;		/* list of freed blocks */
-	xfs_fsblock_t	fsbno;		/* filesystem block for bno */
-	xfs_bmbt_irec_t	map;		/* block map output */
-	int		nmap;		/* number of block maps */
-	int		resblks;	/* space reservation */
+	xfs_fileoff_t		bno;		/* block number in file */
+	struct xfs_buf		*bp;	/* temporary buffer for zeroing */
+	int			committed;	/* transaction committed flag */
+	xfs_daddr_t		d;		/* disk block address */
+	int			error;		/* error return value */
+	xfs_fsblock_t		firstblock;/* first block allocated in xaction */
+	struct xfs_bmap_free	flist;		/* list of freed blocks */
+	xfs_fsblock_t		fsbno;		/* filesystem block for bno */
+	struct xfs_bmbt_irec	map;		/* block map output */
+	int			nmap;		/* number of block maps */
+	int			resblks;	/* space reservation */
+	struct xfs_trans	*tp;
 
 	/*
 	 * Allocate space to the file, as necessary.
 	 */
 	while (oblocks < nblocks) {
-		int		cancelflags = 0;
-		xfs_trans_t	*tp;
-
 		tp = xfs_trans_alloc(mp, XFS_TRANS_GROWFSRT_ALLOC);
 		resblks = XFS_GROWFSRT_SPACE_RES(mp, nblocks - oblocks);
 		/*
@@ -794,8 +800,7 @@ xfs_growfs_rt_alloc(
 		error = xfs_trans_reserve(tp, &M_RES(mp)->tr_growrtalloc,
 					  resblks, 0);
 		if (error)
-			goto error_cancel;
-		cancelflags = XFS_TRANS_RELEASE_LOG_RES;
+			goto out_trans_cancel;
 		/*
 		 * Lock the inode.
 		 */
@@ -807,28 +812,26 @@ xfs_growfs_rt_alloc(
 		 * Allocate blocks to the bitmap file.
 		 */
 		nmap = 1;
-		cancelflags |= XFS_TRANS_ABORT;
 		error = xfs_bmapi_write(tp, ip, oblocks, nblocks - oblocks,
 					XFS_BMAPI_METADATA, &firstblock,
 					resblks, &map, &nmap, &flist);
 		if (!error && nmap < 1)
 			error = -ENOSPC;
 		if (error)
-			goto error_cancel;
+			goto out_bmap_cancel;
 		/*
 		 * Free any blocks freed up in the transaction, then commit.
 		 */
 		error = xfs_bmap_finish(&tp, &flist, &committed);
 		if (error)
-			goto error_cancel;
-		error = xfs_trans_commit(tp, XFS_TRANS_RELEASE_LOG_RES);
+			goto out_bmap_cancel;
+		error = xfs_trans_commit(tp);
 		if (error)
-			goto error;
+			return error;
 		/*
 		 * Now we need to clear the allocated blocks.
 		 * Do this one block per transaction, to keep it simple.
 		 */
-		cancelflags = 0;
 		for (bno = map.br_startoff, fsbno = map.br_startblock;
 		     bno < map.br_startoff + map.br_blockcount;
 		     bno++, fsbno++) {
@@ -839,7 +842,7 @@ xfs_growfs_rt_alloc(
 			error = xfs_trans_reserve(tp, &M_RES(mp)->tr_growrtzero,
 						  0, 0);
 			if (error)
-				goto error_cancel;
+				goto out_trans_cancel;
 			/*
 			 * Lock the bitmap inode.
 			 */
@@ -853,27 +856,29 @@ xfs_growfs_rt_alloc(
 				mp->m_bsize, 0);
 			if (bp == NULL) {
 				error = -EIO;
-error_cancel:
-				xfs_trans_cancel(tp, cancelflags);
-				goto error;
+				goto out_trans_cancel;
 			}
 			memset(bp->b_addr, 0, mp->m_sb.sb_blocksize);
 			xfs_trans_log_buf(tp, bp, 0, mp->m_sb.sb_blocksize - 1);
 			/*
 			 * Commit the transaction.
 			 */
-			error = xfs_trans_commit(tp, 0);
+			error = xfs_trans_commit(tp);
 			if (error)
-				goto error;
+				return error;
 		}
 		/*
 		 * Go on to the next extent, if any.
 		 */
 		oblocks = map.br_startoff + map.br_blockcount;
 	}
+
 	return 0;
 
-error:
+out_bmap_cancel:
+	xfs_bmap_cancel(&flist);
+out_trans_cancel:
+	xfs_trans_cancel(tp);
 	return error;
 }
 
@@ -976,7 +981,6 @@ xfs_growfs_rt(
 	     bmbno < nrbmblocks;
 	     bmbno++) {
 		xfs_trans_t	*tp;
-		int		cancelflags = 0;
 
 		*nmp = *mp;
 		nsbp = &nmp->m_sb;
@@ -1013,21 +1017,26 @@ xfs_growfs_rt(
 		xfs_ilock(mp->m_rbmip, XFS_ILOCK_EXCL);
 		xfs_trans_ijoin(tp, mp->m_rbmip, XFS_ILOCK_EXCL);
 		/*
-		 * Update the bitmap inode's size.
+		 * Update the bitmap inode's size ondisk and incore.  We need
+		 * to update the incore size so that inode inactivation won't
+		 * punch what it thinks are "posteof" blocks.
 		 */
 		mp->m_rbmip->i_d.di_size =
 			nsbp->sb_rbmblocks * nsbp->sb_blocksize;
+		i_size_write(VFS_I(mp->m_rbmip), mp->m_rbmip->i_d.di_size);
 		xfs_trans_log_inode(tp, mp->m_rbmip, XFS_ILOG_CORE);
-		cancelflags |= XFS_TRANS_ABORT;
 		/*
 		 * Get the summary inode into the transaction.
 		 */
 		xfs_ilock(mp->m_rsumip, XFS_ILOCK_EXCL);
 		xfs_trans_ijoin(tp, mp->m_rsumip, XFS_ILOCK_EXCL);
 		/*
-		 * Update the summary inode's size.
+		 * Update the summary inode's size.  We need to update the
+		 * incore size so that inode inactivation won't punch what it
+		 * thinks are "posteof" blocks.
 		 */
 		mp->m_rsumip->i_d.di_size = nmp->m_rsumsize;
+		i_size_write(VFS_I(mp->m_rsumip), mp->m_rsumip->i_d.di_size);
 		xfs_trans_log_inode(tp, mp->m_rsumip, XFS_ILOG_CORE);
 		/*
 		 * Copy summary data from old to new sizes.
@@ -1065,7 +1074,7 @@ xfs_growfs_rt(
 			nsbp->sb_rextents - sbp->sb_rextents, &bp, &sumbno);
 		if (error) {
 error_cancel:
-			xfs_trans_cancel(tp, cancelflags);
+			xfs_trans_cancel(tp);
 			break;
 		}
 		/*
@@ -1079,7 +1088,7 @@ error_cancel:
 		mp->m_rsumlevels = nrsumlevels;
 		mp->m_rsumsize = nrsumsize;
 
-		error = xfs_trans_commit(tp, 0);
+		error = xfs_trans_commit(tp);
 		if (error)
 			break;
 	}
@@ -1233,13 +1242,11 @@ xfs_rtmount_inodes(
 	xfs_sb_t	*sbp;
 
 	sbp = &mp->m_sb;
-	if (sbp->sb_rbmino == NULLFSINO)
-		return 0;
 	error = xfs_iget(mp, NULL, sbp->sb_rbmino, 0, 0, &mp->m_rbmip);
 	if (error)
 		return error;
 	ASSERT(mp->m_rbmip != NULL);
-	ASSERT(sbp->sb_rsumino != NULLFSINO);
+
 	error = xfs_iget(mp, NULL, sbp->sb_rsumino, 0, 0, &mp->m_rsumip);
 	if (error) {
 		IRELE(mp->m_rbmip);

@@ -613,24 +613,14 @@ static int start_usb_playback(struct ua101 *ua)
 
 static void abort_alsa_capture(struct ua101 *ua)
 {
-	unsigned long flags;
-
-	if (test_bit(ALSA_CAPTURE_RUNNING, &ua->states)) {
-		snd_pcm_stream_lock_irqsave(ua->capture.substream, flags);
-		snd_pcm_stop(ua->capture.substream, SNDRV_PCM_STATE_XRUN);
-		snd_pcm_stream_unlock_irqrestore(ua->capture.substream, flags);
-	}
+	if (test_bit(ALSA_CAPTURE_RUNNING, &ua->states))
+		snd_pcm_stop_xrun(ua->capture.substream);
 }
 
 static void abort_alsa_playback(struct ua101 *ua)
 {
-	unsigned long flags;
-
-	if (test_bit(ALSA_PLAYBACK_RUNNING, &ua->states)) {
-		snd_pcm_stream_lock_irqsave(ua->playback.substream, flags);
-		snd_pcm_stop(ua->playback.substream, SNDRV_PCM_STATE_XRUN);
-		snd_pcm_stream_unlock_irqrestore(ua->playback.substream, flags);
-	}
+	if (test_bit(ALSA_PLAYBACK_RUNNING, &ua->states))
+		snd_pcm_stop_xrun(ua->playback.substream);
 }
 
 static int set_stream_hw(struct ua101 *ua, struct snd_pcm_substream *substream,
@@ -1042,7 +1032,7 @@ static int detect_usb_format(struct ua101 *ua)
 		fmt_playback->bSubframeSize * ua->playback.channels;
 
 	epd = &ua->intf[INTF_CAPTURE]->altsetting[1].endpoint[0].desc;
-	if (!usb_endpoint_is_isoc_in(epd)) {
+	if (!usb_endpoint_is_isoc_in(epd) || usb_endpoint_maxp(epd) == 0) {
 		dev_err(&ua->dev->dev, "invalid capture endpoint\n");
 		return -ENXIO;
 	}
@@ -1050,7 +1040,7 @@ static int detect_usb_format(struct ua101 *ua)
 	ua->capture.max_packet_bytes = le16_to_cpu(epd->wMaxPacketSize);
 
 	epd = &ua->intf[INTF_PLAYBACK]->altsetting[1].endpoint[0].desc;
-	if (!usb_endpoint_is_isoc_out(epd)) {
+	if (!usb_endpoint_is_isoc_out(epd) || usb_endpoint_maxp(epd) == 0) {
 		dev_err(&ua->dev->dev, "invalid playback endpoint\n");
 		return -ENXIO;
 	}

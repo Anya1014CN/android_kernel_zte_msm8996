@@ -26,9 +26,6 @@
 #define MSM_CAM_V4L2_IOCTL_DAEMON_DISABLED \
 	_IOW('V', BASE_VIDIOC_PRIVATE + 35, struct msm_v4l2_event_data)
 
-#define MSM_CAM_V4L2_IOCTL_NOTIFY_RECOVERY \
-	_IOW('V', BASE_VIDIOC_PRIVATE + 40, struct msm_v4l2_event_data)
-
 #define QCAMERA_DEVICE_GROUP_ID	1
 #define QCAMERA_VNODE_GROUP_ID	2
 #define MSM_CAMERA_NAME			"msm_camera"
@@ -54,8 +51,9 @@
 #define MSM_CAMERA_SUBDEV_IR_LED       17
 #define MSM_CAMERA_SUBDEV_IR_CUT       18
 #define MSM_CAMERA_SUBDEV_EXT          19
-
-#define MSM_MAX_CAMERA_SENSORS  5
+#define MSM_CAMERA_SUBDEV_TOF          20
+#define MSM_CAMERA_SUBDEV_LASER_LED    21
+#define MSM_MAX_CAMERA_SENSORS  6
 
 /* The below macro is defined to put an upper limit on maximum
  * number of buffer requested per stream. In case of extremely
@@ -106,12 +104,6 @@
 #define MSM_CAMERA_PRIV_STREAM_INFO_SYNC \
 	(V4L2_CID_PRIVATE_BASE + 13)
 #define MSM_CAMERA_PRIV_G_SESSION_ID (V4L2_CID_PRIVATE_BASE + 14)
-
-#define MSM_CAMERA_PRIV_RECOVERY_SENSOR \
-	(V4L2_CID_PRIVATE_BASE + 16)
-#define MSM_CAMERA_PRIV_RECOVERY \
-	(V4L2_CID_PRIVATE_BASE + 17)
-
 #define MSM_CAMERA_PRIV_CMD_MAX  20
 
 /* data.status - success */
@@ -123,6 +115,10 @@
 #define MSM_CAMERA_ERR_CMD_FAIL		(MSM_CAMERA_ERR_EVT_BASE + 1)
 #define MSM_CAMERA_ERR_MAPPING		(MSM_CAMERA_ERR_EVT_BASE + 2)
 #define MSM_CAMERA_ERR_DEVICE_BUSY	(MSM_CAMERA_ERR_EVT_BASE + 3)
+
+/* data.status - success values should be same as above*/
+#define MSM_CAMERA_CMD_SUCCESS      0x00000001
+#define MSM_CAMERA_BUF_MAP_SUCCESS  0x00000002
 
 /* The msm_v4l2_event_data structure should match the
  * v4l2_event.u.data field.

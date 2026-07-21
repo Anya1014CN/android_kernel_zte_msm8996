@@ -402,7 +402,6 @@ int mhi_open_channel(struct mhi_client_handle *client_handle)
 		ret_val = -EIO;
 		goto error_pm_state;
 	}
-
 	mhi_dev_ctxt->assert_wake(mhi_dev_ctxt, false);
 	read_unlock_bh(&mhi_dev_ctxt->pm_xfer_lock);
 	mhi_dev_ctxt->runtime_get(mhi_dev_ctxt);
@@ -471,11 +470,11 @@ error_tre_ring:
 }
 EXPORT_SYMBOL(mhi_open_channel);
 
-bool mhi_is_device_ready(const struct device const *dev,
+bool mhi_is_device_ready(const struct device * const dev,
 			 const char *node_name)
 {
 	struct mhi_device_ctxt *itr;
-	const struct device_node const *of_node;
+	const struct device_node *of_node;
 	bool match_found = false;
 
 	if (!mhi_device_drv)
@@ -505,7 +504,7 @@ int mhi_register_channel(struct mhi_client_handle **client_handle,
 			 struct mhi_client_info_t *client_info)
 {
 	struct mhi_device_ctxt *mhi_dev_ctxt = NULL, *itr;
-	const struct device_node const *of_node;
+	const struct device_node *of_node;
 	struct mhi_client_config *client_config;
 	const char *node_name;
 	enum MHI_CLIENT_CHANNEL chan;
@@ -640,7 +639,7 @@ void mhi_close_channel(struct mhi_client_handle *client_handle)
 	spin_unlock_irq(&chan_ring->ring_lock);
 	init_completion(&cfg->cmd_complete);
 	read_lock_bh(&mhi_dev_ctxt->pm_xfer_lock);
-	BUG_ON(mhi_dev_ctxt->mhi_pm_state == MHI_PM_DISABLE);
+	WARN_ON(mhi_dev_ctxt->mhi_pm_state == MHI_PM_DISABLE);
 	mhi_dev_ctxt->assert_wake(mhi_dev_ctxt, false);
 	read_unlock_bh(&mhi_dev_ctxt->pm_xfer_lock);
 	mhi_dev_ctxt->runtime_get(mhi_dev_ctxt);
@@ -868,7 +867,7 @@ static int mhi_queue_dma_xfer(
 	pkt_loc->type.info = mhi_flags;
 	trace_mhi_tre(pkt_loc, chan, 0);
 
-	if (likely(0 != client_config->intmod_t))
+	if (likely(client_config->intmod_t))
 		MHI_TRB_SET_INFO(TX_TRB_BEI, pkt_loc, 1);
 	else
 		MHI_TRB_SET_INFO(TX_TRB_BEI, pkt_loc, 0);
@@ -928,7 +927,7 @@ int mhi_queue_xfer(struct mhi_client_handle *client_handle,
 	mhi_dev_ctxt->assert_wake(mhi_dev_ctxt, false);
 	read_unlock_irqrestore(&mhi_dev_ctxt->pm_xfer_lock, flags);
 
-	if (MHI_OUT == GET_CHAN_PROPS(CHAN_DIR, client_config->chan_info.flags))
+	if (GET_CHAN_PROPS(CHAN_DIR, client_config->chan_info.flags) == MHI_OUT)
 		dma_dir = DMA_TO_DEVICE;
 	else
 		dma_dir = DMA_FROM_DEVICE;
@@ -1179,7 +1178,7 @@ static int parse_inbound(struct mhi_device_ctxt *mhi_dev_ctxt,
 			"Chan RP index %ld Chan WP index %ld chan %d\n",
 			ctxt_index_rp, ctxt_index_wp, chan);
 		BUG_ON(bb_index != ctxt_index_rp);
-		if (NULL != client_config->client_info.mhi_client_cb) {
+		if (client_config->client_info.mhi_client_cb) {
 			client_config->result.user_data =
 						client_config->user_data;
 			cb_info.cb_reason = MHI_CB_XFER;
@@ -1708,7 +1707,7 @@ void mhi_deassert_device_wake(struct mhi_device_ctxt *mhi_dev_ctxt)
 {
 	unsigned long flags;
 
-	BUG_ON(atomic_read(&mhi_dev_ctxt->counters.device_wake) == 0);
+	WARN_ON(atomic_read(&mhi_dev_ctxt->counters.device_wake) == 0);
 
 	if (likely(atomic_add_unless
 		   (&mhi_dev_ctxt->counters.device_wake, -1, 1)))
@@ -1899,6 +1898,7 @@ int mhi_register_device(struct mhi_device *mhi_device,
 	if (mhi_device->support_rddm) {
 		mhi_dev_ctxt->bhi_ctxt.support_rddm = true;
 		mhi_dev_ctxt->bhi_ctxt.rddm_size = mhi_device->rddm_size;
+		mhi_dev_ctxt->bhi_ctxt.rddm_table.sequence = 1;
 
 		mhi_log(mhi_dev_ctxt, MHI_MSG_INFO,
 			"Device support rddm of size:0x%lx bytes\n",

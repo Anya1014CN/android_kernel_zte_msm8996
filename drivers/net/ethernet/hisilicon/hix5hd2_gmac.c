@@ -371,7 +371,7 @@ static void hix5hd2_port_enable(struct hix5hd2_priv *priv)
 
 static void hix5hd2_port_disable(struct hix5hd2_priv *priv)
 {
-	writel_relaxed(~(BITS_RX_EN | BITS_TX_EN), priv->base + PORT_EN);
+	writel_relaxed(~(u32)(BITS_RX_EN | BITS_TX_EN), priv->base + PORT_EN);
 	writel_relaxed(0, priv->base + DESC_WR_RD_ENA);
 }
 
@@ -500,7 +500,6 @@ static int hix5hd2_rx(struct net_device *dev, int limit)
 		napi_gro_receive(&priv->napi, skb);
 		dev->stats.rx_packets++;
 		dev->stats.rx_bytes += skb->len;
-		dev->last_rx = jiffies;
 next:
 		pos = dma_ring_incr(pos, RX_DESC_NUM);
 	}
@@ -952,7 +951,7 @@ static int hix5hd2_dev_probe(struct platform_device *pdev)
 		goto err_free_mdio;
 
 	priv->phy_mode = of_get_phy_mode(node);
-	if (priv->phy_mode < 0) {
+	if ((int)priv->phy_mode < 0) {
 		netdev_err(ndev, "not find phy-mode\n");
 		ret = -EINVAL;
 		goto err_mdiobus;

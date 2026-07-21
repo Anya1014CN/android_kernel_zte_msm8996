@@ -105,7 +105,6 @@ static int mhi_process_event_ring(
 			__pm_stay_awake(&mhi_dev_ctxt->w_lock);
 			chan = MHI_EV_READ_CHID(EV_CHID, &event_to_process);
 			if (unlikely(!VALID_CHAN_NR(chan))) {
-				__pm_relax(&mhi_dev_ctxt->w_lock);
 				mhi_log(mhi_dev_ctxt, MHI_MSG_ERROR,
 					"Invalid chan:%d\n", chan);
 				break;
@@ -386,7 +385,7 @@ irqreturn_t mhi_msi_ipa_handlr(int irq_number, void *dev_id)
 	/* Obtain client config from MSI */
 	ev_ring_props = &mhi_dev_ctxt->ev_ring_props[msi_num];
 	client_handle = mhi_dev_ctxt->client_handle_list[ev_ring_props->chan];
-	if (unlikely(client_handle == NULL)) {
+	if (unlikely(!client_handle)) {
 		mhi_log(mhi_dev_ctxt, MHI_MSG_INFO,
 			"Recv MSI for unreg chan:%u\n", ev_ring_props->chan);
 		return IRQ_HANDLED;

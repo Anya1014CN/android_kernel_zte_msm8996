@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -34,8 +34,8 @@
 #include <linux/platform_device.h>
 #include <soc/qcom/subsystem_restart.h>
 #include <soc/qcom/subsystem_notif.h>
-#include <soc/qcom/socinfo.h>
 #include <soc/qcom/sysmon.h>
+#include <trace/events/trace_msm_pil_event.h>
 
 #include <asm/current.h>
 
@@ -147,7 +147,6 @@ struct restart_log {
  * @count: reference count of subsystem_get()/subsystem_put()
  * @id: ida
  * @restart_level: restart level (0 - panic, 1 - related, 2 - independent, etc.)
- * @keep_alive: whether keep alive during AP's panic
  * @restart_order: order of other devices this devices restarts with
  * @crash_count: number of times the device has crashed
  * @do_ramdump_on_put: ramdump on subsystem_put() if true
@@ -170,14 +169,13 @@ struct subsys_device {
 	int count;
 	int id;
 	int restart_level;
-	bool keep_alive;
 	int crash_count;
 	struct subsys_soc_restart_order *restart_order;
 	bool do_ramdump_on_put;
 	struct cdev char_dev;
 	dev_t dev_no;
 	struct completion err_ready;
-	bool crashed;
+	enum crash_status crashed;
 	int notif_state;
 	struct list_head list;
 };
@@ -306,31 +304,6 @@ static ssize_t system_debug_store(struct device *dev,
 	return orig_count;
 }
 
-static ssize_t keep_alive_show(struct device *dev,
-				struct device_attribute *attr, char *buf)
-{
-	struct subsys_device *subsys = to_subsys(dev);
-
-	return snprintf(buf, PAGE_SIZE, "%d\n", subsys->keep_alive);
-}
-
-static ssize_t keep_alive_store(struct device *dev,
-				struct device_attribute *attr, const char *buf,
-				size_t count)
-{
-	struct subsys_device *subsys = to_subsys(dev);
-	unsigned long value;
-
-	if (kstrtoul(buf, 0, &value) != 0)
-		return -EINVAL;
-	if (value > 1)
-		return -EINVAL;
-
-	subsys->keep_alive = (bool)value;
-
-	return count;
-}
-
 int subsys_get_restart_level(struct subsys_device *dev)
 {
 	return dev->restart_level;
@@ -380,7 +353,6 @@ static struct device_attribute subsys_attrs[] = {
 	__ATTR(restart_level, 0644, restart_level_show, restart_level_store),
 	__ATTR(firmware_name, 0644, firmware_name_show, firmware_name_store),
 	__ATTR(system_debug, 0644, system_debug_show, system_debug_store),
-	__ATTR(keep_alive, 0644, keep_alive_show, keep_alive_store),
 	__ATTR_NULL,
 };
 
@@ -568,8 +540,10 @@ static void notify_each_subsys_device(struct subsys_device **list,
 		notif_data.no_auth = dev->desc->no_auth;
 		notif_data.pdev = pdev;
 
+		trace_pil_notif("before_send_notif", notif, dev->desc->fw_name);
 		subsys_notif_queue_notification(dev->notify, notif,
 								&notif_data);
+		trace_pil_notif("after_send_notif", notif, dev->desc->fw_name);
 	}
 }
 
@@ -640,10 +614,10 @@ static int subsystem_shutdown(struct subsys_device *dev, void *data)
 			current->comm, current->pid, name);
 	ret = dev->desc->shutdown(dev->desc, true);
 	if (ret < 0) {
-		if (!dev->desc->ignore_ssr_failure)
+		if (!dev->desc->ignore_ssr_failure) {
 			panic("subsys-restart: [%s:%d]: Failed to shutdown %s!",
-			current->comm, current->pid, name);
-		else {
+				current->comm, current->pid, name);
+		} else {
 			pr_err("Shutdown failure on %s\n", name);
 			return ret;
 		}
@@ -686,10 +660,10 @@ static int subsystem_powerup(struct subsys_device *dev, void *data)
 	if (ret < 0) {
 		notify_each_subsys_device(&dev, 1, SUBSYS_POWERUP_FAILURE,
 								NULL);
-		if (!dev->desc->ignore_ssr_failure)
+		if (!dev->desc->ignore_ssr_failure) {
 			panic("[%s:%d]: Powerup error: %s!",
 				current->comm, current->pid, name);
-		else {
+		} else {
 			pr_err("Powerup failure on %s\n", name);
 			return ret;
 		}
@@ -707,7 +681,7 @@ static int subsystem_powerup(struct subsys_device *dev, void *data)
 			return ret;
 	}
 	subsys_set_state(dev, SUBSYS_ONLINE);
-	subsys_set_crash_status(dev, false);
+	subsys_set_crash_status(dev, CRASH_STATUS_NO_CRASH);
 
 	return 0;
 }
@@ -774,6 +748,7 @@ static void subsys_stop(struct subsys_device *subsys)
 {
 	const char *name = subsys->desc->name;
 
+	notify_each_subsys_device(&subsys, 1, SUBSYS_BEFORE_SHUTDOWN, NULL);
 	if (!of_property_read_bool(subsys->desc->dev->of_node,
 					"qcom,pil-force-shutdown")) {
 		subsys_set_state(subsys, SUBSYS_OFFLINING);
@@ -783,12 +758,33 @@ static void subsys_stop(struct subsys_device *subsys)
 			pr_debug("Graceful shutdown failed for %s\n", name);
 	}
 
-	notify_each_subsys_device(&subsys, 1, SUBSYS_BEFORE_SHUTDOWN, NULL);
 	subsys->desc->shutdown(subsys->desc, false);
 	subsys_set_state(subsys, SUBSYS_OFFLINE);
 	disable_all_irqs(subsys);
 	notify_each_subsys_device(&subsys, 1, SUBSYS_AFTER_SHUTDOWN, NULL);
 }
+
+int subsystem_set_fwname(const char *name, const char *fw_name)
+{
+	struct subsys_device *subsys;
+
+	if (!name)
+		return -EINVAL;
+
+	if (!fw_name)
+		return -EINVAL;
+
+	subsys = find_subsys(name);
+	if (!subsys)
+		return -EINVAL;
+
+	pr_debug("Changing subsys [%s] fw_name to [%s]\n", name, fw_name);
+	strlcpy(subsys->desc->fw_name, fw_name,
+		sizeof(subsys->desc->fw_name));
+
+	return 0;
+}
+EXPORT_SYMBOL(subsystem_set_fwname);
 
 int wait_for_shutdown_ack(struct subsys_desc *desc)
 {
@@ -1087,7 +1083,7 @@ int subsystem_restart_dev(struct subsys_device *dev)
 {
 	const char *name;
 
-	if (!get_device(&dev->dev))
+	if ((!dev) || !get_device(&dev->dev))
 		return -ENODEV;
 
 	if (!try_module_get(dev->owner)) {
@@ -1178,23 +1174,31 @@ int subsystem_crashed(const char *name)
 }
 EXPORT_SYMBOL(subsystem_crashed);
 
-void subsys_set_crash_status(struct subsys_device *dev, bool crashed)
+void subsys_set_crash_status(struct subsys_device *dev,
+				enum crash_status crashed)
 {
+	if (!dev) {
+		pr_err("Invalid subsystem device\n");
+		return;
+	}
+
 	dev->crashed = crashed;
 }
 
-bool subsys_get_crash_status(struct subsys_device *dev)
+enum crash_status subsys_get_crash_status(struct subsys_device *dev)
 {
+	if (!dev) {
+		pr_err("Invalid subsystem device\n");
+		return CRASH_STATUS_NO_CRASH;
+	}
+
 	return dev->crashed;
 }
 
 void subsys_set_error(struct subsys_device *dev, const char *error_msg)
 {
-	if (dev) {
-		snprintf(dev->error_buf, sizeof(dev->error_buf), "%s",
-							   error_msg);
-		sysfs_notify(&dev->dev.kobj, NULL, "error");
-	}
+	snprintf(dev->error_buf, sizeof(dev->error_buf), "%s", error_msg);
+	sysfs_notify(&dev->dev.kobj, NULL, "error");
 }
 
 static struct subsys_device *desc_to_subsys(struct device *d)
@@ -1767,12 +1771,6 @@ EXPORT_SYMBOL(subsys_unregister);
 static int subsys_panic(struct device *dev, void *data)
 {
 	struct subsys_device *subsys = to_subsys(dev);
-
-	/* Keeping the subsys alive during panic */
-	if (!panic_timeout && subsys->keep_alive) {
-		dev_warn(dev, "keeping %s alive\n", subsys->desc->name);
-		return 0;
-	}
 
 	if (subsys->desc->crash_shutdown)
 		subsys->desc->crash_shutdown(subsys->desc);

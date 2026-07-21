@@ -91,11 +91,6 @@ sent in the evdev event stream.
     event and query the device (using EVIOCG* ioctls) to obtain its
     current state.
 
-* SYN_TIME_SEC, SYN_TIME_NSEC:
-  - Used to report the timestamp from the hardware. The timestamp should record
-    the exact time when the hardware events happens. The timestamp is
-    CLOCK_MONOTONIC based.
-
 EV_KEY:
 ----------
 EV_KEY events take the form KEY_<name> or BTN_<name>. For example, KEY_A is used
@@ -234,7 +229,7 @@ such device to feedback.
 EV_PWR:
 ----------
 EV_PWR events are a special type of event used specifically for power
-mangement. Its usage is not well defined. To be addressed later.
+management. Its usage is not well defined. To be addressed later.
 
 Device properties:
 =================
@@ -298,6 +293,15 @@ If INPUT_PROP_TOPBUTTONPAD is set, userspace should emulate buttons
 accordingly. This property does not affect kernel behavior.
 The kernel does not provide button emulation for such devices but treats
 them as any other INPUT_PROP_BUTTONPAD device.
+
+INPUT_PROP_ACCELEROMETER
+-------------------------
+Directional axes on this device (absolute and/or relative x, y, z) represent
+accelerometer data. Some devices also report gyroscope data, which devices
+can report through the rotational axes (absolute and/or relative rx, ry, rz).
+
+All other axes retain their meaning. A device must not mix
+regular directional axes and accelerometer axes on the same event node.
 
 Guidelines:
 ==========

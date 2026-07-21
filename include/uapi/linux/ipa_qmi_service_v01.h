@@ -1860,7 +1860,7 @@ struct ipa_configure_ul_firewall_rules_resp_msg_v01 {
 	 * qmi_result_type -- QMI_RESULT_SUCCESS or QMI_RESULT_FAILURE
 	 * qmi_error_type  -- Error code. Possible error code values are
 	 * described in the error codes section of each message definition.
-    */
+	 */
 };  /* Message */
 
 enum ipa_ul_firewall_status_enum_v01 {
@@ -1868,10 +1868,12 @@ enum ipa_ul_firewall_status_enum_v01 {
 	/* To force a 32 bit signed enum.  Do not change or use*/
 	QMI_IPA_UL_FIREWALL_STATUS_SUCCESS_V01 = 0,
 	/* Indicates that the uplink firewall rules
-	are configured successfully.*/
+	 * are configured successfully.
+	 */
 	QMI_IPA_UL_FIREWALL_STATUS_FAILURE_V01 = 1,
 	/* Indicates that the uplink firewall rules
-	are not configured successfully.*/
+	 * are not configured successfully.
+	 */
 	IPA_UL_FIREWALL_STATUS_ENUM_MAX_ENUM_VAL_V01 = 2147483647
 	/* To force a 32 bit signed enum.  Do not change or use*/
 };
@@ -1886,11 +1888,11 @@ struct ipa_ul_firewall_config_result_type_v01 {
 
 	uint32_t mux_id;
 	/*
-	* QMAP Mux ID. As a part of the QMAP protocol,
-	* several data calls may be multiplexed over the same physical
-	* transport channel. This identifier is used to identify one
-	* such data call. The maximum value for this identifier is 255.
-	*/
+	 * QMAP Mux ID. As a part of the QMAP protocol,
+	 * several data calls may be multiplexed over the same physical
+	 * transport channel. This identifier is used to identify one
+	 * such data call. The maximum value for this identifier is 255.
+	 */
 };
 
 /*

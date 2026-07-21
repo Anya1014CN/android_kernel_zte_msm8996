@@ -26,6 +26,12 @@ enum {
 	RESET_LEVEL_MAX
 };
 
+enum crash_status {
+	CRASH_STATUS_NO_CRASH = 0,
+	CRASH_STATUS_ERR_FATAL,
+	CRASH_STATUS_WDOG_BITE,
+};
+
 struct device;
 struct module;
 
@@ -93,7 +99,7 @@ struct subsys_desc {
 
 /**
  * struct notif_data - additional notif information
- * @crashed: indicates if subsystem has crashed
+ * @crashed: indicates if subsystem has crashed due to wdog bite or err fatal
  * @enable_ramdump: ramdumps disabled if set to 0
  * @enable_mini_ramdumps: enable flag for minimized critical-memory-only
  * ramdumps
@@ -101,7 +107,7 @@ struct subsys_desc {
  * @pdev: subsystem platform device pointer
  */
 struct notif_data {
-	bool crashed;
+	enum crash_status crashed;
 	int enable_ramdump;
 	int enable_mini_ramdumps;
 	bool no_auth;
@@ -117,14 +123,16 @@ extern int subsystem_crashed(const char *name);
 
 extern void *subsystem_get(const char *name);
 extern void *subsystem_get_with_fwname(const char *name, const char *fw_name);
+extern int subsystem_set_fwname(const char *name, const char *fw_name);
 extern void subsystem_put(void *subsystem);
 
 extern struct subsys_device *subsys_register(struct subsys_desc *desc);
 extern void subsys_unregister(struct subsys_device *dev);
 
 extern void subsys_default_online(struct subsys_device *dev);
-extern void subsys_set_crash_status(struct subsys_device *dev, bool crashed);
-extern bool subsys_get_crash_status(struct subsys_device *dev);
+extern void subsys_set_crash_status(struct subsys_device *dev,
+					enum crash_status crashed);
+extern enum crash_status subsys_get_crash_status(struct subsys_device *dev);
 extern void subsys_set_error(struct subsys_device *dev, const char *error_msg);
 void notify_proxy_vote(struct device *device);
 void notify_proxy_unvote(struct device *device);
@@ -162,6 +170,11 @@ static inline void *subsystem_get_with_fwname(const char *name,
 	return NULL;
 }
 
+static inline int subsystem_set_fwname(const char *name,
+				const char *fw_name) {
+	return 0;
+}
+
 static inline void subsystem_put(void *subsystem) { }
 
 static inline
@@ -173,9 +186,10 @@ struct subsys_device *subsys_register(struct subsys_desc *desc)
 static inline void subsys_unregister(struct subsys_device *dev) { }
 
 static inline void subsys_default_online(struct subsys_device *dev) { }
+static inline void subsys_set_crash_status(struct subsys_device *dev,
+						enum crash_status crashed) { }
 static inline
-void subsys_set_crash_status(struct subsys_device *dev, bool crashed) { }
-static inline bool subsys_get_crash_status(struct subsys_device *dev)
+enum crash_status subsys_get_crash_status(struct subsys_device *dev)
 {
 	return false;
 }

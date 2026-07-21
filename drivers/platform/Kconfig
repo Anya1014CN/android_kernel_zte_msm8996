@@ -1,10 +1,15 @@
 if X86
 source "drivers/platform/x86/Kconfig"
 endif
+if MIPS
+source "drivers/platform/mips/Kconfig"
+endif
 source "drivers/platform/goldfish/Kconfig"
 
 source "drivers/platform/chrome/Kconfig"
 
-if ARCH_MSM
 source "drivers/platform/msm/Kconfig"
-endif
+
+source "drivers/platform/xiaomi/Kconfig"
+
+source "drivers/platform/zte/Kconfig"

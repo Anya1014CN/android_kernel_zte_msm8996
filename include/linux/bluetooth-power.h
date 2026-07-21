@@ -67,7 +67,7 @@ struct bluetooth_power_platform_data {
 	 */
 	struct bt_power_vreg_data *bt_chip_pwd;
 	/* Optional: Bluetooth power setup function */
-	int (*bt_power_setup) (int);
+	int (*bt_power_setup)(int);
 };
 
 #endif /* __LINUX_BLUETOOTH_POWER_H */

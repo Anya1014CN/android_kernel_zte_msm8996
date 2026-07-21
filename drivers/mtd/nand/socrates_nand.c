@@ -167,7 +167,6 @@ static int socrates_nand_probe(struct platform_device *ofdev)
 	nand_chip->priv = host;		/* link the private data structures */
 	mtd->priv = nand_chip;
 	mtd->name = "socrates_nand";
-	mtd->owner = THIS_MODULE;
 	mtd->dev.parent = &ofdev->dev;
 	ppdata.of_node = ofdev->dev.of_node;
 
@@ -205,7 +204,7 @@ static int socrates_nand_probe(struct platform_device *ofdev)
 	if (!res)
 		return res;
 
-	nand_release(mtd);
+	nand_cleanup(nand_chip);
 
 out:
 	iounmap(host->io_base);
@@ -240,7 +239,6 @@ MODULE_DEVICE_TABLE(of, socrates_nand_match);
 static struct platform_driver socrates_nand_driver = {
 	.driver = {
 		.name = "socrates_nand",
-		.owner = THIS_MODULE,
 		.of_match_table = socrates_nand_match,
 	},
 	.probe		= socrates_nand_probe,

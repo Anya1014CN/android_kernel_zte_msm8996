@@ -322,11 +322,13 @@ struct ipahal_imm_cmd_dma_task_32b_addr {
 /*
  * struct ipahal_imm_cmd_pyld - Immediate cmd payload information
  * @len: length of the buffer
+ * @reserved: padding bytes to make data buffer aligned
  * @data: buffer contains the immediate command payload. Buffer goes
  *  back to back with this structure
  */
 struct ipahal_imm_cmd_pyld {
 	u16 len;
+	u16 reserved;
 	u8 data[0];
 };
 
@@ -619,14 +621,12 @@ void ipahal_cp_hdr_to_hw_buff(void *base, u32 offset, u8 *hdr, u32 hdr_len);
  * @phys_base: memory location in DDR
  * @hdr_base_addr: base address in table
  * @offset_entry: offset from hdr_base_addr in table
- * @l2tp_params: l2tp parameters
  */
-void ipahal_cp_proc_ctx_to_hw_buff(enum ipa_hdr_proc_type type,
+int ipahal_cp_proc_ctx_to_hw_buff(enum ipa_hdr_proc_type type,
 		void *base, u32 offset, u32 hdr_len,
 		bool is_hdr_proc_ctx, dma_addr_t phys_base,
 		u32 hdr_base_addr,
-		struct ipa_hdr_offset_entry *offset_entry,
-		struct ipa_l2tp_hdr_proc_ctx_params l2tp_params);
+		struct ipa_hdr_offset_entry *offset_entry);
 
 /*
  * ipahal_get_proc_ctx_needed_len() - calculates the needed length for addition
@@ -646,7 +646,9 @@ u32 ipahal_get_dps_img_mem_size(void);
  */
 u32 ipahal_get_hps_img_mem_size(void);
 
-int ipahal_init(enum ipa_hw_type ipa_hw_type, void __iomem *base);
+int ipahal_init(enum ipa_hw_type ipa_hw_type, void __iomem *base,
+	struct device *ipa_pdev);
 void ipahal_destroy(void);
+void ipahal_free_dma_mem(struct ipa_mem_buffer *mem);
 
 #endif /* _IPAHAL_H_ */

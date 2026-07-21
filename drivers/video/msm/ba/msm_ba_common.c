@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -191,8 +191,6 @@ void msm_ba_add_inputs(struct v4l2_subdev *sd)
 	int dev_id = 0;
 
 	dev_ctxt = get_ba_dev();
-	if (!list_empty(&dev_ctxt->inputs))
-		start_index = dev_ctxt->num_inputs;
 
 	msm_ba_inp_cfg = dev_ctxt->msm_ba_inp_cfg;
 	dev_id = msm_ba_inp_cfg[start_index].ba_out;
@@ -214,7 +212,6 @@ void msm_ba_add_inputs(struct v4l2_subdev *sd)
 			input->ba_out = msm_ba_inp_cfg[i].ba_out;
 			input->ba_node_addr = msm_ba_inp_cfg[i].ba_node;
 			input->ba_ip_idx = i;
-			input->prio = V4L2_PRIORITY_DEFAULT;
 			input->input_user_type =
 				msm_ba_inp_cfg[i].input_user_type;
 			input->sd = sd;
@@ -510,20 +507,20 @@ static const struct v4l2_ctrl_ops msm_ba_ctrl_ops = {
 	.s_ctrl = msm_ba_op_s_ctrl,
 };
 
-const struct v4l2_ctrl_ops *msm_ba_get_ctrl_ops(void)
-{
-	return &msm_ba_ctrl_ops;
-}
-
 static struct v4l2_ctrl **msm_ba_get_super_cluster(struct msm_ba_inst *inst,
 				int *size)
 {
 	int c = 0;
 	int sz = 0;
-	struct v4l2_ctrl **cluster = kmalloc(sizeof(struct v4l2_ctrl *) *
+	struct v4l2_ctrl **cluster = NULL;
+
+	if (!size || !inst)
+		return NULL;
+
+	cluster = kmalloc(sizeof(struct v4l2_ctrl *) *
 			BA_NUM_CTRLS, GFP_KERNEL);
 
-	if (!size || !cluster || !inst)
+	if (!cluster)
 		return NULL;
 
 	for (c = 0; c < BA_NUM_CTRLS; c++)
@@ -540,9 +537,11 @@ static struct v4l2_ctrl **msm_ba_get_super_cluster(struct msm_ba_inst *inst,
 int msm_ba_ctrl_init(struct msm_ba_inst *inst)
 {
 	int idx = 0;
-	struct v4l2_ctrl_config ctrl_cfg = {0};
+	struct v4l2_ctrl_config ctrl_cfg;
 	int rc = 0;
 	int cluster_size = 0;
+
+	memset(&ctrl_cfg, 0x00, sizeof(struct v4l2_ctrl_config));
 
 	if (!inst) {
 		dprintk(BA_ERR, "%s - invalid instance", __func__);

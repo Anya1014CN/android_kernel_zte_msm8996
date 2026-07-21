@@ -1,4 +1,4 @@
-/* Copyright (c) 2014-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -66,9 +66,9 @@
 #define map_from_smd_trans_signal(sigs) \
 	do { \
 		if (sigs & SMD_DTR_SIG) \
-			sigs |= TIOCM_DTR; \
+			sigs |= TIOCM_DSR; \
 		if (sigs & SMD_CTS_SIG) \
-			sigs |= TIOCM_RTS; \
+			sigs |= TIOCM_CTS; \
 		if (sigs & SMD_CD_SIG) \
 			sigs |= TIOCM_CD; \
 		if (sigs & SMD_RI_SIG) \
@@ -572,8 +572,10 @@ static void glink_pkt_notify_state_worker(struct work_struct *work)
 	mutex_lock(&devp->ch_lock);
 	devp->ch_state = event;
 	if (event == GLINK_CONNECTED) {
-		if (!devp->handle)
-			devp->handle = handle;
+		if (!devp->handle) {
+			GLINK_PKT_ERR("%s: Invalid device handle\n", __func__);
+			goto exit;
+		}
 		devp->in_reset = 0;
 		wake_up_interruptible(&devp->ch_opened_wait_queue);
 	} else if (event == GLINK_REMOTE_DISCONNECTED) {
@@ -585,6 +587,7 @@ static void glink_pkt_notify_state_worker(struct work_struct *work)
 			devp->handle = NULL;
 		wake_up_interruptible(&devp->ch_closed_wait_queue);
 	}
+exit:
 	mutex_unlock(&devp->ch_lock);
 	kfree(work_item);
 }
@@ -1089,7 +1092,7 @@ error:
  *
  * This function return first item from rx pkt_list and NULL if list is empty.
  */
-static struct glink_rx_pkt *pop_rx_pkt(struct glink_pkt_dev *devp)
+struct glink_rx_pkt *pop_rx_pkt(struct glink_pkt_dev *devp)
 {
 	unsigned long flags;
 	struct glink_rx_pkt *pkt = NULL;
@@ -1200,6 +1203,7 @@ static int glink_pkt_init_add_device(struct glink_pkt_dev *devp, int i)
 
 	devp->link_up = false;
 	devp->link_info.edge = devp->open_cfg.edge;
+	devp->link_info.transport = devp->open_cfg.transport;
 	devp->link_info.glink_link_state_notif_cb =
 				glink_pkt_link_state_cb;
 	devp->i = i;

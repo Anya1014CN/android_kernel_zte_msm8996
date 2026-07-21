@@ -1,4 +1,6 @@
-/* Copyright (c) 2014-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014-2016, 2020, The Linux Foundation. All rights reserved.
+ * Copyright (C) 2018 XiaoMi, Inc.
+
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -31,7 +33,8 @@
 #include <dt-bindings/clock/msm-clocks-8996.h>
 #include <dt-bindings/clock/msm-clocks-hwio-8996.h>
 
-#include "vdd-level-8994.h"
+#include "reset.h"
+#include "vdd-level-8996.h"
 
 static void __iomem *virt_base;
 static void __iomem *virt_dbgbase;
@@ -41,7 +44,7 @@ static void __iomem *virt_dbgbase;
 #define gpll0_out_main_source_val 1
 #define gpll4_out_main_source_val 5
 
-#define FIXDIV(div) ((div) == 0 ? 0 : (2 * (div) - 1))
+#define FIXDIV(div) ((int)div ? (2 * (div) - 1) : (0))
 
 #define F(f, s, div, m, n) \
 	{ \
@@ -1239,6 +1242,10 @@ static struct rcg_clk blsp2_uart6_apps_clk_src = {
 };
 
 static struct clk_freq_tbl ftbl_gp1_clk_src[] = {
+	F(     48000,         cxo_clk_src,   20,    1,    20),
+	F(   3072000,         cxo_clk_src,    1,    4,    25),
+	F(   6144000,         cxo_clk_src,    1,    8,    25),
+	F(  12288000,         cxo_clk_src,    1,   16,    25),
 	F(  19200000,         cxo_clk_src,    1,    0,     0),
 	F( 100000000, gpll0_out_main,    6,    0,     0),
 	F( 200000000, gpll0_out_main,    3,    0,     0),
@@ -3084,7 +3091,6 @@ static struct branch_clk gcc_mss_q6_bimc_axi_clk = {
 	.base = &virt_base,
 	.c = {
 		.dbg_name = "gcc_mss_q6_bimc_axi_clk",
-		.always_on = true,
 		.ops = &clk_ops_branch,
 		CLK_INIT(gcc_mss_q6_bimc_axi_clk.c),
 	},
@@ -3144,6 +3150,26 @@ static struct branch_clk gcc_aggre0_noc_mpu_cfg_ahb_clk = {
 		.ops = &clk_ops_branch,
 		CLK_INIT(gcc_aggre0_noc_mpu_cfg_ahb_clk.c),
 	},
+};
+
+static const struct msm_reset_map gcc_msm8996_resets[] = {
+	[QUSB2PHY_PRIM_BCR] = { 0x12038 },
+	[QUSB2PHY_SEC_BCR] = { 0x1203c },
+	[BLSP1_BCR] = { 0x17000 },
+	[BLSP2_BCR] = { 0x25000 },
+	[BOOT_ROM_BCR] = { 0x38000 },
+	[PRNG_BCR] = { 0x34000 },
+	[UFS_BCR] = { 0x75000 },
+	[USB_20_BCR] = { 0x12000 },
+	[USB_30_BCR] = { 0x0f000 },
+	[USB3_PHY_BCR] = { 0x50020 },
+	[USB3PHY_PHY_BCR] = { 0x50024 },
+	[PCIE_0_PHY_BCR] = { 0x6c01c },
+	[PCIE_1_PHY_BCR] = { 0x6d038 },
+	[PCIE_2_PHY_BCR] = { 0x6e038 },
+	[PCIE_PHY_BCR] = { 0x6f000 },
+	[PCIE_PHY_NOCSR_COM_PHY_BCR] = { 0x6f00C },
+	[PCIE_PHY_COM_BCR] = { 0x6f014 },
 };
 
 static struct mux_clk gcc_debug_mux;
@@ -3708,6 +3734,10 @@ static int msm_gcc_8996_probe(struct platform_device *pdev)
 	 * gcc_mmss_bimc_gfx_clk.
 	 */
 	clk_set_flags(&gcc_mmss_bimc_gfx_clk.c, CLKFLAG_RETAIN_MEM);
+
+	/* Register block resets */
+	msm_reset_controller_register(pdev, gcc_msm8996_resets,
+			ARRAY_SIZE(gcc_msm8996_resets), virt_base);
 
 	dev_info(&pdev->dev, "Registered GCC clocks.\n");
 	return 0;

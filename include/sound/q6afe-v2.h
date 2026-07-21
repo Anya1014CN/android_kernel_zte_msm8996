@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2018, 2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -41,6 +41,11 @@
 
 #define AFE_CLK_VERSION_V1    1
 #define AFE_CLK_VERSION_V2    2
+
+#define AFE_MAX_RDDMA    10
+#define AFE_MAX_WRDMA    10
+
+typedef int (*routing_cb)(int port);
 
 enum {
 	/* IDX 0->4 */
@@ -108,7 +113,7 @@ enum {
 	IDX_AFE_PORT_ID_QUINARY_MI2S_RX,
 	IDX_AFE_PORT_ID_QUINARY_MI2S_TX,
 	IDX_AFE_PORT_ID_SENARY_MI2S_TX,
-	/* IDX 54-> 118 */
+	/* IDX 54->117 */
 	IDX_AFE_PORT_ID_PRIMARY_TDM_RX_0,
 	IDX_AFE_PORT_ID_PRIMARY_TDM_TX_0,
 	IDX_AFE_PORT_ID_PRIMARY_TDM_RX_1,
@@ -173,8 +178,186 @@ enum {
 	IDX_AFE_PORT_ID_QUATERNARY_TDM_TX_6,
 	IDX_AFE_PORT_ID_QUATERNARY_TDM_RX_7,
 	IDX_AFE_PORT_ID_QUATERNARY_TDM_TX_7,
-	IDX_AFE_LOOPBACK_TX,
+	/* IDX 118->121 */
+	IDX_SLIMBUS_7_RX,
+	IDX_SLIMBUS_7_TX,
+	IDX_SLIMBUS_8_RX,
+	IDX_SLIMBUS_8_TX,
+	/* IDX 122-> 123 */
+	IDX_AFE_PORT_ID_USB_RX,
+	IDX_AFE_PORT_ID_USB_TX,
+	/* IDX 124 */
+	IDX_DISPLAY_PORT_RX,
+	/* IDX 125-> 128 */
+	IDX_AFE_PORT_ID_TERTIARY_PCM_RX,
+	IDX_AFE_PORT_ID_TERTIARY_PCM_TX,
+	IDX_AFE_PORT_ID_QUATERNARY_PCM_RX,
+	IDX_AFE_PORT_ID_QUATERNARY_PCM_TX,
+	/* IDX 129-> 142 */
+	IDX_AFE_PORT_ID_INT0_MI2S_RX,
+	IDX_AFE_PORT_ID_INT0_MI2S_TX,
+	IDX_AFE_PORT_ID_INT1_MI2S_RX,
+	IDX_AFE_PORT_ID_INT1_MI2S_TX,
+	IDX_AFE_PORT_ID_INT2_MI2S_RX,
+	IDX_AFE_PORT_ID_INT2_MI2S_TX,
+	IDX_AFE_PORT_ID_INT3_MI2S_RX,
+	IDX_AFE_PORT_ID_INT3_MI2S_TX,
+	IDX_AFE_PORT_ID_INT4_MI2S_RX,
+	IDX_AFE_PORT_ID_INT4_MI2S_TX,
+	IDX_AFE_PORT_ID_INT5_MI2S_RX,
+	IDX_AFE_PORT_ID_INT5_MI2S_TX,
+	IDX_AFE_PORT_ID_INT6_MI2S_RX,
+	IDX_AFE_PORT_ID_INT6_MI2S_TX,
+	/* IDX 143 -> 150 */
+	IDX_AFE_PORT_ID_SECONDARY_MI2S_RX_1,
+	IDX_AFE_PORT_ID_SECONDARY_MI2S_RX_2,
+	IDX_AFE_PORT_ID_SECONDARY_MI2S_RX_3,
+	IDX_AFE_PORT_ID_SECONDARY_MI2S_RX_4,
+	IDX_AFE_PORT_ID_SECONDARY_MI2S_TX_1,
+	IDX_AFE_PORT_ID_SECONDARY_MI2S_TX_2,
+	IDX_AFE_PORT_ID_SECONDARY_MI2S_TX_3,
+	IDX_AFE_PORT_ID_SECONDARY_MI2S_TX_4,
+	/* IDX 151 -> 158 */
+	IDX_AFE_PORT_ID_TERTIARY_MI2S_RX_1,
+	IDX_AFE_PORT_ID_TERTIARY_MI2S_RX_2,
+	IDX_AFE_PORT_ID_TERTIARY_MI2S_RX_3,
+	IDX_AFE_PORT_ID_TERTIARY_MI2S_RX_4,
+	IDX_AFE_PORT_ID_TERTIARY_MI2S_TX_1,
+	IDX_AFE_PORT_ID_TERTIARY_MI2S_TX_2,
+	IDX_AFE_PORT_ID_TERTIARY_MI2S_TX_3,
+	IDX_AFE_PORT_ID_TERTIARY_MI2S_TX_4,
+	/* IDX 159 -> 166 */
+	IDX_AFE_PORT_ID_QUATERNARY_MI2S_RX_1,
+	IDX_AFE_PORT_ID_QUATERNARY_MI2S_RX_2,
+	IDX_AFE_PORT_ID_QUATERNARY_MI2S_RX_3,
+	IDX_AFE_PORT_ID_QUATERNARY_MI2S_RX_4,
+	IDX_AFE_PORT_ID_QUATERNARY_MI2S_TX_1,
+	IDX_AFE_PORT_ID_QUATERNARY_MI2S_TX_2,
+	IDX_AFE_PORT_ID_QUATERNARY_MI2S_TX_3,
+	IDX_AFE_PORT_ID_QUATERNARY_MI2S_TX_4,
+	/* IDX 167 -> 168 */
+	IDX_RT_PROXY_PORT_002_RX,
+	IDX_RT_PROXY_PORT_002_TX,
 	AFE_MAX_PORTS
+};
+
+
+enum {
+	IDX_PRIMARY_TDM_RX_0,
+	IDX_PRIMARY_TDM_RX_1,
+	IDX_PRIMARY_TDM_RX_2,
+	IDX_PRIMARY_TDM_RX_3,
+	IDX_PRIMARY_TDM_RX_4,
+	IDX_PRIMARY_TDM_RX_5,
+	IDX_PRIMARY_TDM_RX_6,
+	IDX_PRIMARY_TDM_RX_7,
+	IDX_PRIMARY_TDM_TX_0,
+	IDX_PRIMARY_TDM_TX_1,
+	IDX_PRIMARY_TDM_TX_2,
+	IDX_PRIMARY_TDM_TX_3,
+	IDX_PRIMARY_TDM_TX_4,
+	IDX_PRIMARY_TDM_TX_5,
+	IDX_PRIMARY_TDM_TX_6,
+	IDX_PRIMARY_TDM_TX_7,
+	IDX_SECONDARY_TDM_RX_0,
+	IDX_SECONDARY_TDM_RX_1,
+	IDX_SECONDARY_TDM_RX_2,
+	IDX_SECONDARY_TDM_RX_3,
+	IDX_SECONDARY_TDM_RX_4,
+	IDX_SECONDARY_TDM_RX_5,
+	IDX_SECONDARY_TDM_RX_6,
+	IDX_SECONDARY_TDM_RX_7,
+	IDX_SECONDARY_TDM_TX_0,
+	IDX_SECONDARY_TDM_TX_1,
+	IDX_SECONDARY_TDM_TX_2,
+	IDX_SECONDARY_TDM_TX_3,
+	IDX_SECONDARY_TDM_TX_4,
+	IDX_SECONDARY_TDM_TX_5,
+	IDX_SECONDARY_TDM_TX_6,
+	IDX_SECONDARY_TDM_TX_7,
+	IDX_TERTIARY_TDM_RX_0,
+	IDX_TERTIARY_TDM_RX_1,
+	IDX_TERTIARY_TDM_RX_2,
+	IDX_TERTIARY_TDM_RX_3,
+	IDX_TERTIARY_TDM_RX_4,
+	IDX_TERTIARY_TDM_RX_5,
+	IDX_TERTIARY_TDM_RX_6,
+	IDX_TERTIARY_TDM_RX_7,
+	IDX_TERTIARY_TDM_TX_0,
+	IDX_TERTIARY_TDM_TX_1,
+	IDX_TERTIARY_TDM_TX_2,
+	IDX_TERTIARY_TDM_TX_3,
+	IDX_TERTIARY_TDM_TX_4,
+	IDX_TERTIARY_TDM_TX_5,
+	IDX_TERTIARY_TDM_TX_6,
+	IDX_TERTIARY_TDM_TX_7,
+	IDX_QUATERNARY_TDM_RX_0,
+	IDX_QUATERNARY_TDM_RX_1,
+	IDX_QUATERNARY_TDM_RX_2,
+	IDX_QUATERNARY_TDM_RX_3,
+	IDX_QUATERNARY_TDM_RX_4,
+	IDX_QUATERNARY_TDM_RX_5,
+	IDX_QUATERNARY_TDM_RX_6,
+	IDX_QUATERNARY_TDM_RX_7,
+	IDX_QUATERNARY_TDM_TX_0,
+	IDX_QUATERNARY_TDM_TX_1,
+	IDX_QUATERNARY_TDM_TX_2,
+	IDX_QUATERNARY_TDM_TX_3,
+	IDX_QUATERNARY_TDM_TX_4,
+	IDX_QUATERNARY_TDM_TX_5,
+	IDX_QUATERNARY_TDM_TX_6,
+	IDX_QUATERNARY_TDM_TX_7,
+	IDX_TDM_MAX,
+};
+
+enum {
+	IDX_GROUP_PRIMARY_TDM_RX,
+	IDX_GROUP_PRIMARY_TDM_TX,
+	IDX_GROUP_SECONDARY_TDM_RX,
+	IDX_GROUP_SECONDARY_TDM_TX,
+	IDX_GROUP_TERTIARY_TDM_RX,
+	IDX_GROUP_TERTIARY_TDM_TX,
+	IDX_GROUP_QUATERNARY_TDM_RX,
+	IDX_GROUP_QUATERNARY_TDM_TX,
+	IDX_GROUP_TDM_MAX,
+};
+
+enum {
+	IDX_SECONDARY_MI2S_RX_1,
+	IDX_SECONDARY_MI2S_RX_2,
+	IDX_SECONDARY_MI2S_RX_3,
+	IDX_SECONDARY_MI2S_RX_4,
+	IDX_SECONDARY_MI2S_TX_1,
+	IDX_SECONDARY_MI2S_TX_2,
+	IDX_SECONDARY_MI2S_TX_3,
+	IDX_SECONDARY_MI2S_TX_4,
+	IDX_TERTIARY_MI2S_RX_1,
+	IDX_TERTIARY_MI2S_RX_2,
+	IDX_TERTIARY_MI2S_RX_3,
+	IDX_TERTIARY_MI2S_RX_4,
+	IDX_TERTIARY_MI2S_TX_1,
+	IDX_TERTIARY_MI2S_TX_2,
+	IDX_TERTIARY_MI2S_TX_3,
+	IDX_TERTIARY_MI2S_TX_4,
+	IDX_QUATERNARY_MI2S_RX_1,
+	IDX_QUATERNARY_MI2S_RX_2,
+	IDX_QUATERNARY_MI2S_RX_3,
+	IDX_QUATERNARY_MI2S_RX_4,
+	IDX_QUATERNARY_MI2S_TX_1,
+	IDX_QUATERNARY_MI2S_TX_2,
+	IDX_QUATERNARY_MI2S_TX_3,
+	IDX_QUATERNARY_MI2S_TX_4,
+	IDX_GROUP_MI2S_PORT_MAX,
+};
+
+enum {
+	IDX_GROUP_SECONDARY_MI2S_RX,
+	IDX_GROUP_SECONDARY_MI2S_TX,
+	IDX_GROUP_TERTIARY_MI2S_RX,
+	IDX_GROUP_TERTIARY_MI2S_TX,
+	IDX_GROUP_QUATERNARY_MI2S_RX,
+	IDX_GROUP_QUATERNARY_MI2S_TX,
+	IDX_GROUP_MI2S_MAX,
 };
 
 enum afe_mad_type {
@@ -188,11 +371,6 @@ enum afe_mad_type {
 enum afe_cal_mode {
 	AFE_CAL_MODE_DEFAULT = 0x00,
 	AFE_CAL_MODE_NONE,
-};
-
-enum lpass_clk_ver {
-	LPASS_CLK_VER_1,
-	LPASS_CLK_VER_2,
 };
 
 struct afe_audio_buffer {
@@ -240,9 +418,8 @@ struct aanc_data {
 
 int afe_open(u16 port_id, union afe_port_config *afe_config, int rate);
 int afe_close(int port_id);
-enum lpass_clk_ver afe_get_lpass_clk_ver(void);
 int afe_loopback(u16 enable, u16 rx_port, u16 tx_port);
-int afe_sidetone(u16 tx_port_id, u16 rx_port_id, u16 enable, uint16_t gain);
+int afe_sidetone_enable(u16 tx_port_id, u16 rx_port_id, bool enable);
 int afe_loopback_gain(u16 port_id, u16 volume);
 int afe_validate_port(u16 port_id);
 int afe_get_port_index(u16 port_id);
@@ -273,6 +450,9 @@ int afe_rt_proxy_port_read(phys_addr_t buf_addr_p,
 void afe_set_cal_mode(u16 port_id, enum afe_cal_mode afe_cal_mode);
 int afe_port_start(u16 port_id, union afe_port_config *afe_config,
 	u32 rate);
+int afe_port_start_v2(u16 port_id, union afe_port_config *afe_config,
+		      u32 rate, u16 afe_in_channels, u16 afe_in_bit_width,
+		      struct afe_enc_config *enc_config);
 int afe_spk_prot_feed_back_cfg(int src_port, int dst_port,
 	int l_ch, int r_ch, u32 enable);
 int afe_spk_prot_get_calib_data(struct afe_spkr_prot_get_vi_calib *calib);
@@ -336,5 +516,19 @@ int afe_send_custom_tdm_header_cfg(
 	struct afe_param_id_custom_tdm_header_cfg *custom_tdm_header_cfg,
 	u16 port_id);
 int afe_tdm_port_start(u16 port_id, struct afe_tdm_port_config *tdm_port,
+		       u32 rate, u16 num_groups);
+void afe_set_routing_callback(routing_cb);
+int afe_get_av_dev_drift(struct afe_param_id_dev_timing_stats *timing_stats,
+		u16 port);
+int afe_get_svc_version(uint32_t service_id);
+int afe_request_dma_resources(uint8_t dma_type, uint8_t num_read_dma_channels,
+				uint8_t num_write_dma_channels);
+int afe_get_dma_idx(bool **ret_rddma_idx,
+				bool **ret_wrdma_idx);
+int afe_release_all_dma_resources(void);
+int afe_i2s_port_start(u16 port_id, struct afe_i2s_port_config *i2s_port,
 		u32 rate, u16 num_groups);
+int afe_port_group_mi2s_enable(u16 group_id,
+		union afe_port_group_mi2s_config *afe_group_config,
+		u16 enable);
 #endif /* __Q6AFE_V2_H__ */

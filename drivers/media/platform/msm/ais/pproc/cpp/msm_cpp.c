@@ -1,4 +1,4 @@
-/* Copyright (c) 2013-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -836,9 +836,14 @@ static irqreturn_t msm_cpp_irq(int irq_num, void *data)
 	if (irq_status & 0x8) {
 		tx_level = msm_camera_io_r(cpp_dev->base +
 			MSM_CPP_MICRO_FIFO_TX_STAT) >> 2;
-		for (i = 0; i < tx_level; i++) {
-			tx_fifo[i] = msm_camera_io_r(cpp_dev->base +
-				MSM_CPP_MICRO_FIFO_TX_DATA);
+		if (tx_level < MSM_CPP_TX_FIFO_LEVEL) {
+			for (i = 0; i < tx_level; i++) {
+				tx_fifo[i] = msm_camera_io_r(cpp_dev->base +
+					MSM_CPP_MICRO_FIFO_TX_DATA);
+			}
+		} else {
+			pr_err("Fatal invalid tx level %d", tx_level);
+			goto err;
 		}
 		spin_lock_irqsave(&cpp_dev->tasklet_lock, flags);
 		queue_cmd = &cpp_dev->tasklet_queue_cmd[cpp_dev->taskletq_idx];
@@ -893,6 +898,7 @@ static irqreturn_t msm_cpp_irq(int irq_num, void *data)
 		pr_debug("DEBUG_R1: 0x%x\n",
 			msm_camera_io_r(cpp_dev->base + 0x8C));
 	}
+err:
 	msm_camera_io_w(irq_status, cpp_dev->base + MSM_CPP_MICRO_IRQGEN_CLR);
 	return IRQ_HANDLED;
 }
@@ -1102,7 +1108,7 @@ static int32_t cpp_load_fw(struct cpp_device *cpp_dev, char *fw_name_bin)
 		goto end;
 	}
 	pr_debug("%s:%d] FW file: %s\n", __func__, __LINE__, fw_name_bin);
-	if (NULL == cpp_dev->fw) {
+	if (cpp_dev->fw == NULL) {
 		pr_err("%s:%d] fw NULL", __func__, __LINE__);
 		rc = -EINVAL;
 		goto end;
@@ -1507,7 +1513,7 @@ static int msm_cpp_notify_frame_done(struct cpp_device *cpp_dev,
 
 			SWAP_IDENTITY_FOR_BATCH_ON_PREVIEW(processed_frame,
 				iden, processed_frame->duplicate_identity);
-			memset(&buff_mgr_info, 0 ,
+			memset(&buff_mgr_info, 0,
 				sizeof(struct msm_buf_mngr_info));
 
 			buff_mgr_info.session_id = ((iden >> 16) & 0xFFFF);
@@ -1552,7 +1558,7 @@ static int msm_cpp_notify_frame_done(struct cpp_device *cpp_dev,
 			SWAP_IDENTITY_FOR_BATCH_ON_PREVIEW(processed_frame,
 				iden, processed_frame->identity);
 
-			memset(&buff_mgr_info, 0 ,
+			memset(&buff_mgr_info, 0,
 				sizeof(struct msm_buf_mngr_info));
 
 			buff_mgr_info.session_id = ((iden >> 16) & 0xFFFF);
@@ -3147,7 +3153,7 @@ long msm_cpp_subdev_ioctl(struct v4l2_subdev *sd,
 			mutex_unlock(&cpp_dev->mutex);
 			return -EINVAL;
 		}
-		if (VIDIOC_MSM_CPP_DELETE_STREAM_BUFF == cmd) {
+		if (cmd == VIDIOC_MSM_CPP_DELETE_STREAM_BUFF) {
 			for (j = 0; j < k_stream_buff_info.num_buffs; j++) {
 				msm_cpp_dequeue_buff(cpp_dev, buff_queue_info,
 				k_stream_buff_info.buffer_info[j].index,
@@ -3232,11 +3238,11 @@ STREAM_BUFF_END:
 		if (copy_to_user((void __user *)ioctl_ptr->ioctl_ptr,
 				process_frame,
 				sizeof(struct msm_cpp_frame_info_t))) {
-					mutex_unlock(&cpp_dev->mutex);
-					kfree(process_frame->cpp_cmd_msg);
-					kfree(process_frame);
-					kfree(event_qcmd);
-					return -EFAULT;
+			mutex_unlock(&cpp_dev->mutex);
+			kfree(process_frame->cpp_cmd_msg);
+			kfree(process_frame);
+			kfree(event_qcmd);
+			return -EFAULT;
 		}
 
 		kfree(process_frame->cpp_cmd_msg);

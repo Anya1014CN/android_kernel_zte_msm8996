@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013, Mellanox Technologies inc.  All rights reserved.
+ * Copyright (c) 2013-2015, Mellanox Technologies. All rights reserved.
  *
  * This software is available to you under a choice of one of two
  * licenses.  You may choose to be licensed under the terms of the GNU
@@ -243,43 +243,78 @@ static void free_4k(struct mlx5_core_dev *dev, u64 addr)
 static int alloc_system_page(struct mlx5_core_dev *dev, u16 func_id)
 {
 	struct page *page;
+	u64 zero_addr = 1;
 	u64 addr;
 	int err;
+	int nid = dev_to_node(&dev->pdev->dev);
 
-	page = alloc_page(GFP_HIGHUSER);
+	page = alloc_pages_node(nid, GFP_HIGHUSER, 0);
 	if (!page) {
 		mlx5_core_warn(dev, "failed to allocate page\n");
 		return -ENOMEM;
 	}
+map:
 	addr = dma_map_page(&dev->pdev->dev, page, 0,
 			    PAGE_SIZE, DMA_BIDIRECTIONAL);
 	if (dma_mapping_error(&dev->pdev->dev, addr)) {
 		mlx5_core_warn(dev, "failed dma mapping page\n");
 		err = -ENOMEM;
-		goto out_alloc;
+		goto err_mapping;
 	}
+
+	/* Firmware doesn't support page with physical address 0 */
+	if (addr == 0) {
+		zero_addr = addr;
+		goto map;
+	}
+
 	err = insert_page(dev, addr, page, func_id);
 	if (err) {
 		mlx5_core_err(dev, "failed to track allocated page\n");
-		goto out_mapping;
+		dma_unmap_page(&dev->pdev->dev, addr, PAGE_SIZE,
+			       DMA_BIDIRECTIONAL);
 	}
 
-	return 0;
+err_mapping:
+	if (err)
+		__free_page(page);
 
-out_mapping:
-	dma_unmap_page(&dev->pdev->dev, addr, PAGE_SIZE, DMA_BIDIRECTIONAL);
-
-out_alloc:
-	__free_page(page);
+	if (zero_addr == 0)
+		dma_unmap_page(&dev->pdev->dev, zero_addr, PAGE_SIZE,
+			       DMA_BIDIRECTIONAL);
 
 	return err;
 }
+
+static void page_notify_fail(struct mlx5_core_dev *dev, u16 func_id)
+{
+	struct mlx5_manage_pages_inbox *in;
+	struct mlx5_manage_pages_outbox out;
+	int err;
+
+	in = kzalloc(sizeof(*in), GFP_KERNEL);
+	if (!in)
+		return;
+
+	memset(&out, 0, sizeof(out));
+	in->hdr.opcode = cpu_to_be16(MLX5_CMD_OP_MANAGE_PAGES);
+	in->hdr.opmod = cpu_to_be16(MLX5_PAGES_CANT_GIVE);
+	in->func_id = cpu_to_be16(func_id);
+	err = mlx5_cmd_exec(dev, in, sizeof(*in), &out, sizeof(out));
+	if (!err)
+		err = mlx5_cmd_status_to_err(&out.hdr);
+
+	if (err)
+		mlx5_core_warn(dev, "page notify failed\n");
+
+	kfree(in);
+}
+
 static int give_pages(struct mlx5_core_dev *dev, u16 func_id, int npages,
 		      int notify_fail)
 {
 	struct mlx5_manage_pages_inbox *in;
 	struct mlx5_manage_pages_outbox out;
-	struct mlx5_manage_pages_inbox *nin;
 	int inlen;
 	u64 addr;
 	int err;
@@ -288,8 +323,9 @@ static int give_pages(struct mlx5_core_dev *dev, u16 func_id, int npages,
 	inlen = sizeof(*in) + npages * sizeof(in->pas[0]);
 	in = mlx5_vzalloc(inlen);
 	if (!in) {
+		err = -ENOMEM;
 		mlx5_core_warn(dev, "vzalloc failed %d\n", inlen);
-		return -ENOMEM;
+		goto out_free;
 	}
 	memset(&out, 0, sizeof(out));
 
@@ -315,43 +351,29 @@ retry:
 	if (err) {
 		mlx5_core_warn(dev, "func_id 0x%x, npages %d, err %d\n",
 			       func_id, npages, err);
-		goto out_alloc;
+		goto out_4k;
 	}
 	dev->priv.fw_pages += npages;
 
-	if (out.hdr.status) {
-		err = mlx5_cmd_status_to_err(&out.hdr);
-		if (err) {
-			mlx5_core_warn(dev, "func_id 0x%x, npages %d, status %d\n",
-				       func_id, npages, out.hdr.status);
-			goto out_alloc;
-		}
+	err = mlx5_cmd_status_to_err(&out.hdr);
+	if (err) {
+		mlx5_core_warn(dev, "func_id 0x%x, npages %d, status %d\n",
+			       func_id, npages, out.hdr.status);
+		goto out_4k;
 	}
 
 	mlx5_core_dbg(dev, "err %d\n", err);
 
-	goto out_free;
-
-out_alloc:
-	if (notify_fail) {
-		nin = kzalloc(sizeof(*nin), GFP_KERNEL);
-		if (!nin) {
-			mlx5_core_warn(dev, "allocation failed\n");
-			goto out_4k;
-		}
-		memset(&out, 0, sizeof(out));
-		nin->hdr.opcode = cpu_to_be16(MLX5_CMD_OP_MANAGE_PAGES);
-		nin->hdr.opmod = cpu_to_be16(MLX5_PAGES_CANT_GIVE);
-		if (mlx5_cmd_exec(dev, nin, sizeof(*nin), &out, sizeof(out)))
-			mlx5_core_warn(dev, "page notify failed\n");
-		kfree(nin);
-	}
+	kvfree(in);
+	return 0;
 
 out_4k:
 	for (i--; i >= 0; i--)
 		free_4k(dev, be64_to_cpu(in->pas[i]));
 out_free:
-	mlx5_vfree(in);
+	kvfree(in);
+	if (notify_fail)
+		page_notify_fail(dev, func_id);
 	return err;
 }
 
@@ -402,7 +424,7 @@ static int reclaim_pages(struct mlx5_core_dev *dev, u32 func_id, int npages,
 	}
 
 out_free:
-	mlx5_vfree(out);
+	kvfree(out);
 	return err;
 }
 
@@ -481,15 +503,20 @@ int mlx5_reclaim_startup_pages(struct mlx5_core_dev *dev)
 	struct fw_page *fwp;
 	struct rb_node *p;
 	int nclaimed = 0;
-	int err;
+	int err = 0;
 
 	do {
 		p = rb_first(&dev->priv.page_root);
 		if (p) {
 			fwp = rb_entry(p, struct fw_page, rb_node);
-			err = reclaim_pages(dev, fwp->func_id,
-					    optimal_reclaimed_pages(),
-					    &nclaimed);
+			if (dev->state == MLX5_DEVICE_STATE_INTERNAL_ERROR) {
+				free_4k(dev, fwp->addr);
+				nclaimed = 1;
+			} else {
+				err = reclaim_pages(dev, fwp->func_id,
+						    optimal_reclaimed_pages(),
+						    &nclaimed);
+			}
 			if (err) {
 				mlx5_core_warn(dev, "failed reclaiming pages (%d)\n",
 					       err);

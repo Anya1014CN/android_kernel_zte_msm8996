@@ -1,4 +1,4 @@
-/* Copyright (c) 2014-2015, 2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014-2015, 2017-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -88,12 +88,10 @@ static void mdm_enable_irqs(struct mdm_ctrl *mdm)
 		return;
 	if (mdm->irq_mask & IRQ_ERRFATAL) {
 		enable_irq(mdm->errfatal_irq);
-		irq_set_irq_wake(mdm->errfatal_irq, 1);
 		mdm->irq_mask &= ~IRQ_ERRFATAL;
 	}
 	if (mdm->irq_mask & IRQ_STATUS) {
 		enable_irq(mdm->status_irq);
-		irq_set_irq_wake(mdm->status_irq, 1);
 		mdm->irq_mask &= ~IRQ_STATUS;
 	}
 	if (mdm->irq_mask & IRQ_PBLRDY) {
@@ -107,12 +105,10 @@ static void mdm_disable_irqs(struct mdm_ctrl *mdm)
 	if (!mdm)
 		return;
 	if (!(mdm->irq_mask & IRQ_ERRFATAL)) {
-		irq_set_irq_wake(mdm->errfatal_irq, 0);
 		disable_irq_nosync(mdm->errfatal_irq);
 		mdm->irq_mask |= IRQ_ERRFATAL;
 	}
 	if (!(mdm->irq_mask & IRQ_STATUS)) {
-		irq_set_irq_wake(mdm->status_irq, 0);
 		disable_irq_nosync(mdm->status_irq);
 		mdm->irq_mask |= IRQ_STATUS;
 	}
@@ -224,7 +220,7 @@ static int mdm_cmd_exe(enum esoc_cmd cmd, struct esoc_clink *esoc)
 		}
 		dev_dbg(mdm->dev, "Waiting for status gpio go low\n");
 		status_down = false;
-		end_time = jiffies + msecs_to_jiffies(10000);
+		end_time = jiffies + msecs_to_jiffies(mdm->shutdown_timeout_ms);
 		while (time_before(jiffies, end_time)) {
 			if (gpio_get_value(MDM_GPIO(mdm, MDM2AP_STATUS))
 									== 0) {
@@ -234,10 +230,15 @@ static int mdm_cmd_exe(enum esoc_cmd cmd, struct esoc_clink *esoc)
 			}
 			msleep(100);
 		}
-		if (status_down)
+		if (status_down) {
 			dev_dbg(dev, "shutdown successful\n");
-		else
+			esoc_clink_queue_request(ESOC_REQ_SHUTDOWN, esoc);
+		} else {
 			dev_err(mdm->dev, "graceful poff ipc fail\n");
+			graceful_shutdown = false;
+			goto force_poff;
+		}
+		break;
 force_poff:
 	case ESOC_FORCE_PWR_OFF:
 		if (!graceful_shutdown) {
@@ -467,11 +468,12 @@ static irqreturn_t mdm_status_change(int irq, void *dev_id)
 {
 	int value;
 	struct esoc_clink *esoc;
+	struct device *dev;
 	struct mdm_ctrl *mdm = (struct mdm_ctrl *)dev_id;
-	struct device *dev = mdm->dev;
 
 	if (!mdm)
 		return IRQ_HANDLED;
+	dev = mdm->dev;
 	esoc = mdm->esoc;
 	/*
 	 * On auto boot devices, there is a possibility of receiving
@@ -490,7 +492,7 @@ static irqreturn_t mdm_status_change(int irq, void *dev_id)
 		 * In auto_boot cases, bailout early if mdm
 		 * is up already.
 		 */
-		 if (esoc->auto_boot && mdm->ready)
+		if (esoc->auto_boot && mdm->ready)
 			return IRQ_HANDLED;
 
 		cancel_delayed_work(&mdm->mdm2ap_status_check_work);
@@ -567,7 +569,7 @@ static void mdm_configure_debug(struct mdm_ctrl *mdm)
 	if (val == MDM_DBG_MODE) {
 		mdm->dbg_mode = true;
 		mdm->cti = coresight_cti_get(MDM_CTI_NAME);
-		if (IS_ERR(mdm->cti)) {
+		if (IS_ERR_OR_NULL(mdm->cti)) {
 			dev_err(mdm->dev, "unable to get cti handle\n");
 			goto cti_get_err;
 		}
@@ -700,6 +702,7 @@ static int mdm_configure_ipc(struct mdm_ctrl *mdm, struct platform_device *pdev)
 		goto errfatal_err;
 	}
 	mdm->errfatal_irq = irq;
+	irq_set_irq_wake(mdm->errfatal_irq, 1);
 
 errfatal_err:
 	 /* status irq */
@@ -718,6 +721,7 @@ errfatal_err:
 		goto status_err;
 	}
 	mdm->status_irq = irq;
+	irq_set_irq_wake(mdm->status_irq, 1);
 status_err:
 	if (gpio_is_valid(MDM_GPIO(mdm, MDM2AP_PBLRDY))) {
 		irq =  platform_get_irq_byname(pdev, "plbrdy_irq");
@@ -807,7 +811,7 @@ static int mdm9x25_setup_hw(struct mdm_ctrl *mdm,
 	mdm->dev = &pdev->dev;
 	mdm->pon_ops = pon_ops;
 	esoc = devm_kzalloc(mdm->dev, sizeof(*esoc), GFP_KERNEL);
-	if (IS_ERR(esoc)) {
+	if (IS_ERR_OR_NULL(esoc)) {
 		dev_err(mdm->dev, "cannot allocate esoc device\n");
 		return PTR_ERR(esoc);
 	}
@@ -878,7 +882,7 @@ static int mdm9x35_setup_hw(struct mdm_ctrl *mdm,
 	mdm->pon_ops = pon_ops;
 	node = pdev->dev.of_node;
 	esoc = devm_kzalloc(mdm->dev, sizeof(*esoc), GFP_KERNEL);
-	if (IS_ERR(esoc)) {
+	if (IS_ERR_OR_NULL(esoc)) {
 		dev_err(mdm->dev, "cannot allocate esoc device\n");
 		return PTR_ERR(esoc);
 	}
@@ -1045,7 +1049,7 @@ static int mdm9x55_setup_hw(struct mdm_ctrl *mdm,
 	mdm->pon_ops = pon_ops;
 	node = pdev->dev.of_node;
 	esoc = devm_kzalloc(mdm->dev, sizeof(*esoc), GFP_KERNEL);
-	if (IS_ERR(esoc)) {
+	if (IS_ERR_OR_NULL(esoc)) {
 		dev_err(mdm->dev, "cannot allocate esoc device\n");
 		return PTR_ERR(esoc);
 	}
@@ -1085,10 +1089,23 @@ static int mdm9x55_setup_hw(struct mdm_ctrl *mdm,
 					&esoc->link_info);
 	if (ret)
 		dev_info(mdm->dev, "esoc link info missing\n");
+
+	ret = of_property_read_u32(node, "qcom,shutdown-timeout-ms",
+				   &mdm->shutdown_timeout_ms);
+	if (ret)
+		mdm->shutdown_timeout_ms = DEF_SHUTDOWN_TIMEOUT;
+
 	esoc->clink_ops = clink_ops;
 	esoc->parent = mdm->dev;
 	esoc->owner = THIS_MODULE;
 	esoc->np = pdev->dev.of_node;
+
+	esoc->auto_boot = of_property_read_bool(esoc->np,
+						"qcom,mdm-auto-boot");
+	esoc->statusline_not_a_powersource = of_property_read_bool(esoc->np,
+				"qcom,mdm-statusline-not-a-powersource");
+	esoc->userspace_handle_shutdown = of_property_read_bool(esoc->np,
+				"qcom,mdm-userspace-handle-shutdown");
 	set_esoc_clink_data(esoc, mdm);
 	ret = esoc_clink_register(esoc);
 	if (ret) {
@@ -1104,6 +1121,8 @@ static int mdm9x55_setup_hw(struct mdm_ctrl *mdm,
 	mdm->debug_fail = false;
 	mdm->esoc = esoc;
 	mdm->init = 0;
+	if (esoc->auto_boot)
+		gpio_direction_output(MDM_GPIO(mdm, AP2MDM_STATUS), 1);
 	return 0;
 }
 
@@ -1243,11 +1262,11 @@ static int mdm_probe(struct platform_device *pdev)
 	struct mdm_ctrl *mdm;
 
 	match = of_match_node(mdm_dt_match, node);
-	if (IS_ERR(match))
+	if (IS_ERR_OR_NULL(match))
 		return PTR_ERR(match);
 	mdm_ops = match->data;
 	mdm = devm_kzalloc(&pdev->dev, sizeof(*mdm), GFP_KERNEL);
-	if (IS_ERR(mdm))
+	if (IS_ERR_OR_NULL(mdm))
 		return PTR_ERR(mdm);
 	return mdm_ops->config_hw(mdm, mdm_ops, pdev);
 }

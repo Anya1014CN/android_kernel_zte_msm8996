@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2017-2018 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -38,10 +38,8 @@
 
 static struct class *driver_class;
 static dev_t profiler_device_no;
-static int stop_done = 1;
 
 struct profiler_control {
-
 	struct device *pdev;
 	struct cdev cdev;
 };
@@ -49,7 +47,6 @@ struct profiler_control {
 static struct profiler_control profiler;
 
 struct profiler_dev_handle {
-
 	bool released;
 	int abort;
 	atomic_t ioctl_count;
@@ -71,11 +68,11 @@ static int profiler_scm_call2(uint32_t svc_id, uint32_t tz_cmd_id,
 
 	switch (svc_id) {
 
-	case SCM_SVC_BW: {
+	case SCM_SVC_BW:
 		switch (qseos_cmd_id) {
 		case TZ_BW_SVC_START_ID:
 		case TZ_BW_SVC_GET_ID:
-		case TZ_BW_SVC_STOP_ID: {
+		case TZ_BW_SVC_STOP_ID:
 			/* Send the command to TZ */
 			desc.arginfo = SCM_ARGS(4, SCM_RW, SCM_VAL,
 							SCM_RW, SCM_VAL);
@@ -91,22 +88,18 @@ static int profiler_scm_call2(uint32_t svc_id, uint32_t tz_cmd_id,
 
 			ret = scm_call2(SCM_SIP_FNID(SCM_SVC_INFO,
 					TZ_SVC_BW_PROF_ID), &desc);
-		break;
-		}
-		default: {
-			pr_err("cmd_id 0x%d is not supported by scm_call2.\n",
+			break;
+		default:
+			pr_err("cmd_id %d is not supported by scm_call2.\n",
 						qseos_cmd_id);
 			ret = -EINVAL;
-		}
 		} /*end of switch (qsee_cmd_id)  */
-	break;
-	}
-	default: {
+		break;
+	default:
 		pr_err("svc_id 0x%x is not supported by armv8 scm_call2.\n",
 					svc_id);
 		ret = -EINVAL;
 		break;
-	}
 	} /*end of switch svc_id */
 	return ret;
 }
@@ -176,6 +169,7 @@ static int bw_profiling_get(void __user *argp, struct tz_bw_svc_buf *bwbuf)
 	const int numberofregs = 3;
 	struct profiler_bw_cntrs_req cnt_buf;
 
+	memset(&cnt_buf, 0, sizeof(cnt_buf));
 	bwgetreq = (struct tz_bw_svc_get_req *) &bwbuf->bwreq;
 	/* Allocate memory for get buffer */
 	buf = kzalloc(PAGE_ALIGN(numberofregs * sizeof(uint32_t)), GFP_KERNEL);
@@ -213,10 +207,6 @@ static int bw_profiling_stop(struct tz_bw_svc_buf *bwbuf)
 {
 	struct tz_bw_svc_stop_req *bwstopreq = NULL;
 
-	if (stop_done) {
-		stop_done = 0;
-		return 0;
-	}
 	bwstopreq = (struct tz_bw_svc_stop_req *) &bwbuf->bwreq;
 	/* Populate request data */
 	bwstopreq->cmd_id = TZ_BW_SVC_STOP_ID;
@@ -233,35 +223,28 @@ static int profiler_get_bw_info(void __user *argp)
 
 	ret = copy_from_user(&cnt_buf, argp,
 				sizeof(struct profiler_bw_cntrs_req));
-	if (ret) {
-		pr_err("copy_from_user failed\n");
+	if (ret)
 		return ret;
-	}
 	/* Allocate memory for request */
 	bwbuf = kzalloc(PAGE_ALIGN(sizeof(struct tz_bw_svc_buf)), GFP_KERNEL);
 	if (bwbuf == NULL)
 		return -ENOMEM;
 	switch (cnt_buf.cmd) {
-	case TZ_BW_SVC_START_ID: {
+	case TZ_BW_SVC_START_ID:
 		ret = bw_profiling_start(bwbuf);
 		if (ret)
 			pr_err("bw_profiling_start Failed with ret: %d\n", ret);
-		stop_done = 0;
 		break;
-	}
-	case TZ_BW_SVC_GET_ID: {
-		ret = bw_profiling_get(argp , bwbuf);
+	case TZ_BW_SVC_GET_ID:
+		ret = bw_profiling_get(argp, bwbuf);
 		if (ret)
 			pr_err("bw_profiling_get Failed with ret: %d\n", ret);
 		break;
-	}
-	case TZ_BW_SVC_STOP_ID: {
+	case TZ_BW_SVC_STOP_ID:
 		ret = bw_profiling_stop(bwbuf);
 		if (ret)
 			pr_err("bw_profiling_stop Failed with ret: %d\n", ret);
-		stop_done = 1;
 		break;
-	}
 	default:
 		pr_err("Invalid IOCTL: 0x%x\n", cnt_buf.cmd);
 		ret = -EINVAL;
@@ -346,7 +329,6 @@ static unsigned int convert_cmd(unsigned int cmd)
 long profiler_ioctl(struct file *file, unsigned cmd, unsigned long arg)
 {
 	int ret = 0;
-
 	struct profiler_dev_handle *data = file->private_data;
 	void __user *argp = (void __user *) arg;
 
@@ -361,14 +343,13 @@ long profiler_ioctl(struct file *file, unsigned cmd, unsigned long arg)
 	}
 
 	switch (cmd) {
-	case PROFILER_IOCTL_GET_BW_INFO:{
+	case PROFILER_IOCTL_GET_BW_INFO:
 		atomic_inc(&data->ioctl_count);
 		ret = profiler_get_bw_info(argp);
 		if (ret)
 			pr_err("failed get system bandwidth info: %d\n", ret);
 		atomic_dec(&data->ioctl_count);
 		break;
-	}
 	default:
 		pr_err("Invalid IOCTL: 0x%x\n", cmd);
 		return -EINVAL;
@@ -399,10 +380,8 @@ long compat_profiler_ioctl(struct file *file,
 		err = compat_put_profiler_bw_info(data32, data);
 		return ret ? ret : err;
 	}
-	break;
 	default:
 		return -ENOIOCTLCMD;
-	break;
 	}
 	return 0;
 }
@@ -410,7 +389,7 @@ long compat_profiler_ioctl(struct file *file,
 
 static int profiler_release(struct inode *inode, struct file *file)
 {
-	pr_err("profiler release\n");
+	pr_info("profiler release\n");
 	return 0;
 }
 
@@ -455,7 +434,7 @@ static int profiler_init(void)
 
 	rc = cdev_add(&profiler.cdev, MKDEV(MAJOR(profiler_device_no), 0), 1);
 	if (rc < 0) {
-		pr_err("cdev_add failed %d\n", rc);
+		pr_err("%s: cdev_add failed %d\n", __func__, rc);
 		goto exit_destroy_device;
 	}
 

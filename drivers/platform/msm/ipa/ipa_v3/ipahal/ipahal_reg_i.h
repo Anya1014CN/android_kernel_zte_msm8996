@@ -21,6 +21,9 @@ int ipahal_reg_init(enum ipa_hw_type ipa_hw_type);
 #define IPA_GETFIELD_FROM_REG(reg, shift, mask) \
 		(((reg) & (mask)) >> (shift))
 
+/* IPA_CLKON_CFG register */
+#define IPA_CLKON_CFG_CGC_OPEN_MISC_SHFT 0x3
+#define IPA_CLKON_CFG_CGC_OPEN_MISC_BMSK 0x8
 
 /* IPA_ROUTE register */
 #define IPA_ROUTE_ROUTE_DIS_SHFT 0x0
@@ -315,11 +318,5 @@ int ipahal_reg_init(enum ipa_hw_type ipa_hw_type);
 #define IPA_TX_CFG_TX1_PREFETCH_DISABLE_SHFT_V3_5 (1)
 #define IPA_TX_CFG_PREFETCH_ALMOST_EMPTY_SIZE_BMSK_V3_5 (0x1C)
 #define IPA_TX_CFG_PREFETCH_ALMOST_EMPTY_SIZE_SHFT_V3_5 (2)
-
-/* IPA_IDLE_INDICATION_CFG regiser */
-#define IPA_IDLE_INDICATION_CFG_ENTER_IDLE_DEBOUNCE_THRESH_BMSK_V3_5 (0xffff)
-#define IPA_IDLE_INDICATION_CFG_ENTER_IDLE_DEBOUNCE_THRESH_SHFT_V3_5 (0)
-#define IPA_IDLE_INDICATION_CFG_CONST_NON_IDLE_ENABLE_BMSK_V3_5 (0x10000)
-#define IPA_IDLE_INDICATION_CFG_CONST_NON_IDLE_ENABLE_SHFT_V3_5 (16)
 
 #endif /* _IPAHAL_REG_I_H_ */

@@ -32,7 +32,7 @@
 #define CYCLES_PER_MICRO_SEC_DEFAULT 4915
 #define CCI_MAX_DELAY 1000000
 
-#define CCI_TIMEOUT msecs_to_jiffies(500)
+#define CCI_TIMEOUT msecs_to_jiffies(600)
 
 /* TODO move this somewhere else */
 #define MSM_CCI_DRV_NAME "msm_cci"
@@ -125,7 +125,7 @@ static int32_t msm_cci_set_clk_param(struct cci_device *cci_dev,
 		return 0;
 
 	clk_params = &cci_dev->cci_clk_params[i2c_freq_mode];
-	if (MASTER_0 == master) {
+	if (master == MASTER_0) {
 		msm_camera_io_w_mb(clk_params->hw_thigh << 16 |
 			clk_params->hw_tlow,
 			cci_dev->base + CCI_I2C_M0_SCL_CTL_ADDR);
@@ -140,7 +140,7 @@ static int32_t msm_cci_set_clk_param(struct cci_device *cci_dev,
 		msm_camera_io_w_mb(clk_params->hw_scl_stretch_en << 8 |
 			clk_params->hw_trdhld << 4 | clk_params->hw_tsp,
 			cci_dev->base + CCI_I2C_M0_MISC_CTL_ADDR);
-	} else if (MASTER_1 == master) {
+	} else if (master == MASTER_1) {
 		msm_camera_io_w_mb(clk_params->hw_thigh << 16 |
 			clk_params->hw_tlow,
 			cci_dev->base + CCI_I2C_M1_SCL_CTL_ADDR);
@@ -456,7 +456,7 @@ static void msm_cci_process_half_q(struct cci_device *cci_dev,
 {
 	uint32_t reg_val = 1 << ((master * 2) + queue);
 
-	if (0 == atomic_read(&cci_dev->cci_master_info[master].q_free[queue])) {
+	if (atomic_read(&cci_dev->cci_master_info[master].q_free[queue]) == 0) {
 		msm_cci_load_report_cmd(cci_dev, master, queue);
 		atomic_set(&cci_dev->cci_master_info[master].q_free[queue], 1);
 		msm_camera_io_w_mb(reg_val, cci_dev->base +
@@ -470,7 +470,7 @@ static int32_t msm_cci_process_full_q(struct cci_device *cci_dev,
 {
 	int32_t rc = 0;
 
-	if (1 == atomic_read(&cci_dev->cci_master_info[master].q_free[queue])) {
+	if (atomic_read(&cci_dev->cci_master_info[master].q_free[queue]) == 1) {
 		atomic_set(&cci_dev->cci_master_info[master].
 						done_pending[queue], 1);
 		rc = msm_cci_wait(cci_dev, master, queue);
@@ -507,7 +507,7 @@ static int32_t msm_cci_transfer_end(struct cci_device *cci_dev,
 {
 	int32_t rc = 0;
 
-	if (0 == atomic_read(&cci_dev->cci_master_info[master].q_free[queue])) {
+	if (atomic_read(&cci_dev->cci_master_info[master].q_free[queue]) == 0) {
 		rc = msm_cci_lock_queue(cci_dev, master, queue, 0);
 		if (rc < 0) {
 			pr_err("%s failed line %d\n", __func__, __LINE__);
@@ -685,7 +685,8 @@ static int32_t msm_cci_data_queue(struct cci_device *cci_dev,
 		*			address for a new packet.
 		* MSM_CCI_I2C_WRITE_SEQ : address is continuous, need to keep
 		*			the incremented address for a
-		*			new packet */
+		*			new packet
+		*/
 		if (c_ctrl->cmd == MSM_CCI_I2C_WRITE ||
 			c_ctrl->cmd == MSM_CCI_I2C_WRITE_ASYNC ||
 			c_ctrl->cmd == MSM_CCI_I2C_WRITE_SYNC ||
@@ -726,8 +727,8 @@ static int32_t msm_cci_data_queue(struct cci_device *cci_dev,
 			((i-1) == MSM_CCI_WRITE_DATA_PAYLOAD_SIZE_11) &&
 			cci_dev->support_seq_write && cmd_size > 0 &&
 			free_size > BURST_MIN_FREE_SIZE) {
-				data[0] |= 0xF0;
-				en_seq_write = 1;
+			data[0] |= 0xF0;
+			en_seq_write = 1;
 		} else {
 			data[0] |= ((i-1) << 4);
 			en_seq_write = 0;
@@ -1915,13 +1916,13 @@ static void msm_cci_init_clk_params(struct cci_device *cci_dev)
 
 	for (count = 0; count < I2C_MAX_MODES; count++) {
 
-		if (I2C_STANDARD_MODE == count)
+		if (count == I2C_STANDARD_MODE)
 			src_node = of_find_node_by_name(of_node,
 				"qcom,i2c_standard_mode");
-		else if (I2C_FAST_MODE == count)
+		else if (count == I2C_FAST_MODE)
 			src_node = of_find_node_by_name(of_node,
 				"qcom,i2c_fast_mode");
-		else if (I2C_FAST_PLUS_MODE == count)
+		else if (count == I2C_FAST_PLUS_MODE)
 			src_node = of_find_node_by_name(of_node,
 				"qcom,i2c_fast_plus_mode");
 		else
@@ -2010,6 +2011,7 @@ struct v4l2_subdev *msm_cci_get_subdev(void)
 {
 	return g_cci_subdev;
 }
+EXPORT_SYMBOL(msm_cci_get_subdev);
 
 static int msm_cci_probe(struct platform_device *pdev)
 {

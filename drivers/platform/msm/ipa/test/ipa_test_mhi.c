@@ -868,7 +868,7 @@ static int ipa_test_mhi_suite_teardown(void *priv)
  *
  * To be run during tests
  * 1. MHI init (Ready state)
- * 2. Conditional MHI start and connect (M0 state)
+ * 2. Conditional MHO start and connect (M0 state)
  */
 static int ipa_mhi_test_initialize_driver(bool skip_start_and_conn)
 {
@@ -879,6 +879,7 @@ static int ipa_mhi_test_initialize_driver(bool skip_start_and_conn)
 	struct ipa_mhi_connect_params cons_params;
 	struct ipa_mhi_mmio_register_set *p_mmio;
 	struct ipa_mhi_channel_context_array *p_ch_ctx_array;
+	bool is_dma;
 	u64 phys_addr;
 
 	IPA_UT_LOG("Entry\n");
@@ -909,6 +910,29 @@ static int ipa_mhi_test_initialize_driver(bool skip_start_and_conn)
 		IPA_UT_LOG("timeout waiting for READY event");
 		IPA_UT_TEST_FAIL_REPORT("failed waiting for state ready");
 		return -ETIME;
+	}
+
+	if (ipa_mhi_is_using_dma(&is_dma)) {
+		IPA_UT_LOG("is_dma checkign failed. Is MHI loaded?\n");
+		IPA_UT_TEST_FAIL_REPORT("failed checking using dma");
+		return -EPERM;
+	}
+
+	if (is_dma) {
+		IPA_UT_LOG("init ipa_dma\n");
+		rc = ipa_dma_init();
+		if (rc && rc != -EFAULT) {
+			IPA_UT_LOG("ipa_dma_init failed, %d\n", rc);
+			IPA_UT_TEST_FAIL_REPORT("failed init dma");
+			return rc;
+		}
+		IPA_UT_LOG("enable ipa_dma\n");
+		rc = ipa_dma_enable();
+		if (rc && rc != -EPERM) {
+			IPA_UT_LOG("ipa_dma_enable failed, %d\n", rc);
+			IPA_UT_TEST_FAIL_REPORT("failed enable dma");
+			return rc;
+		}
 	}
 
 	if (!skip_start_and_conn) {
@@ -1332,7 +1356,7 @@ static int ipa_mhi_test_q_transfer_re(struct ipa_mem_buffer *mmio,
 	}
 	if (p_channels[channel_idx].brsmode == IPA_MHI_BURST_MODE_DEFAULT ||
 	    p_channels[channel_idx].brsmode == IPA_MHI_BURST_MODE_ENABLE)
-			num_of_ed_to_queue += 1; /* for OOB/DB mode event */
+		num_of_ed_to_queue += 1; /* for OOB/DB mode event */
 
 	/* First queue EDs */
 	event_ring_index = p_channels[channel_idx].erindex -
@@ -1521,7 +1545,7 @@ static int ipa_mhi_test_suspend(bool force, bool should_success)
 	}
 
 	if (!should_success && rc != -EAGAIN) {
-		IPA_UT_LOG("ipa_mhi_suspend did not return -EAGAIN fail %d\n",
+		IPA_UT_LOG("ipa_mhi_suspenddid not return -EAGAIN fail %d\n",
 			rc);
 		IPA_UT_TEST_FAIL_REPORT("suspend succeeded unexpectedly");
 		return -EFAULT;
@@ -1813,7 +1837,7 @@ static int ipa_mhi_test_create_aggr_open_frame(void)
 	msleep(20);
 
 	aggr_state_active = ipahal_read_reg(IPA_STATE_AGGR_ACTIVE);
-	IPA_UT_LOG("IPA_STATE_AGGR_ACTIVE  0x%u\n", aggr_state_active);
+	IPA_UT_LOG("IPA_STATE_AGGR_ACTIVE  0x%x\n", aggr_state_active);
 	if (aggr_state_active == 0) {
 		IPA_UT_LOG("No aggregation frame open!\n");
 		IPA_UT_TEST_FAIL_REPORT("No aggregation frame open");

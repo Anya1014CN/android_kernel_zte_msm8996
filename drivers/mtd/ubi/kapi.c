@@ -227,9 +227,9 @@ out_unlock:
 out_free:
 	kfree(desc);
 out_put_ubi:
-	ubi_put_device(ubi);
 	ubi_err(ubi, "cannot open device %d, volume %d, error %d",
 		ubi_num, vol_id, err);
+	ubi_put_device(ubi);
 	return ERR_PTR(err);
 }
 EXPORT_SYMBOL_GPL(ubi_open_volume);
@@ -314,7 +314,7 @@ struct ubi_volume_desc *ubi_open_volume_path(const char *pathname, int mode)
 	if (error)
 		return ERR_PTR(error);
 
-	inode = path.dentry->d_inode;
+	inode = d_backing_inode(path.dentry);
 	mod = inode->i_mode;
 	ubi_num = ubi_major2num(imajor(inode));
 	vol_id = iminor(inode) - 1;

@@ -21,12 +21,26 @@
 #include <linux/audit.h>
 #include <linux/syscalls.h>
 #include <linux/fcntl.h>
-#include <linux/aio.h>
 
 #include <asm/uaccess.h>
 #include <asm/ioctls.h>
 
 #include "internal.h"
+
+/*
+ * New pipe buffers will be restricted to this size while the user is exceeding
+ * their pipe buffer quota. The general pipe use case needs at least two
+ * buffers: one for data yet to be read, and one for new data. If this is less
+ * than two, then a write to a non-empty pipe may block even if the pipe is not
+ * full. This can occur with GNU make jobserver or similar uses of pipes as
+ * semaphores: multiple processes may be waiting to write tokens back to the
+ * pipe before reading tokens: https://lore.kernel.org/lkml/1628086770.5rn8p04n6j.none@localhost/.
+ *
+ * Users can reduce their pipe buffers with F_SETPIPE_SZ below this at their
+ * own risk, namely: pipe writes to non-full pipes may block until the pipe is
+ * emptied.
+ */
+#define PIPE_MIN_DEF_BUFFERS 2
 
 /*
  * The max size that a non-root user is allowed to grow the pipe. Can
@@ -179,9 +193,9 @@ EXPORT_SYMBOL(generic_pipe_buf_steal);
  *	in the tee() system call, when we duplicate the buffers in one
  *	pipe into another.
  */
-void generic_pipe_buf_get(struct pipe_inode_info *pipe, struct pipe_buffer *buf)
+bool generic_pipe_buf_get(struct pipe_inode_info *pipe, struct pipe_buffer *buf)
 {
-	page_cache_get(buf->page);
+	return try_get_page(buf->page);
 }
 EXPORT_SYMBOL(generic_pipe_buf_get);
 
@@ -373,18 +387,17 @@ pipe_write(struct kiocb *iocb, struct iov_iter *from)
 		int offset = buf->offset + buf->len;
 
 		if (ops->can_merge && offset + chars <= PAGE_SIZE) {
-			int error = ops->confirm(pipe, buf);
-			if (error)
+			ret = ops->confirm(pipe, buf);
+			if (ret)
 				goto out;
 
 			ret = copy_page_from_iter(buf->page, offset, chars, from);
 			if (unlikely(ret < chars)) {
-				error = -EFAULT;
+				ret = -EFAULT;
 				goto out;
 			}
 			do_wakeup = 1;
-			buf->len += chars;
-			ret = chars;
+			buf->len += ret;
 			if (!iov_iter_count(from))
 				goto out;
 		}
@@ -618,9 +631,12 @@ struct pipe_inode_info *alloc_pipe_info(void)
 		unsigned long pipe_bufs = PIPE_DEF_BUFFERS;
 		struct user_struct *user = get_current_user();
 
+		if (pipe_bufs * PAGE_SIZE > pipe_max_size && !capable(CAP_SYS_RESOURCE))
+			pipe_bufs = pipe_max_size >> PAGE_SHIFT;
+
 		if (!too_many_pipe_buffers_hard(user)) {
 			if (too_many_pipe_buffers_soft(user))
-				pipe_bufs = 1;
+				pipe_bufs = PIPE_MIN_DEF_BUFFERS;
 			pipe->bufs = kzalloc(sizeof(struct pipe_buffer) * pipe_bufs, GFP_KERNEL);
 		}
 
@@ -665,7 +681,7 @@ static struct vfsmount *pipe_mnt __read_mostly;
 static char *pipefs_dname(struct dentry *dentry, char *buffer, int buflen)
 {
 	return dynamic_dname(dentry, buffer, buflen, "pipe:[%lu]",
-				dentry->d_inode->i_ino);
+				d_inode(dentry)->i_ino);
 }
 
 static const struct dentry_operations pipefs_dentry_operations = {
@@ -731,17 +747,20 @@ int create_pipe_files(struct file **res, int flags)
 
 	d_instantiate(path.dentry, inode);
 
-	err = -ENFILE;
 	f = alloc_file(&path, FMODE_WRITE, &pipefifo_fops);
-	if (IS_ERR(f))
+	if (IS_ERR(f)) {
+		err = PTR_ERR(f);
 		goto err_dentry;
+	}
 
 	f->f_flags = O_WRONLY | (flags & (O_NONBLOCK | O_DIRECT));
 	f->private_data = inode->i_pipe;
 
 	res[0] = alloc_file(&path, FMODE_READ, &pipefifo_fops);
-	if (IS_ERR(res[0]))
+	if (IS_ERR(res[0])) {
+		err = PTR_ERR(res[0]);
 		goto err_file;
+	}
 
 	path_get(&path);
 	res[0]->private_data = inode->i_pipe;
@@ -984,9 +1003,7 @@ err:
 const struct file_operations pipefifo_fops = {
 	.open		= fifo_open,
 	.llseek		= no_llseek,
-	.read		= new_sync_read,
 	.read_iter	= pipe_read,
-	.write		= new_sync_write,
 	.write_iter	= pipe_write,
 	.poll		= pipe_poll,
 	.unlocked_ioctl	= pipe_ioctl,
@@ -1001,6 +1018,9 @@ const struct file_operations pipefifo_fops = {
 static long pipe_set_size(struct pipe_inode_info *pipe, unsigned long nr_pages)
 {
 	struct pipe_buffer *bufs;
+
+	if (!nr_pages)
+		return -EINVAL;
 
 	/*
 	 * We can shrink the pipe, if arg >= pipe->nrbufs. Since we don't
@@ -1046,13 +1066,19 @@ static long pipe_set_size(struct pipe_inode_info *pipe, unsigned long nr_pages)
 
 /*
  * Currently we rely on the pipe array holding a power-of-2 number
- * of pages.
+ * of pages. Returns 0 on error.
  */
 static inline unsigned int round_pipe_size(unsigned int size)
 {
 	unsigned long nr_pages;
 
+	if (size < pipe_min_size)
+		size = pipe_min_size;
+
 	nr_pages = (size + PAGE_SIZE - 1) >> PAGE_SHIFT;
+	if (nr_pages == 0)
+		return 0;
+
 	return roundup_pow_of_two(nr_pages) << PAGE_SHIFT;
 }
 
@@ -1063,13 +1089,18 @@ static inline unsigned int round_pipe_size(unsigned int size)
 int pipe_proc_fn(struct ctl_table *table, int write, void __user *buf,
 		 size_t *lenp, loff_t *ppos)
 {
+	unsigned int rounded_pipe_max_size;
 	int ret;
 
 	ret = proc_dointvec_minmax(table, write, buf, lenp, ppos);
 	if (ret < 0 || !write)
 		return ret;
 
-	pipe_max_size = round_pipe_size(pipe_max_size);
+	rounded_pipe_max_size = round_pipe_size(pipe_max_size);
+	if (rounded_pipe_max_size == 0)
+		return -EINVAL;
+
+	pipe_max_size = rounded_pipe_max_size;
 	return ret;
 }
 

@@ -1166,7 +1166,7 @@ static int at76_start_monitor(struct at76_priv *priv)
 	int ret;
 
 	memset(&scan, 0, sizeof(struct at76_req_scan));
-	memset(scan.bssid, 0xff, ETH_ALEN);
+	eth_broadcast_addr(scan.bssid);
 
 	scan.channel = priv->channel;
 	scan.scan_type = SCAN_TYPE_PASSIVE;
@@ -1427,7 +1427,7 @@ static int at76_startup_device(struct at76_priv *priv)
 	at76_wait_completion(priv, CMD_STARTUP);
 
 	/* remove BSSID from previous run */
-	memset(priv->bssid, 0, ETH_ALEN);
+	eth_zero_addr(priv->bssid);
 
 	priv->scanning = false;
 
@@ -1547,7 +1547,7 @@ static inline int at76_guess_freq(struct at76_priv *priv)
 		channel = el[2];
 
 exit:
-	return ieee80211_channel_to_frequency(channel, IEEE80211_BAND_2GHZ);
+	return ieee80211_channel_to_frequency(channel, NL80211_BAND_2GHZ);
 }
 
 static void at76_rx_tasklet(unsigned long param)
@@ -1590,7 +1590,7 @@ static void at76_rx_tasklet(unsigned long param)
 	rx_status.signal = buf->rssi;
 	rx_status.flag |= RX_FLAG_DECRYPTED;
 	rx_status.flag |= RX_FLAG_IV_STRIPPED;
-	rx_status.band = IEEE80211_BAND_2GHZ;
+	rx_status.band = NL80211_BAND_2GHZ;
 	rx_status.freq = at76_guess_freq(priv);
 
 	at76_dbg(DBG_MAC80211, "calling ieee80211_rx_irqsafe(): %d/%d",
@@ -1973,7 +1973,7 @@ static int at76_hw_scan(struct ieee80211_hw *hw,
 	ieee80211_stop_queues(hw);
 
 	memset(&scan, 0, sizeof(struct at76_req_scan));
-	memset(scan.bssid, 0xFF, ETH_ALEN);
+	eth_broadcast_addr(scan.bssid);
 
 	if (req->n_ssids) {
 		scan.scan_type = SCAN_TYPE_ACTIVE;
@@ -2359,9 +2359,9 @@ static int at76_init_new_device(struct at76_priv *priv,
 	priv->hw->wiphy->max_scan_ssids = 1;
 	priv->hw->wiphy->max_scan_ie_len = 0;
 	priv->hw->wiphy->interface_modes = BIT(NL80211_IFTYPE_STATION);
-	priv->hw->wiphy->bands[IEEE80211_BAND_2GHZ] = &at76_supported_band;
-	priv->hw->flags = IEEE80211_HW_RX_INCLUDES_FCS |
-			  IEEE80211_HW_SIGNAL_UNSPEC;
+	priv->hw->wiphy->bands[NL80211_BAND_2GHZ] = &at76_supported_band;
+	ieee80211_hw_set(priv->hw, RX_INCLUDES_FCS);
+	ieee80211_hw_set(priv->hw, SIGNAL_UNSPEC);
 	priv->hw->max_signal = 100;
 
 	SET_IEEE80211_DEV(priv->hw, &interface->dev);
@@ -2582,8 +2582,8 @@ static int __init at76_mod_init(void)
 	if (result < 0)
 		printk(KERN_ERR DRIVER_NAME
 		       ": usb_register failed (status %d)\n", result);
-
-	led_trigger_register_simple("at76_usb-tx", &ledtrig_tx);
+	else
+		led_trigger_register_simple("at76_usb-tx", &ledtrig_tx);
 	return result;
 }
 

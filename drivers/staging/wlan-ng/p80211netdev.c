@@ -232,7 +232,7 @@ static int p80211_convert_to_ether(wlandevice_t *wlandev, struct sk_buff *skb)
 	struct p80211_hdr_a3 *hdr;
 
 	hdr = (struct p80211_hdr_a3 *) skb->data;
-	if (p80211_rx_typedrop(wlandev, hdr->fc))
+	if (p80211_rx_typedrop(wlandev, le16_to_cpu(hdr->fc)))
 		return CONV_TO_ETHER_SKIPPED;
 
 	/* perform mcast filtering: allow my local address through but reject
@@ -358,7 +358,7 @@ static int p80211knetdev_hard_start_xmit(struct sk_buff *skb,
 		 * and return success .
 		 * TODO: we need a saner way to handle this
 		 */
-		if (skb->protocol != ETH_P_80211_RAW) {
+		if (be16_to_cpu(skb->protocol) != ETH_P_80211_RAW) {
 			netif_start_queue(wlandev->netdev);
 			netdev_notice(netdev, "Tx attempt prior to association, frame dropped.\n");
 			netdev->stats.tx_dropped++;
@@ -369,7 +369,7 @@ static int p80211knetdev_hard_start_xmit(struct sk_buff *skb,
 	}
 
 	/* Check for raw transmits */
-	if (skb->protocol == ETH_P_80211_RAW) {
+	if (be16_to_cpu(skb->protocol) == ETH_P_80211_RAW) {
 		if (!capable(CAP_NET_ADMIN)) {
 			result = 1;
 			goto failed;

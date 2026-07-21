@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -20,6 +20,7 @@
 #include <linux/of_device.h>
 #include <linux/of.h>
 
+#define MAX_SPECIAL_SUPPORT_SIZE 10
 
 enum msm_camera_device_type_t {
 	MSM_CAMERA_I2C_DEVICE,
@@ -43,7 +44,6 @@ enum msm_bus_perf_setting {
 
 struct msm_camera_slave_info {
 	uint16_t sensor_slave_addr;
-	uint16_t sensor_bakeup_slave_addr;
 	uint16_t sensor_id_reg_addr;
 	uint16_t sensor_id;
 	uint16_t sensor_id_mask;
@@ -69,7 +69,7 @@ struct msm_cam_clk_setting {
 };
 
 struct v4l2_subdev_info {
-	enum v4l2_mbus_pixelcode code;
+	uint32_t code;
 	enum v4l2_colorspace colorspace;
 	uint16_t fmt;
 	uint16_t order;
@@ -86,8 +86,6 @@ struct msm_camera_gpio_conf {
 	struct gpio *cam_gpio_common_tbl;
 	uint8_t cam_gpio_common_tbl_size;
 	struct gpio *cam_gpio_req_tbl;
-	struct msm_gpio_set_tbl *cam_gpio_set_tbl;
-	uint8_t cam_gpio_set_tbl_size;
 	uint8_t cam_gpio_req_tbl_size;
 	uint32_t gpio_no_mux;
 	uint32_t *camera_off_table;
@@ -106,7 +104,6 @@ struct msm_camera_power_ctrl_t {
 	struct msm_camera_gpio_conf *gpio_conf;
 	struct camera_vreg_t *cam_vreg;
 	int num_vreg;
-	int ois_en_gpio;
 	struct msm_camera_i2c_conf *i2c_conf;
 	struct clk **clk_ptr;
 	struct msm_cam_clk_info *clk_info;
@@ -150,13 +147,10 @@ struct msm_camera_sensor_board_info {
 	const char *sensor_name;
 	const char *eeprom_name;
 	const char *actuator_name;
-	const char *sensor_module_name;
-	const char *chromtix_lib_name;
-	const char *default_chromtix_lib_name;
-	uint32_t eeprom_checksum;
-	uint32_t eeprom_valid_flag;
-	const char *flash_name;
 	const char *ois_name;
+	const char *flash_name;
+	const char *special_support_sensors[MAX_SPECIAL_SUPPORT_SIZE];
+	int32_t special_support_size;
 	struct msm_camera_slave_info *slave_info;
 	struct msm_camera_csi_lane_params *csi_lane_params;
 	struct msm_camera_sensor_strobe_flash_data *strobe_flash_data;

@@ -1,4 +1,4 @@
-/* Copyright (c) 2015-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2015-2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -283,7 +283,7 @@ static int msm_jpegdma_queue_setup(struct vb2_queue *q,
 {
 	struct jpegdma_ctx *ctx = vb2_get_drv_priv(q);
 
-	if (NULL == fmt) {
+	if (fmt == NULL) {
 		switch (q->type) {
 		case V4L2_BUF_TYPE_VIDEO_OUTPUT:
 			sizes[0] = ctx->format_out.fmt.pix.sizeimage;
@@ -795,8 +795,12 @@ static int msm_jpegdma_dqbuf(struct file *file,
 	void *fh, struct v4l2_buffer *buf)
 {
 	struct jpegdma_ctx *ctx = msm_jpegdma_ctx_from_fh(fh);
+	int ret;
 
-	return v4l2_m2m_dqbuf(file, ctx->m2m_ctx, buf);
+	mutex_lock(&ctx->lock);
+	ret = v4l2_m2m_dqbuf(file, ctx->m2m_ctx, buf);
+	mutex_unlock(&ctx->lock);
+	return ret;
 }
 
 /*
@@ -811,10 +815,12 @@ static int msm_jpegdma_streamon(struct file *file,
 	struct jpegdma_ctx *ctx = msm_jpegdma_ctx_from_fh(fh);
 	int ret;
 
-	if (!msm_jpegdma_config_ok(ctx))
-		return -EINVAL;
-
 	mutex_lock(&ctx->lock);
+	if (!msm_jpegdma_config_ok(ctx)) {
+		mutex_unlock(&ctx->lock);
+		return -EINVAL;
+	}
+
 
 	ret = v4l2_m2m_streamon(file, ctx->m2m_ctx, buf_type);
 	if (ret < 0)
@@ -1329,7 +1335,7 @@ static int jpegdma_device_remove(struct platform_device *pdev)
 	struct msm_jpegdma_device *dma;
 
 	dma = platform_get_drvdata(pdev);
-	if (NULL == dma) {
+	if (dma == NULL) {
 		dev_err(&pdev->dev, "Can not get jpeg dma drvdata\n");
 		return 0;
 	}
@@ -1380,3 +1386,4 @@ static void __exit msm_jpegdma_exit_module(void)
 module_init(msm_jpegdma_init_module);
 module_exit(msm_jpegdma_exit_module);
 MODULE_DESCRIPTION("MSM JPEG DMA driver");
+MODULE_LICENSE("GPL v2");

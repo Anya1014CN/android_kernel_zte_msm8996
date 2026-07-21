@@ -40,7 +40,6 @@ struct msm_camera_sensor_slave_info32 {
 	struct msm_sensor_power_setting_array32 power_setting_array;
 	uint8_t  is_init_params_valid;
 	struct msm_sensor_init_params sensor_init_params;
-	uint16_t bakeup_slave_addr;
 	enum msm_sensor_output_format_t output_format;
 	uint8_t bypass_video_node_creation;
 };
@@ -83,6 +82,15 @@ struct msm_ir_led_cfg_data_t32 {
 
 struct msm_ir_cut_cfg_data_t32 {
 	enum msm_ir_cut_cfg_type_t cfg_type;
+};
+
+struct msm_laser_led_cfg_data_t32 {
+	enum msm_laser_led_cfg_type_t cfg_type;
+	compat_uptr_t                 setting;
+	compat_uptr_t                 debug_reg;
+	uint32_t                      debug_reg_size;
+	uint16_t                      i2c_addr;
+	enum i2c_freq_mode_t          i2c_freq_mode;
 };
 
 struct eeprom_read_t32 {
@@ -187,8 +195,6 @@ struct msm_actuator_cfg_data32 {
 		struct msm_actuator_get_info_t get_info;
 		struct msm_actuator_set_position_t setpos;
 		enum af_camera_name cam_name;
-		struct msm_actuator_cci_params_t cci_info;
-		struct reg_settings_t reg_info;
 	} cfg;
 };
 
@@ -279,7 +285,10 @@ struct msm_flash_cfg_data_t32 {
 
 #define VIDIOC_MSM_IR_CUT_CFG32 \
 	_IOWR('V', BASE_VIDIOC_PRIVATE + 15, struct msm_ir_cut_cfg_data_t32)
-#endif
+
+#define VIDIOC_MSM_LASER_LED_CFG32 \
+	_IOWR('V', BASE_VIDIOC_PRIVATE + 16, struct msm_laser_led_cfg_data_t32)
 
 #endif
 
+#endif

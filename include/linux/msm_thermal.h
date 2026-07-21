@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2016,2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -54,6 +54,7 @@ struct msm_thermal_data {
 	uint32_t freq_limit;
 	int32_t vdd_rstr_temp_degC;
 	int32_t vdd_rstr_temp_hyst_degC;
+	int32_t vdd_rstr_sensor_id;
 	int32_t vdd_mx_min;
 	int32_t vdd_cx_min;
 	int32_t psm_temp_degC;
@@ -153,6 +154,8 @@ struct device_clnt_data {
 };
 
 #ifdef CONFIG_THERMAL_MONITOR
+extern int msm_thermal_ioctl_init(void);
+extern void msm_thermal_ioctl_cleanup(void);
 extern int msm_thermal_init(struct msm_thermal_data *pdata);
 extern int msm_thermal_device_init(void);
 extern int msm_thermal_set_frequency(uint32_t cpu, uint32_t freq,
@@ -253,6 +256,15 @@ extern int devmgr_client_request_mitigation(struct device_clnt_data *clnt,
 extern void devmgr_unregister_mitigation_client(
 					struct device *dev,
 					struct device_clnt_data *clnt);
+#ifdef CONFIG_QCOM_THERMAL_LIMITS_DCVS
+extern int msm_lmh_dcvsh_sw_notify(int cpu);
+#else
+static inline int msm_lmh_dcvsh_sw_notify(int cpu)
+{
+	return -ENODEV;
+}
+#endif
+
 #else
 static inline int msm_thermal_init(struct msm_thermal_data *pdata)
 {
@@ -327,6 +339,10 @@ static inline void devmgr_unregister_mitigation_client(
 					struct device *dev,
 					struct device_clnt_data *clnt)
 {
+}
+static inline int msm_lmh_dcvsh_sw_notify(int cpu)
+{
+	return -ENODEV;
 }
 #endif
 

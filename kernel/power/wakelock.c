@@ -17,17 +17,9 @@
 #include <linux/list.h>
 #include <linux/rbtree.h>
 #include <linux/slab.h>
+#include <linux/workqueue.h>
 
 #include "power.h"
-/*zte_pm add for sync*/
-#include <linux/syscalls.h>
-#include <linux/suspend.h>
-
-static int suspend_sys_sync_count;
-static DEFINE_SPINLOCK(suspend_sys_sync_lock);
-static struct workqueue_struct *suspend_sys_sync_work_queue;
-static DECLARE_COMPLETION(suspend_sys_sync_comp);
-/*zte_pm add for sync*/
 
 static DEFINE_MUTEX(wakelocks_lock);
 
@@ -40,48 +32,25 @@ struct wakelock {
 #endif
 };
 
-/*zte_pm add for sync*/
-static int __init sys_sync_queue_init(void)
-{
-	int ret = 0;
-
-	suspend_sys_sync_work_queue =
-		create_singlethread_workqueue("suspend_sys_sync");
-	if (suspend_sys_sync_work_queue == NULL)
-		ret = -ENOMEM;
-
-	return ret;
-}
-
-static void  __exit sys_sync_queue_exit(void)
-{
-	destroy_workqueue(suspend_sys_sync_work_queue);
-}
-
-
 static struct rb_root wakelocks_tree = RB_ROOT;
 
 ssize_t pm_show_wakelocks(char *buf, bool show_active)
 {
 	struct rb_node *node;
 	struct wakelock *wl;
-	char *str = buf;
-	char *end = buf + PAGE_SIZE;
+	int len = 0;
 
 	mutex_lock(&wakelocks_lock);
 
 	for (node = rb_first(&wakelocks_tree); node; node = rb_next(node)) {
 		wl = rb_entry(node, struct wakelock, node);
 		if (wl->ws.active == show_active)
-			str += scnprintf(str, end - str, "%s ", wl->name);
+			len += sysfs_emit_at(buf, len, "%s ", wl->name);
 	}
-	if (str > buf)
-		str--;
-
-	str += scnprintf(str, end - str, "\n");
+	len += sysfs_emit_at(buf, len, "\n");
 
 	mutex_unlock(&wakelocks_lock);
-	return (str - buf);
+	return len;
 }
 
 #if CONFIG_PM_WAKELOCKS_LIMIT > 0
@@ -97,21 +66,23 @@ static inline void increment_wakelocks_number(void)
 	number_of_wakelocks++;
 }
 
-static inline __maybe_unused void decrement_wakelocks_number(void)
+static inline void decrement_wakelocks_number(void)
 {
 	number_of_wakelocks--;
 }
 #else /* CONFIG_PM_WAKELOCKS_LIMIT = 0 */
 static inline bool wakelocks_limit_exceeded(void) { return false; }
 static inline void increment_wakelocks_number(void) {}
-static inline __maybe_unused void decrement_wakelocks_number(void) {}
+static inline void decrement_wakelocks_number(void) {}
 #endif /* CONFIG_PM_WAKELOCKS_LIMIT */
 
 #ifdef CONFIG_PM_WAKELOCKS_GC
 #define WL_GC_COUNT_MAX	100
 #define WL_GC_TIME_SEC	300
 
+static void __wakelocks_gc(struct work_struct *work);
 static LIST_HEAD(wakelocks_lru_list);
+static DECLARE_WORK(wakelock_work, __wakelocks_gc);
 static unsigned int wakelocks_gc_count;
 
 static inline void wakelocks_lru_add(struct wakelock *wl)
@@ -124,13 +95,12 @@ static inline void wakelocks_lru_most_recent(struct wakelock *wl)
 	list_move(&wl->lru, &wakelocks_lru_list);
 }
 
-static void wakelocks_gc(void)
+static void __wakelocks_gc(struct work_struct *work)
 {
 	struct wakelock *wl, *aux;
 	ktime_t now;
 
-	if (++wakelocks_gc_count <= WL_GC_COUNT_MAX)
-		return;
+	mutex_lock(&wakelocks_lock);
 
 	now = ktime_get();
 	list_for_each_entry_safe_reverse(wl, aux, &wakelocks_lru_list, lru) {
@@ -155,6 +125,16 @@ static void wakelocks_gc(void)
 		}
 	}
 	wakelocks_gc_count = 0;
+
+	mutex_unlock(&wakelocks_lock);
+}
+
+static void wakelocks_gc(void)
+{
+	if (++wakelocks_gc_count <= WL_GC_COUNT_MAX)
+		return;
+
+	schedule_work(&wakelock_work);
 }
 #else /* !CONFIG_PM_WAKELOCKS_GC */
 static inline void wakelocks_lru_add(struct wakelock *wl) {}
@@ -294,72 +274,3 @@ int pm_wake_unlock(const char *buf)
 	mutex_unlock(&wakelocks_lock);
 	return ret;
 }
-
-/*zte_pm add for sync- begin*/
-static void suspend_sys_sync(struct work_struct *work)
-{
-	pr_info("PM: Syncing filesystems(OEM)...\n");
-
-	sys_sync();
-
-	pr_info("sync done(OEM).\n");
-
-	spin_lock(&suspend_sys_sync_lock);
-	suspend_sys_sync_count--;
-	spin_unlock(&suspend_sys_sync_lock);
-}
-static DECLARE_WORK(suspend_sys_sync_work, suspend_sys_sync);
-
-void suspend_sys_sync_queue(void)
-{
-	int ret;
-
-	spin_lock(&suspend_sys_sync_lock);
-	ret = queue_work(suspend_sys_sync_work_queue, &suspend_sys_sync_work);
-	if (ret)
-		suspend_sys_sync_count++;
-	spin_unlock(&suspend_sys_sync_lock);
-}
-
-static bool suspend_sys_sync_abort;
-static void suspend_sys_sync_handler(unsigned long);
-static DEFINE_TIMER(suspend_sys_sync_timer, suspend_sys_sync_handler, 0, 0);
-/* value should be less then half of input event wake lock timeout value
- * which is currently set to 5*HZ (see drivers/input/evdev.c)
- */
-#define SUSPEND_SYS_SYNC_TIMEOUT (HZ/4)
-static void suspend_sys_sync_handler(unsigned long arg)
-{
-	if (suspend_sys_sync_count == 0) {
-		complete(&suspend_sys_sync_comp);
-	} else if (pm_wakeup_pending()) {
-		suspend_sys_sync_abort = true;
-		complete(&suspend_sys_sync_comp);
-	} else {
-		mod_timer(&suspend_sys_sync_timer, jiffies +
-						SUSPEND_SYS_SYNC_TIMEOUT);
-	}
-}
-
-int suspend_sys_sync_wait(void)
-{
-	suspend_sys_sync_abort = false;
-	/*ZTE add,presistently sync in each (HZ/4)*jiffies,avoid exit */
-	pm_wakeup_clear();
-
-	if (suspend_sys_sync_count != 0) {
-		mod_timer(&suspend_sys_sync_timer, jiffies +
-				SUSPEND_SYS_SYNC_TIMEOUT);
-		wait_for_completion(&suspend_sys_sync_comp);
-	}
-	if (suspend_sys_sync_abort) {
-		pr_info("suspend aborted....while waiting for sys_sync(OEM)\n");
-		return -EAGAIN;
-	}
-
-	return 0;
-}
-
-core_initcall(sys_sync_queue_init);
-module_exit(sys_sync_queue_exit);
-/*zte_pm add for sync-end*/

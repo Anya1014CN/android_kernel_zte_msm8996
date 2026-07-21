@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -21,6 +21,7 @@
 #include <linux/videodev2.h>
 #include <media/v4l2-device.h>
 #include <media/msm_ba.h>
+#include <media/adv7481.h>
 
 #include "msm_ba_internal.h"
 #include "msm_ba_debug.h"
@@ -69,54 +70,6 @@ int msm_ba_querycap(void *instance, struct v4l2_capability *cap)
 }
 EXPORT_SYMBOL(msm_ba_querycap);
 
-int msm_ba_g_priority(void *instance, enum v4l2_priority *prio)
-{
-	struct msm_ba_inst *inst = instance;
-	struct msm_ba_input *ba_input = NULL;
-	int rc = 0;
-
-	if (!inst || !prio) {
-		dprintk(BA_ERR,
-			"Invalid prio, inst = 0x%pK, prio = 0x%pK", inst, prio);
-		return -EINVAL;
-	}
-
-	ba_input = msm_ba_find_input(inst->sd_input.index);
-	if (!ba_input) {
-		dprintk(BA_ERR, "Could not find input index: %d",
-				inst->sd_input.index);
-		return -EINVAL;
-	}
-	*prio = ba_input->prio;
-
-	return rc;
-}
-EXPORT_SYMBOL(msm_ba_g_priority);
-
-int msm_ba_s_priority(void *instance, enum v4l2_priority prio)
-{
-	struct msm_ba_inst *inst = instance;
-	struct msm_ba_input *ba_input = NULL;
-	int rc = 0;
-
-	dprintk(BA_DBG, "Enter %s, prio: %d", __func__, prio);
-
-	if (!inst)
-		return -EINVAL;
-
-	ba_input = msm_ba_find_input(inst->sd_input.index);
-	if (!ba_input) {
-		dprintk(BA_ERR, "Could not find input index: %d",
-				inst->sd_input.index);
-		return -EINVAL;
-	}
-	ba_input->prio = prio;
-	inst->input_prio = prio;
-
-	return rc;
-}
-EXPORT_SYMBOL(msm_ba_s_priority);
-
 int msm_ba_s_parm(void *instance, struct v4l2_streamparm *a)
 {
 	struct msm_ba_inst *inst = instance;
@@ -145,8 +98,8 @@ int msm_ba_enum_input(void *instance, struct v4l2_input *input)
 		input->type = V4L2_INPUT_TYPE_CAMERA;
 		input->std = V4L2_STD_ALL;
 		strlcpy(input->name, ba_input->name, sizeof(input->name));
-		if (BA_INPUT_HDMI == ba_input->input_type ||
-			BA_INPUT_MHL == ba_input->input_type)
+		if (ba_input->input_type == BA_INPUT_HDMI ||
+			ba_input->input_type == BA_INPUT_MHL)
 			input->capabilities = V4L2_IN_CAP_CUSTOM_TIMINGS;
 		else
 			input->capabilities = V4L2_IN_CAP_STD;
@@ -169,8 +122,8 @@ int msm_ba_g_input(void *instance, unsigned int *index)
 		/* First find current input */
 		ba_input = msm_ba_find_input(inst->sd_input.index);
 		if (ba_input) {
-			if (BA_INPUT_USERTYPE_KERNEL ==
-				ba_input->input_user_type) {
+			if (ba_input->input_user_type ==
+				BA_INPUT_USERTYPE_KERNEL) {
 				inst->sd_input.index++;
 				continue;
 			}
@@ -210,8 +163,7 @@ int msm_ba_s_input(void *instance, unsigned int index)
 		return -EINVAL;
 	}
 	if (ba_input->in_use &&
-		ba_input->prio == V4L2_PRIORITY_RECORD &&
-		ba_input->prio != inst->input_prio) {
+		inst->event_handler.prio == V4L2_PRIORITY_RECORD) {
 		dprintk(BA_WARN, "Input %d in use", index);
 		return -EBUSY;
 	}
@@ -354,7 +306,7 @@ int msm_ba_g_fmt(void *instance, struct v4l2_format *f)
 	struct msm_ba_input *ba_input = NULL;
 	v4l2_std_id new_std = V4L2_STD_UNKNOWN;
 	struct v4l2_dv_timings sd_dv_timings;
-	struct v4l2_mbus_framefmt sd_mbus_fmt;
+	struct v4l2_subdev_format sd_fmt;
 	int rc = 0;
 
 	if (!inst || !f)
@@ -371,7 +323,7 @@ int msm_ba_g_fmt(void *instance, struct v4l2_format *f)
 				inst->sd_input.index);
 		return -EINVAL;
 	}
-	if (BA_INPUT_HDMI != ba_input->input_type) {
+	if (ba_input->input_type != BA_INPUT_HDMI) {
 		rc = v4l2_subdev_call(sd, video, querystd, &new_std);
 		if (rc) {
 			dprintk(BA_ERR, "querystd failed %d for sd: %s",
@@ -388,29 +340,30 @@ int msm_ba_g_fmt(void *instance, struct v4l2_format *f)
 		}
 	}
 
-	rc = v4l2_subdev_call(sd, video, g_mbus_fmt, &sd_mbus_fmt);
+	rc = v4l2_subdev_call(sd, pad, get_fmt, NULL, &sd_fmt);
 	if (rc) {
-		dprintk(BA_ERR, "g_mbus_fmt failed %d for sd: %s",
+		dprintk(BA_ERR, "get_fmt failed %d for sd: %s",
 				rc, sd->name);
 	} else {
-		f->fmt.pix.height = sd_mbus_fmt.height;
-		f->fmt.pix.width = sd_mbus_fmt.width;
-		switch (sd_mbus_fmt.code) {
-		case V4L2_MBUS_FMT_YUYV8_2X8:
+		f->fmt.pix.height = sd_fmt.format.height;
+		f->fmt.pix.width = sd_fmt.format.width;
+		f->fmt.pix.field = sd_fmt.format.field;
+		switch (sd_fmt.format.code) {
+		case MEDIA_BUS_FMT_YUYV8_2X8:
 			f->fmt.pix.pixelformat = V4L2_PIX_FMT_YUYV;
 			break;
-		case V4L2_MBUS_FMT_YVYU8_2X8:
+		case MEDIA_BUS_FMT_YVYU8_2X8:
 			f->fmt.pix.pixelformat = V4L2_PIX_FMT_YVYU;
 			break;
-		case V4L2_MBUS_FMT_VYUY8_2X8:
+		case MEDIA_BUS_FMT_VYUY8_2X8:
 			f->fmt.pix.pixelformat = V4L2_PIX_FMT_VYUY;
 			break;
-		case V4L2_MBUS_FMT_UYVY8_2X8:
+		case MEDIA_BUS_FMT_UYVY8_2X8:
 			f->fmt.pix.pixelformat = V4L2_PIX_FMT_UYVY;
 			break;
 		default:
 			dprintk(BA_ERR, "Unknown sd_mbus_fmt.code 0x%x",
-				sd_mbus_fmt.code);
+				sd_fmt.format.code);
 			f->fmt.pix.pixelformat = V4L2_PIX_FMT_UYVY;
 			break;
 		}
@@ -604,6 +557,60 @@ long msm_ba_private_ioctl(void *instance, int cmd, void *arg)
 		}
 	}
 		break;
+	case VIDIOC_G_CSI_PARAMS: {
+		dprintk(BA_DBG, "VIDIOC_G_CSI_PARAMS");
+		sd = inst->sd;
+		if (!sd) {
+			dprintk(BA_ERR, "No sd registered");
+			return -EINVAL;
+		}
+		if (arg) {
+			rc = v4l2_subdev_call(sd, core, ioctl, cmd, arg);
+			if (rc)
+				dprintk(BA_ERR, "%s failed: %ld on cmd: 0x%x",
+					__func__, rc, cmd);
+		} else {
+			dprintk(BA_ERR, "%s: NULL argument provided", __func__);
+			rc = -EINVAL;
+		}
+	}
+		break;
+	case VIDIOC_G_AVI_INFOFRAME: {
+		dprintk(BA_DBG, "VIDIOC_G_AVI_INFOFRAME\n");
+		sd = inst->sd;
+		if (!sd) {
+			dprintk(BA_ERR, "No sd registered");
+			return -EINVAL;
+		}
+		if (arg) {
+			rc = v4l2_subdev_call(sd, core, ioctl, cmd, arg);
+			if (rc)
+				dprintk(BA_ERR, "%s failed: %ld on cmd: 0x%x",
+					__func__, rc, cmd);
+		} else {
+			dprintk(BA_ERR, "%s: NULL argument provided", __func__);
+			rc = -EINVAL;
+		}
+	}
+		break;
+	case VIDIOC_G_FIELD_INFO: {
+		dprintk(BA_DBG, "VIDIOC_G_FIELD_INFO");
+		sd = inst->sd;
+		if (!sd) {
+			dprintk(BA_ERR, "No sd registered");
+			return -EINVAL;
+		}
+		if (arg) {
+			rc = v4l2_subdev_call(sd, core, ioctl, cmd, arg);
+			if (rc)
+				dprintk(BA_ERR, "%s failed: %ld on cmd: 0x%x",
+					 __func__, rc, cmd);
+		} else {
+			dprintk(BA_ERR, "%s: NULL argument provided", __func__);
+			rc = -EINVAL;
+		}
+	}
+		break;
 	default:
 		dprintk(BA_WARN, "Not a typewriter! Command: 0x%x", cmd);
 		rc = -ENOTTY;
@@ -622,7 +629,7 @@ int msm_ba_save_restore_input(void *instance, enum msm_ba_save_restore_ip sr)
 	if (!inst)
 		return -EINVAL;
 
-	if (BA_SR_RESTORE_IP == sr &&
+	if (sr == BA_SR_RESTORE_IP &&
 		inst->restore) {
 		dprintk(BA_DBG, "Restoring input: %d",
 			inst->saved_input);
@@ -643,7 +650,7 @@ int msm_ba_save_restore_input(void *instance, enum msm_ba_save_restore_ip sr)
 		inst->saved_input = BA_IP_MAX;
 		dprintk(BA_DBG, "Stream on from save restore");
 		rc = msm_ba_streamon(inst, V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE);
-	} else if (BA_SR_SAVE_IP == sr) {
+	} else if (sr == BA_SR_SAVE_IP) {
 		ba_input = msm_ba_find_input(inst->sd_input.index);
 		if (ba_input == NULL) {
 			dprintk(BA_ERR, "Could not find input %d",
@@ -667,7 +674,7 @@ int msm_ba_save_restore_input(void *instance, enum msm_ba_save_restore_ip sr)
 }
 EXPORT_SYMBOL(msm_ba_save_restore_input);
 
-void msm_ba_release_subdev_node(struct video_device *vdev)
+static void msm_ba_release_subdev_node(struct video_device *vdev)
 {
 	struct v4l2_subdev *sd = video_get_drvdata(vdev);
 
@@ -696,7 +703,7 @@ static int msm_ba_register_v4l2_subdev(struct v4l2_device *v4l2_dev,
 	}
 	if (sd->flags & V4L2_SUBDEV_FL_HAS_DEVNODE) {
 		vdev = video_device_alloc();
-		if (NULL == vdev) {
+		if (vdev == NULL) {
 			dprintk(BA_ERR, "%s Not enough memory", __func__);
 			return -ENOMEM;
 		}
@@ -713,8 +720,8 @@ static int msm_ba_register_v4l2_subdev(struct v4l2_device *v4l2_dev,
 			kfree(vdev);
 		} else {
 #if defined(CONFIG_MEDIA_CONTROLLER)
-			sd->entity.info.v4l.major = VIDEO_MAJOR;
-			sd->entity.info.v4l.minor = vdev->minor;
+			sd->entity.info.dev.major = VIDEO_MAJOR;
+			sd->entity.info.dev.minor = vdev->minor;
 			sd->entity.name = video_device_node_name(vdev);
 #endif
 			sd->devnode = vdev;
@@ -861,6 +868,11 @@ void *msm_ba_open(const struct msm_ba_ext_ops *ext_ops)
 
 	dev_ctxt = get_ba_dev();
 
+	if (!dev_ctxt) {
+		dprintk(BA_ERR, "Failed to get ba dev");
+		return NULL;
+	}
+
 	inst = kzalloc(sizeof(*inst), GFP_KERNEL);
 
 	if (!inst) {
@@ -893,7 +905,7 @@ void *msm_ba_open(const struct msm_ba_ext_ops *ext_ops)
 	dev_ctxt->state = BA_DEV_INIT_DONE;
 	inst->state = MSM_BA_DEV_INIT_DONE;
 	inst->sd_input.index = 0;
-	inst->input_prio = V4L2_PRIORITY_DEFAULT;
+	inst->event_handler.prio = V4L2_PRIORITY_DEFAULT;
 
 	inst->debugfs_root =
 		msm_ba_debugfs_init_inst(inst, dev_ctxt->debugfs_root);

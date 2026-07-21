@@ -18,6 +18,7 @@
 #include <linux/bootmem.h>
 #include <linux/ctype.h>
 #include <linux/ioport.h>
+#include <asm/diag.h>
 #include <asm/page.h>
 #include <asm/pgtable.h>
 #include <asm/ebcdic.h>
@@ -51,7 +52,6 @@ struct qout64 {
 	struct qrange range[6];
 };
 
-#ifdef CONFIG_64BIT
 struct qrange_old {
 	unsigned int start; /* last byte type */
 	unsigned int end;   /* last byte reserved */
@@ -65,7 +65,6 @@ struct qout64_old {
 	int segrcnt;
 	struct qrange_old range[6];
 };
-#endif
 
 struct qin64 {
 	char qopcode;
@@ -80,7 +79,7 @@ struct qin64 {
 struct dcss_segment {
 	struct list_head list;
 	char dcss_name[8];
-	char res_name[15];
+	char res_name[16];
 	unsigned long start_addr;
 	unsigned long end;
 	atomic_t ref_count;
@@ -103,7 +102,6 @@ static int scode_set;
 static int
 dcss_set_subcodes(void)
 {
-#ifdef CONFIG_64BIT
 	char *name = kmalloc(8 * sizeof(char), GFP_KERNEL | GFP_DMA);
 	unsigned long rx, ry;
 	int rc;
@@ -115,6 +113,7 @@ dcss_set_subcodes(void)
 	ry = DCSS_FINDSEGX;
 
 	strcpy(name, "dummy");
+	diag_stat_inc(DIAG_STAT_X064);
 	asm volatile(
 		"	diag	%0,%1,0x64\n"
 		"0:	ipm	%2\n"
@@ -135,7 +134,6 @@ dcss_set_subcodes(void)
 		segext_scode = DCSS_SEGEXTX;
 		return 0;
 	}
-#endif
 	/* Diag x'64' new subcodes are not supported, set to old subcodes */
 	loadshr_scode = DCSS_LOADNOLY;
 	loadnsr_scode = DCSS_LOADNSR;
@@ -208,8 +206,8 @@ dcss_diag(int *func, void *parameter,
 	rx = (unsigned long) parameter;
 	ry = (unsigned long) *func;
 
-#ifdef CONFIG_64BIT
 	/* 64-bit Diag x'64' new subcode, keep in 64-bit addressing mode */
+	diag_stat_inc(DIAG_STAT_X064);
 	if (*func > DCSS_SEGEXT)
 		asm volatile(
 			"	diag	%0,%1,0x64\n"
@@ -225,13 +223,6 @@ dcss_diag(int *func, void *parameter,
 			"	ipm	%2\n"
 			"	srl	%2,28\n"
 			: "+d" (rx), "+d" (ry), "=d" (rc) : : "cc");
-#else
-	asm volatile(
-		"	diag	%0,%1,0x64\n"
-		"	ipm	%2\n"
-		"	srl	%2,28\n"
-		: "+d" (rx), "+d" (ry), "=d" (rc) : : "cc");
-#endif
 	*ret1 = rx;
 	*ret2 = ry;
 	return rc;
@@ -281,7 +272,6 @@ query_segment_type (struct dcss_segment *seg)
 		goto out_free;
 	}
 
-#ifdef CONFIG_64BIT
 	/* Only old format of output area of Diagnose x'64' is supported,
 	   copy data for the new format. */
 	if (segext_scode == DCSS_SEGEXT) {
@@ -307,7 +297,6 @@ query_segment_type (struct dcss_segment *seg)
 		}
 		kfree(qout_old);
 	}
-#endif
 	if (qout->segcnt > 6) {
 		rc = -EOPNOTSUPP;
 		goto out_free;
@@ -445,7 +434,7 @@ __segment_load (char *name, int do_nonshared, unsigned long *addr, unsigned long
 	memcpy(&seg->res_name, seg->dcss_name, 8);
 	EBCASC(seg->res_name, 8);
 	seg->res_name[8] = '\0';
-	strncat(seg->res_name, " (DCSS)", 7);
+	strlcat(seg->res_name, " (DCSS)", sizeof(seg->res_name));
 	seg->res->name = seg->res_name;
 	rc = seg->vm_segtype;
 	if (rc == SEG_TYPE_SC ||

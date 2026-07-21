@@ -148,10 +148,10 @@ static int rxrpc_preparse_xdr_rxkad(struct key_preparsed_payload *prep,
 		       token->kad->ticket[6], token->kad->ticket[7]);
 
 	/* count the number of tokens attached */
-	prep->type_data[0] = (void *)((unsigned long)prep->type_data[0] + 1);
+	prep->payload.data[1] = (void *)((unsigned long)prep->payload.data[1] + 1);
 
 	/* attach the data */
-	for (pptoken = (struct rxrpc_key_token **)&prep->payload[0];
+	for (pptoken = (struct rxrpc_key_token **)&prep->payload.data[0];
 	     *pptoken;
 	     pptoken = &(*pptoken)->next)
 		continue;
@@ -526,7 +526,7 @@ static int rxrpc_preparse_xdr_rxk5(struct key_preparsed_payload *prep,
 		goto inval;
 
 	/* attach the payload */
-	for (pptoken = (struct rxrpc_key_token **)&prep->payload[0];
+	for (pptoken = (struct rxrpc_key_token **)&prep->payload.data[0];
 	     *pptoken;
 	     pptoken = &(*pptoken)->next)
 		continue;
@@ -768,10 +768,10 @@ static int rxrpc_preparse(struct key_preparsed_payload *prep)
 	memcpy(&token->kad->ticket, v1->ticket, v1->ticket_length);
 
 	/* count the number of tokens attached */
-	prep->type_data[0] = (void *)((unsigned long)prep->type_data[0] + 1);
+	prep->payload.data[1] = (void *)((unsigned long)prep->payload.data[1] + 1);
 
 	/* attach the data */
-	pp = (struct rxrpc_key_token **)&prep->payload[0];
+	pp = (struct rxrpc_key_token **)&prep->payload.data[0];
 	while (*pp)
 		pp = &(*pp)->next;
 	*pp = token;
@@ -818,7 +818,7 @@ static void rxrpc_free_token_list(struct rxrpc_key_token *token)
  */
 static void rxrpc_free_preparse(struct key_preparsed_payload *prep)
 {
-	rxrpc_free_token_list(prep->payload[0]);
+	rxrpc_free_token_list(prep->payload.data[0]);
 }
 
 /*
@@ -835,7 +835,7 @@ static int rxrpc_preparse_s(struct key_preparsed_payload *prep)
 	if (prep->datalen != 8)
 		return -EINVAL;
 
-	memcpy(&prep->type_data, prep->data, 8);
+	memcpy(&prep->payload.data[2], prep->data, 8);
 
 	ci = crypto_alloc_blkcipher("pcbc(des)", 0, CRYPTO_ALG_ASYNC);
 	if (IS_ERR(ci)) {
@@ -846,7 +846,7 @@ static int rxrpc_preparse_s(struct key_preparsed_payload *prep)
 	if (crypto_blkcipher_setkey(ci, prep->data, 8) < 0)
 		BUG();
 
-	prep->payload[0] = ci;
+	prep->payload.data[0] = ci;
 	_leave(" = 0");
 	return 0;
 }
@@ -856,8 +856,8 @@ static int rxrpc_preparse_s(struct key_preparsed_payload *prep)
  */
 static void rxrpc_free_preparse_s(struct key_preparsed_payload *prep)
 {
-	if (prep->payload[0])
-		crypto_free_blkcipher(prep->payload[0]);
+	if (prep->payload.data[0])
+		crypto_free_blkcipher(prep->payload.data[0]);
 }
 
 /*
@@ -865,7 +865,7 @@ static void rxrpc_free_preparse_s(struct key_preparsed_payload *prep)
  */
 static void rxrpc_destroy(struct key *key)
 {
-	rxrpc_free_token_list(key->payload.data);
+	rxrpc_free_token_list(key->payload.data[0]);
 }
 
 /*
@@ -873,9 +873,9 @@ static void rxrpc_destroy(struct key *key)
  */
 static void rxrpc_destroy_s(struct key *key)
 {
-	if (key->payload.data) {
-		crypto_free_blkcipher(key->payload.data);
-		key->payload.data = NULL;
+	if (key->payload.data[0]) {
+		crypto_free_blkcipher(key->payload.data[0]);
+		key->payload.data[0] = NULL;
 	}
 }
 
@@ -897,7 +897,7 @@ int rxrpc_request_key(struct rxrpc_sock *rx, char __user *optval, int optlen)
 
 	_enter("");
 
-	if (optlen <= 0 || optlen > PAGE_SIZE - 1)
+	if (optlen <= 0 || optlen > PAGE_SIZE - 1 || rx->securities)
 		return -EINVAL;
 
 	description = kmalloc(optlen + 1, GFP_KERNEL);
@@ -1074,7 +1074,7 @@ static long rxrpc_read(const struct key *key,
 	size += 1 * 4;	/* token count */
 
 	ntoks = 0;
-	for (token = key->payload.data; token; token = token->next) {
+	for (token = key->payload.data[0]; token; token = token->next) {
 		toksize = 4;	/* sec index */
 
 		switch (token->security_index) {
@@ -1114,8 +1114,9 @@ static long rxrpc_read(const struct key *key,
 			break;
 
 		default: /* we have a ticket we can't encode */
-			BUG();
-			continue;
+			pr_err("Unsupported key token type (%u)\n",
+			       token->security_index);
+			return -ENOPKG;
 		}
 
 		_debug("token[%u]: toksize=%u", ntoks, toksize);
@@ -1149,6 +1150,14 @@ static long rxrpc_read(const struct key *key,
 			goto fault;					\
 		xdr += (_l + 3) >> 2;					\
 	} while(0)
+#define ENCODE_BYTES(l, s)						\
+	do {								\
+		u32 _l = (l);						\
+		memcpy(xdr, (s), _l);					\
+		if (_l & 3)						\
+			memcpy((u8 *)xdr + _l, &zero, 4 - (_l & 3));	\
+		xdr += (_l + 3) >> 2;					\
+	} while(0)
 #define ENCODE64(x)					\
 	do {						\
 		__be64 y = cpu_to_be64(x);		\
@@ -1167,7 +1176,7 @@ static long rxrpc_read(const struct key *key,
 	ENCODE(ntoks);
 
 	tok = 0;
-	for (token = key->payload.data; token; token = token->next) {
+	for (token = key->payload.data[0]; token; token = token->next) {
 		toksize = toksizes[tok++];
 		ENCODE(toksize);
 		oldxdr = xdr;
@@ -1177,7 +1186,7 @@ static long rxrpc_read(const struct key *key,
 		case RXRPC_SECURITY_RXKAD:
 			ENCODE(token->kad->vice_id);
 			ENCODE(token->kad->kvno);
-			ENCODE_DATA(8, token->kad->session_key);
+			ENCODE_BYTES(8, token->kad->session_key);
 			ENCODE(token->kad->start);
 			ENCODE(token->kad->expiry);
 			ENCODE(token->kad->primary_flag);
@@ -1227,8 +1236,9 @@ static long rxrpc_read(const struct key *key,
 			break;
 
 		default:
-			BUG();
-			break;
+			pr_err("Unsupported key token type (%u)\n",
+			       token->security_index);
+			return -ENOPKG;
 		}
 
 		ASSERTCMP((unsigned long)xdr - (unsigned long)oldxdr, ==,

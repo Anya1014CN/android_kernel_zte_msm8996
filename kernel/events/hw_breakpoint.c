@@ -116,12 +116,12 @@ static unsigned int max_task_bp_pinned(int cpu, enum bp_type_idx type)
  */
 static int task_bp_pinned(int cpu, struct perf_event *bp, enum bp_type_idx type)
 {
-	struct task_struct *tsk = bp->hw.bp_target;
+	struct task_struct *tsk = bp->hw.target;
 	struct perf_event *iter;
 	int count = 0;
 
 	list_for_each_entry(iter, &bp_task_head, hw.bp_list) {
-		if (iter->hw.bp_target == tsk &&
+		if (iter->hw.target == tsk &&
 		    find_slot_idx(iter) == type &&
 		    (iter->cpu < 0 || cpu == iter->cpu))
 			count += hw_breakpoint_weight(iter);
@@ -153,7 +153,7 @@ fetch_bp_busy_slots(struct bp_busy_slots *slots, struct perf_event *bp,
 		int nr;
 
 		nr = info->cpu_pinned;
-		if (!bp->hw.bp_target)
+		if (!bp->hw.target)
 			nr += max_task_bp_pinned(cpu, type);
 		else
 			nr += task_bp_pinned(cpu, bp, type);
@@ -210,7 +210,7 @@ toggle_bp_slot(struct perf_event *bp, bool enable, enum bp_type_idx type,
 		weight = -weight;
 
 	/* Pinned counter cpu profiling */
-	if (!bp->hw.bp_target) {
+	if (!bp->hw.target) {
 		get_bp_info(bp->cpu, type)->cpu_pinned += weight;
 		return;
 	}
@@ -427,16 +427,9 @@ EXPORT_SYMBOL_GPL(register_user_hw_breakpoint);
  * modify_user_hw_breakpoint - modify a user-space hardware breakpoint
  * @bp: the breakpoint structure to modify
  * @attr: new breakpoint attributes
- * @triggered: callback to trigger when we hit the breakpoint
- * @tsk: pointer to 'task_struct' of the process to which the address belongs
  */
 int modify_user_hw_breakpoint(struct perf_event *bp, struct perf_event_attr *attr)
 {
-	u64 old_addr = bp->attr.bp_addr;
-	u64 old_len = bp->attr.bp_len;
-	int old_type = bp->attr.bp_type;
-	int err = 0;
-
 	/*
 	 * modify_user_hw_breakpoint can be invoked with IRQs disabled and hence it
 	 * will not be possible to raise IPIs that invoke __perf_event_disable.
@@ -451,26 +444,17 @@ int modify_user_hw_breakpoint(struct perf_event *bp, struct perf_event_attr *att
 	bp->attr.bp_addr = attr->bp_addr;
 	bp->attr.bp_type = attr->bp_type;
 	bp->attr.bp_len = attr->bp_len;
+	bp->attr.disabled = 1;
 
-	if (attr->disabled)
-		goto end;
+	if (!attr->disabled) {
+		int err = validate_hw_breakpoint(bp);
 
-	err = validate_hw_breakpoint(bp);
-	if (!err)
+		if (err)
+			return err;
+
 		perf_event_enable(bp);
-
-	if (err) {
-		bp->attr.bp_addr = old_addr;
-		bp->attr.bp_type = old_type;
-		bp->attr.bp_len = old_len;
-		if (!bp->attr.disabled)
-			perf_event_enable(bp);
-
-		return err;
+		bp->attr.disabled = 0;
 	}
-
-end:
-	bp->attr.disabled = attr->disabled;
 
 	return 0;
 }
@@ -614,6 +598,8 @@ static struct pmu perf_breakpoint = {
 	.start		= hw_breakpoint_start,
 	.stop		= hw_breakpoint_stop,
 	.read		= hw_breakpoint_pmu_read,
+
+	.events_across_hotplug = 1,
 };
 
 int __init init_hw_breakpoint(void)

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -82,8 +82,7 @@ static irqreturn_t modem_err_fatal_intr_handler(int irq, void *dev_id)
 	if (drv->crash_shutdown)
 		return IRQ_HANDLED;
 
-	pr_err("Fatal error on the modem.\n");
-	subsys_set_crash_status(drv->subsys, true);
+	subsys_set_crash_status(drv->subsys, CRASH_STATUS_ERR_FATAL);
 	restart_modem(drv);
 	return IRQ_HANDLED;
 }
@@ -171,7 +170,8 @@ static int modem_ramdump(int enable, const struct subsys_desc *subsys)
 	if (ret)
 		return ret;
 
-	ret = pil_do_ramdump(&drv->q6->desc, drv->ramdump_dev);
+	ret = pil_do_ramdump(&drv->q6->desc,
+			drv->ramdump_dev, drv->minidump_dev);
 	if (ret < 0)
 		pr_err("Unable to dump modem fw memory (rc = %d).\n", ret);
 
@@ -194,7 +194,7 @@ static irqreturn_t modem_wdog_bite_intr_handler(int irq, void *dev_id)
 			!gpio_get_value(drv->subsys_desc.err_fatal_gpio))
 		panic("%s: System ramdump requested. Triggering device restart!\n",
 							__func__);
-	subsys_set_crash_status(drv->subsys, true);
+	subsys_set_crash_status(drv->subsys, CRASH_STATUS_WDOG_BITE);
 	restart_modem(drv);
 	return IRQ_HANDLED;
 }
@@ -230,9 +230,18 @@ static int pil_subsys_init(struct modem_data *drv,
 		ret = -ENOMEM;
 		goto err_ramdump;
 	}
+	drv->minidump_dev = create_ramdump_device("md_modem", &pdev->dev);
+	if (!drv->minidump_dev) {
+		pr_err("%s: Unable to create a modem minidump device.\n",
+			__func__);
+		ret = -ENOMEM;
+		goto err_minidump;
+	}
 
 	return 0;
 
+err_minidump:
+	destroy_ramdump_device(drv->ramdump_dev);
 err_ramdump:
 	subsys_unregister(drv->subsys);
 err_subsys:
@@ -272,14 +281,35 @@ static int pil_mss_loadable_init(struct modem_data *drv,
 		q6_desc->ops = &pil_msa_mss_ops_selfauth;
 	}
 
+	q6->cx_ipeak_vote = of_property_read_bool(pdev->dev.of_node,
+							"qcom,cx-ipeak-vote");
+	if (q6->cx_ipeak_vote) {
+		res = platform_get_resource_byname(pdev, IORESOURCE_MEM,
+						    "cxip_lm_vote_clear");
+		if (!res) {
+			dev_err(&pdev->dev, "Failed to get resource for ipeak reg\n");
+			return -EINVAL;
+		}
+		q6->cxip_lm_vote_clear = devm_ioremap(&pdev->dev,
+						res->start, resource_size(res));
+		if (!q6->cxip_lm_vote_clear)
+			return -ENOMEM;
+	}
+
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "restart_reg");
 	if (!res) {
 		res = platform_get_resource_byname(pdev, IORESOURCE_MEM,
 							"restart_reg_sec");
+		if (!res) {
+			dev_err(&pdev->dev, "Failed to get resource for restart reg\n");
+			return -EINVAL;
+		}
+
 		q6->restart_reg_sec = true;
 	}
 
-	q6->restart_reg = devm_ioremap_resource(&pdev->dev, res);
+	q6->restart_reg = devm_ioremap(&pdev->dev,
+						res->start, resource_size(res));
 	if (!q6->restart_reg)
 		return -ENOMEM;
 
@@ -294,11 +324,13 @@ static int pil_mss_loadable_init(struct modem_data *drv,
 		ret = regulator_set_voltage(q6->vreg, VDD_MSS_UV,
 						MAX_VDD_MSS_UV);
 		if (ret)
-			dev_err(&pdev->dev, "Failed to set vreg voltage.\n");
+			dev_err(&pdev->dev, "Failed to set vreg voltage(rc:%d)\n",
+									ret);
 
-		ret = regulator_set_optimum_mode(q6->vreg, 100000);
+		ret = regulator_set_load(q6->vreg, 100000);
 		if (ret < 0) {
-			dev_err(&pdev->dev, "Failed to set vreg mode.\n");
+			dev_err(&pdev->dev, "Failed to set vreg mode(rc:%d)\n",
+									ret);
 			return ret;
 		}
 	}
@@ -333,7 +365,7 @@ static int pil_mss_loadable_init(struct modem_data *drv,
 	ret = of_property_read_u32(pdev->dev.of_node,
 					"qcom,pas-id", &drv->pas_id);
 	if (ret)
-		dev_warn(&pdev->dev, "Failed to find the pas_id.\n");
+		dev_info(&pdev->dev, "No pas_id found.\n");
 
 	drv->subsys_desc.pil_mss_memsetup =
 	of_property_read_bool(pdev->dev.of_node, "qcom,pil-mss-memsetup");
@@ -391,6 +423,7 @@ static int pil_mss_driver_exit(struct platform_device *pdev)
 
 	subsys_unregister(drv->subsys);
 	destroy_ramdump_device(drv->ramdump_dev);
+	destroy_ramdump_device(drv->minidump_dev);
 	pil_desc_release(&drv->q6->desc);
 	return 0;
 }
@@ -408,7 +441,7 @@ static int pil_mba_mem_driver_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static struct of_device_id mba_mem_match_table[] = {
+static const struct of_device_id mba_mem_match_table[] = {
 	{ .compatible = "qcom,pil-mba-mem" },
 	{}
 };

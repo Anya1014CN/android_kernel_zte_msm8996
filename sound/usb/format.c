@@ -20,6 +20,7 @@
 #include <linux/usb.h>
 #include <linux/usb/audio.h>
 #include <linux/usb/audio-v2.h>
+#include <linux/usb/audio-v3.h>
 
 #include <sound/core.h>
 #include <sound/pcm.h>
@@ -52,6 +53,8 @@ static u64 parse_audio_format_i_type(struct snd_usb_audio *chip,
 	case UAC_VERSION_1:
 	default: {
 		struct uac_format_type_i_discrete_descriptor *fmt = _fmt;
+		if (format >= 64)
+			return 0; /* invalid format */
 		sample_width = fmt->bBitResolution;
 		sample_bytes = fmt->bSubframeSize;
 		format = 1 << format;
@@ -69,6 +72,35 @@ static u64 parse_audio_format_i_type(struct snd_usb_audio *chip,
 		format <<= 1;
 		break;
 	}
+
+	case UAC_VERSION_3: {
+		switch (fp->maxpacksize) {
+		case BADD_MAXPSIZE_SYNC_MONO_16:
+		case BADD_MAXPSIZE_SYNC_STEREO_16:
+		case BADD_MAXPSIZE_ASYNC_MONO_16:
+		case BADD_MAXPSIZE_ASYNC_STEREO_16: {
+			sample_width = BIT_RES_16_BIT;
+			sample_bytes = SUBSLOTSIZE_16_BIT;
+			break;
+		}
+
+		case BADD_MAXPSIZE_SYNC_MONO_24:
+		case BADD_MAXPSIZE_SYNC_STEREO_24:
+		case BADD_MAXPSIZE_ASYNC_MONO_24:
+		case BADD_MAXPSIZE_ASYNC_STEREO_24: {
+			sample_width = BIT_RES_24_BIT;
+			sample_bytes = SUBSLOTSIZE_24_BIT;
+			break;
+		}
+
+		default:
+			usb_audio_err(chip, "%u:%d : Invalid wMaxPacketSize\n",
+				      fp->iface, fp->altsetting);
+			return pcm_formats;
+		}
+		format = 1 << format;
+		break;
+	}
 	}
 
 	if ((pcm_formats == 0) &&
@@ -79,7 +111,10 @@ static u64 parse_audio_format_i_type(struct snd_usb_audio *chip,
 		format = 1 << UAC_FORMAT_TYPE_I_PCM;
 	}
 	if (format & (1 << UAC_FORMAT_TYPE_I_PCM)) {
-		if (chip->usb_id == USB_ID(0x0582, 0x0016) /* Edirol SD-90 */ &&
+		if (((chip->usb_id == USB_ID(0x0582, 0x0016)) ||
+		     /* Edirol SD-90 */
+		     (chip->usb_id == USB_ID(0x0582, 0x000c))) &&
+		     /* Roland SC-D70 */
 		    sample_width == 24 && sample_bytes == 2)
 			sample_bytes = 3;
 		else if (sample_width > sample_bytes * 8) {
@@ -186,9 +221,11 @@ static int parse_audio_format_rates_v1(struct snd_usb_audio *chip, struct audiof
 				continue;
 			/* C-Media CM6501 mislabels its 96 kHz altsetting */
 			/* Terratec Aureon 7.1 USB C-Media 6206, too */
+			/* Ozone Z90 USB C-Media, too */
 			if (rate == 48000 && nr_rates == 1 &&
 			    (chip->usb_id == USB_ID(0x0d8c, 0x0201) ||
 			     chip->usb_id == USB_ID(0x0d8c, 0x0102) ||
+			     chip->usb_id == USB_ID(0x0d8c, 0x0078) ||
 			     chip->usb_id == USB_ID(0x0ccd, 0x00b1)) &&
 			    fp->altsetting == 5 && fp->maxpacksize == 392)
 				rate = 96000;
@@ -217,6 +254,52 @@ static int parse_audio_format_rates_v1(struct snd_usb_audio *chip, struct audiof
 		fp->rate_max = combine_triple(&fmt[offset + 4]);
 	}
 	return 0;
+}
+
+/*
+ * Many Focusrite devices supports a limited set of sampling rates per
+ * altsetting. Maximum rate is exposed in the last 4 bytes of Format Type
+ * descriptor which has a non-standard bLength = 10.
+ */
+static bool focusrite_valid_sample_rate(struct snd_usb_audio *chip,
+					struct audioformat *fp,
+					unsigned int rate)
+{
+	struct usb_interface *iface;
+	struct usb_host_interface *alts;
+	unsigned char *fmt;
+	unsigned int max_rate;
+
+	iface = usb_ifnum_to_if(chip->dev, fp->iface);
+	if (!iface)
+		return true;
+
+	alts = &iface->altsetting[fp->altset_idx];
+	fmt = snd_usb_find_csint_desc(alts->extra, alts->extralen,
+				      NULL, UAC_FORMAT_TYPE);
+	if (!fmt)
+		return true;
+
+	if (fmt[0] == 10) { /* bLength */
+		max_rate = combine_quad(&fmt[6]);
+
+		/* Validate max rate */
+		if (max_rate != 48000 &&
+		    max_rate != 96000 &&
+		    max_rate != 192000 &&
+		    max_rate != 384000) {
+
+			usb_audio_info(chip,
+				"%u:%d : unexpected max rate: %u\n",
+				fp->iface, fp->altsetting, max_rate);
+
+			return true;
+		}
+
+		return rate <= max_rate;
+	}
+
+	return true;
 }
 
 /*
@@ -255,6 +338,11 @@ static int parse_uac2_sample_rate_range(struct snd_usb_audio *chip,
 		}
 
 		for (rate = min; rate <= max; rate += res) {
+			/* Filter out invalid rates on Focusrite devices */
+			if (USB_ID_VENDOR(chip->usb_id) == 0x1235 &&
+			    !focusrite_valid_sample_rate(chip, fp, rate))
+				goto skip_rate;
+
 			if (fp->rate_table)
 				fp->rate_table[nr_rates] = rate;
 			if (!fp->rate_min || rate < fp->rate_min)
@@ -269,6 +357,7 @@ static int parse_uac2_sample_rate_range(struct snd_usb_audio *chip,
 				break;
 			}
 
+skip_rate:
 			/* avoid endless loop */
 			if (res == 0)
 				break;
@@ -363,6 +452,22 @@ err:
 	return ret;
 }
 
+static int badd_set_audio_rate_v3(struct snd_usb_audio *chip,
+		   struct audioformat *fp)
+{
+	unsigned int rate;
+
+	fp->rate_table = kmalloc(sizeof(int), GFP_KERNEL);
+	if (fp->rate_table == NULL)
+		return -ENOMEM;
+
+	fp->nr_rates = 1;
+	rate = BADD_SAMPLING_RATE;
+	fp->rate_min = fp->rate_max = fp->rate_table[0] = rate;
+	fp->rates |= snd_pcm_rate_to_rate_bit(rate);
+	return 0;
+}
+
 /*
  * parse the format type I and III descriptors
  */
@@ -411,6 +516,9 @@ static int parse_audio_format_i(struct snd_usb_audio *chip,
 	case UAC_VERSION_2:
 		/* fp->channels is already set in this case */
 		ret = parse_audio_format_rates_v2(chip, fp);
+		break;
+	case UAC_VERSION_3:
+		ret = badd_set_audio_rate_v3(chip, fp);
 		break;
 	}
 
@@ -499,7 +607,10 @@ int snd_usb_parse_audio_format(struct snd_usb_audio *chip,
 			 fmt->bFormatType);
 		return -ENOTSUPP;
 	}
-	fp->fmt_type = fmt->bFormatType;
+	if (fp->protocol == UAC_VERSION_3)
+		fp->fmt_type = UAC_FORMAT_TYPE_I;
+	else
+		fp->fmt_type = fmt->bFormatType;
 	if (err < 0)
 		return err;
 #if 1

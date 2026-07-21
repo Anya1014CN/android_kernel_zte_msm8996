@@ -1,4 +1,4 @@
-/* Copyright (c) 2015-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2015-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -19,6 +19,7 @@
 #include <linux/pm_opp.h>
 #include <linux/regulator/rpm-smd-regulator.h>
 #include "cam_hw_ops.h"
+#include "msm_camera_diag_util.h"
 
 #ifdef CONFIG_CAM_AHB_DBG
 #define CDBG(fmt, args...) pr_err(fmt, ##args)
@@ -50,7 +51,7 @@ struct cam_ahb_client_data {
 
 static struct cam_ahb_client_data data;
 
-int get_vector_index(char *name)
+static int get_vector_index(char *name)
 {
 	int i = 0, rc = -1;
 
@@ -213,7 +214,7 @@ err1:
 }
 EXPORT_SYMBOL(cam_ahb_clk_init);
 
-int cam_consolidate_ahb_vote(enum cam_ahb_clk_client id,
+static int cam_consolidate_ahb_vote(enum cam_ahb_clk_client id,
 	enum cam_ahb_clk_vote vote)
 {
 	int i = 0;
@@ -242,6 +243,8 @@ int cam_consolidate_ahb_vote(enum cam_ahb_clk_client id,
 			data.ahb_clk_state = max;
 			CDBG("dbg: state : %u, vector : %d\n",
 				data.ahb_clk_state, max);
+
+			msm_camera_diag_update_ahb_state(data.ahb_clk_state);
 		}
 	} else {
 		pr_err("err: no bus vector found\n");

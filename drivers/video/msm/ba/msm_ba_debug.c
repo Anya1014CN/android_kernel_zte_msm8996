@@ -65,7 +65,7 @@ static ssize_t dev_info_read(struct file *file, char __user *buf,
 	}
 
 	dbg_buf = kmalloc(sizeof(struct debug_buffer), GFP_KERNEL);
-	if (NULL == dbg_buf)
+	if (dbg_buf == NULL)
 		return 0;
 
 	INIT_DBG_BUF(dbg_buf);
@@ -173,7 +173,7 @@ static ssize_t inst_info_read(struct file *file, char __user *buf,
 	}
 
 	dbg_buf = kmalloc(sizeof(struct debug_buffer), GFP_KERNEL);
-	if (NULL == dbg_buf)
+	if (dbg_buf == NULL)
 		return 0;
 
 	INIT_DBG_BUF(dbg_buf);

@@ -172,11 +172,11 @@ static int cpufreq_p4_cpu_init(struct cpufreq_policy *policy)
 	unsigned int i;
 
 #ifdef CONFIG_SMP
-	cpumask_copy(policy->cpus, cpu_sibling_mask(policy->cpu));
+	cpumask_copy(policy->cpus, topology_sibling_cpumask(policy->cpu));
 #endif
 
 	/* Errata workaround */
-	cpuid = (c->x86 << 8) | (c->x86_model << 4) | c->x86_mask;
+	cpuid = (c->x86 << 8) | (c->x86_model << 4) | c->x86_stepping;
 	switch (cpuid) {
 	case 0x0f07:
 	case 0x0f0a:

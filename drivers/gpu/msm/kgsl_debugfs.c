@@ -1,4 +1,4 @@
-/* Copyright (c) 2002,2008-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2002,2008-2017,2020-2021, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -87,6 +87,11 @@ void kgsl_device_debugfs_init(struct kgsl_device *device)
 				&pwr_log_fops);
 }
 
+void kgsl_device_debugfs_close(struct kgsl_device *device)
+{
+	debugfs_remove_recursive(device->d_debugfs);
+}
+
 struct type_entry {
 	int type;
 	const char *str;
@@ -129,11 +134,14 @@ static int print_mem_entry(void *data, void *ptr)
 {
 	struct seq_file *s = data;
 	struct kgsl_mem_entry *entry = ptr;
-	char flags[9];
+	char flags[10];
 	char usage[16];
 	struct kgsl_memdesc *m = &entry->memdesc;
 	unsigned int usermem_type = kgsl_memdesc_usermem_type(m);
 	int egl_surface_count = 0, egl_image_count = 0;
+
+	if (m->flags & KGSL_MEMFLAGS_SPARSE_VIRT)
+		return 0;
 
 	flags[0] = kgsl_memdesc_is_global(m) ?  'g' : '-';
 	flags[1] = '-';
@@ -141,9 +149,14 @@ static int print_mem_entry(void *data, void *ptr)
 	flags[3] = get_alignflag(m);
 	flags[4] = get_cacheflag(m);
 	flags[5] = kgsl_memdesc_use_cpu_map(m) ? 'p' : '-';
-	flags[6] = (m->useraddr) ? 'Y' : 'N';
+	/*
+	 * Show Y if at least one vma has this entry
+	 * mapped (could be multiple)
+	 */
+	flags[6] = atomic_read(&entry->map_count) ? 'Y' : 'N';
 	flags[7] = kgsl_memdesc_is_secured(m) ?  's' : '-';
-	flags[8] = '\0';
+	flags[8] = m->flags & KGSL_MEMFLAGS_SPARSE_PHYS ? 'P' : '-';
+	flags[9] = '\0';
 
 	kgsl_get_memory_usage(usage, sizeof(usage), m->flags);
 
@@ -151,12 +164,16 @@ static int print_mem_entry(void *data, void *ptr)
 		kgsl_get_egl_counts(entry, &egl_surface_count,
 						&egl_image_count);
 
-	seq_printf(s, "%pK %pK %16llu %5d %9s %10s %16s %5d %16llu %6d %6d",
+	seq_printf(s, "%pK %d %16llu %5d %9s %10s %16s %5d %16d %6d %6d",
 			(uint64_t *)(uintptr_t) m->gpuaddr,
-			(unsigned long *) m->useraddr,
-			m->size, entry->id, flags,
+			/*
+			 * Show zero for the useraddr - we can't reliably track
+			 * that value for multiple vmas anyway
+			 */
+			0, m->size, entry->id, flags,
 			memtype_str(usermem_type),
-			usage, (m->sgt ? m->sgt->nents : 0), m->mapsize,
+			usage, (m->sgt ? m->sgt->nents : 0),
+			atomic_read(&entry->map_count),
 			egl_surface_count, egl_image_count);
 
 	if (entry->metadata[0] != 0)
@@ -226,7 +243,7 @@ static int process_mem_seq_show(struct seq_file *s, void *ptr)
 	if (ptr == SEQ_START_TOKEN) {
 		seq_printf(s, "%16s %16s %16s %5s %9s %10s %16s %5s %16s %6s %6s\n",
 			"gpuaddr", "useraddr", "size", "id", "flags", "type",
-			"usage", "sglen", "mapsize", "eglsrf", "eglimg");
+			"usage", "sglen", "mapcount", "eglsrf", "eglimg");
 		return 0;
 	} else
 		return print_mem_entry(s, ptr);
@@ -280,6 +297,72 @@ static const struct file_operations process_mem_fops = {
 	.release = process_mem_release,
 };
 
+static int print_sparse_mem_entry(int id, void *ptr, void *data)
+{
+	struct seq_file *s = data;
+	struct kgsl_mem_entry *entry = ptr;
+	struct kgsl_memdesc *m = &entry->memdesc;
+	struct rb_node *node;
+
+	if (!(m->flags & KGSL_MEMFLAGS_SPARSE_VIRT))
+		return 0;
+
+	spin_lock(&entry->bind_lock);
+	node = rb_first(&entry->bind_tree);
+
+	while (node != NULL) {
+		struct sparse_bind_object *obj = rb_entry(node,
+				struct sparse_bind_object, node);
+		seq_printf(s, "%5d %16llx %16llx %16llx %16llx\n",
+				entry->id, entry->memdesc.gpuaddr,
+				obj->v_off, obj->size, obj->p_off);
+		node = rb_next(node);
+	}
+	spin_unlock(&entry->bind_lock);
+
+	seq_putc(s, '\n');
+
+	return 0;
+}
+
+static int process_sparse_mem_print(struct seq_file *s, void *unused)
+{
+	struct kgsl_process_private *private = s->private;
+
+	seq_printf(s, "%5s %16s %16s %16s %16s\n",
+		   "v_id", "gpuaddr", "v_offset", "v_size", "p_offset");
+
+	spin_lock(&private->mem_lock);
+	idr_for_each(&private->mem_idr, print_sparse_mem_entry, s);
+	spin_unlock(&private->mem_lock);
+
+	return 0;
+}
+
+static int process_sparse_mem_open(struct inode *inode, struct file *file)
+{
+	int ret;
+	pid_t pid = (pid_t) (unsigned long) inode->i_private;
+	struct kgsl_process_private *private = NULL;
+
+	private = kgsl_process_private_find(pid);
+
+	if (!private)
+		return -ENODEV;
+
+	ret = single_open(file, process_sparse_mem_print, private);
+	if (ret)
+		kgsl_process_private_put(private);
+
+	return ret;
+}
+
+static const struct file_operations process_sparse_mem_fops = {
+	.open = process_sparse_mem_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = process_mem_release,
+};
 
 static int globals_print(struct seq_file *s, void *unused)
 {
@@ -318,7 +401,7 @@ void kgsl_process_init_debugfs(struct kgsl_process_private *private)
 	unsigned char name[16];
 	struct dentry *dentry;
 
-	snprintf(name, sizeof(name), "%d", private->pid);
+	snprintf(name, sizeof(name), "%d", pid_nr(private->pid));
 
 	private->debug_root = debugfs_create_dir(name, proc_d_debugfs);
 
@@ -338,11 +421,21 @@ void kgsl_process_init_debugfs(struct kgsl_process_private *private)
 	}
 
 	dentry = debugfs_create_file("mem", 0444, private->debug_root,
-		(void *) ((unsigned long) private->pid), &process_mem_fops);
+		(void *) ((unsigned long) pid_nr(private->pid)),
+		&process_mem_fops);
 
 	if (IS_ERR_OR_NULL(dentry))
 		WARN((dentry == NULL),
 			"Unable to create 'mem' file for %s\n", name);
+
+	dentry = debugfs_create_file("sparse_mem", 0444, private->debug_root,
+		(void *) ((unsigned long) pid_nr(private->pid)),
+		&process_sparse_mem_fops);
+
+	if (IS_ERR_OR_NULL(dentry))
+		WARN((dentry == NULL),
+			"Unable to create 'sparse_mem' file for %s\n", name);
+
 }
 
 void kgsl_core_debugfs_init(void)

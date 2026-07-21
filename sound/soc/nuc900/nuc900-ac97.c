@@ -67,7 +67,7 @@ static unsigned short nuc900_ac97_read(struct snd_ac97 *ac97,
 
 	/* polling the AC_R_FINISH */
 	while (!(AUDIO_READ(nuc900_audio->mmio + ACTL_ACCON) & AC_R_FINISH)
-								&& timeout--)
+								&& --timeout)
 		mdelay(1);
 
 	if (!timeout) {
@@ -121,7 +121,7 @@ static void nuc900_ac97_write(struct snd_ac97 *ac97, unsigned short reg,
 
 	/* polling the AC_W_FINISH */
 	while ((AUDIO_READ(nuc900_audio->mmio + ACTL_ACCON) & AC_W_FINISH)
-								&& timeout--)
+								&& --timeout)
 		mdelay(1);
 
 	if (!timeout)
@@ -298,7 +298,7 @@ static const struct snd_soc_dai_ops nuc900_ac97_dai_ops = {
 static struct snd_soc_dai_driver nuc900_ac97_dai = {
 	.probe			= nuc900_ac97_probe,
 	.remove			= nuc900_ac97_remove,
-	.ac97_control		= 1,
+	.bus_control		= true,
 	.playback = {
 		.rates		= SNDRV_PCM_RATE_8000_48000,
 		.formats	= SNDRV_PCM_FMTBIT_S16_LE,
@@ -385,7 +385,6 @@ static int nuc900_ac97_drvremove(struct platform_device *pdev)
 static struct platform_driver nuc900_ac97_driver = {
 	.driver	= {
 		.name	= "nuc900-ac97",
-		.owner	= THIS_MODULE,
 	},
 	.probe		= nuc900_ac97_drvprobe,
 	.remove		= nuc900_ac97_drvremove,

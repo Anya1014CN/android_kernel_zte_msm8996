@@ -1156,7 +1156,7 @@ ks8695_timeout(struct net_device *ndev)
  *	sk_buff and adds it to the TX ring. It then kicks the TX DMA
  *	engine to ensure transmission begins.
  */
-static int
+static netdev_tx_t
 ks8695_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 {
 	struct ks8695_priv *ksp = netdev_priv(ndev);
@@ -1612,7 +1612,6 @@ ks8695_drv_remove(struct platform_device *pdev)
 static struct platform_driver ks8695_driver = {
 	.driver = {
 		.name	= MODULENAME,
-		.owner	= THIS_MODULE,
 	},
 	.probe		= ks8695_probe,
 	.remove		= ks8695_drv_remove,

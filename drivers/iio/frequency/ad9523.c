@@ -445,7 +445,7 @@ static int ad9523_store_eeprom(struct iio_dev *indio_dev)
 
 	tmp = 4;
 	do {
-		msleep(16);
+		msleep(20);
 		ret = ad9523_read(indio_dev,
 				  AD9523_EEPROM_DATA_XFER_STATUS);
 		if (ret < 0)
@@ -507,7 +507,7 @@ static ssize_t ad9523_store(struct device *dev,
 		return ret;
 
 	if (!state)
-		return 0;
+		return len;
 
 	mutex_lock(&indio_dev->mlock);
 	switch ((u32)this_attr->address) {
@@ -641,7 +641,7 @@ static int ad9523_read_raw(struct iio_dev *indio_dev,
 		code = (AD9523_CLK_DIST_DIV_PHASE_REV(ret) * 3141592) /
 			AD9523_CLK_DIST_DIV_REV(ret);
 		*val = code / 1000000;
-		*val2 = (code % 1000000) * 10;
+		*val2 = code % 1000000;
 		return IIO_VAL_INT_PLUS_MICRO;
 	default:
 		return -EINVAL;
@@ -1027,7 +1027,6 @@ MODULE_DEVICE_TABLE(spi, ad9523_id);
 static struct spi_driver ad9523_driver = {
 	.driver = {
 		.name	= "ad9523",
-		.owner	= THIS_MODULE,
 	},
 	.probe		= ad9523_probe,
 	.remove		= ad9523_remove,

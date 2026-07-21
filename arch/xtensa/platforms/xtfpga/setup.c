@@ -63,7 +63,9 @@ void platform_restart(void)
 #if XCHAL_NUM_IBREAK > 0
 			      "wsr	a2, ibreakenable\n\t"
 #endif
+#if XCHAL_HAVE_LOOPS
 			      "wsr	a2, lcount\n\t"
+#endif
 			      "movi	a2, 0x1f\n\t"
 			      "wsr	a2, ps\n\t"
 			      "isync\n\t"
@@ -189,6 +191,7 @@ void __init platform_calibrate_ccount(void)
 #include <linux/serial_8250.h>
 #include <linux/if.h>
 #include <net/ethoc.h>
+#include <linux/usb/c67x00.h>
 
 /*----------------------------------------------------------------------------
  *  Ethernet -- OpenCores Ethernet MAC (ethoc driver)
@@ -206,8 +209,8 @@ static struct resource ethoc_res[] = {
 		.flags = IORESOURCE_MEM,
 	},
 	[2] = { /* IRQ number */
-		.start = OETH_IRQ,
-		.end   = OETH_IRQ,
+		.start = XTENSA_PIC_LINUX_IRQ(OETH_IRQ),
+		.end   = XTENSA_PIC_LINUX_IRQ(OETH_IRQ),
 		.flags = IORESOURCE_IRQ,
 	},
 };
@@ -233,6 +236,38 @@ static struct platform_device ethoc_device = {
 };
 
 /*----------------------------------------------------------------------------
+ *  USB Host/Device -- Cypress CY7C67300
+ */
+
+static struct resource c67x00_res[] = {
+	[0] = { /* register space */
+		.start = C67X00_PADDR,
+		.end   = C67X00_PADDR + C67X00_SIZE - 1,
+		.flags = IORESOURCE_MEM,
+	},
+	[1] = { /* IRQ number */
+		.start = XTENSA_PIC_LINUX_IRQ(C67X00_IRQ),
+		.end   = XTENSA_PIC_LINUX_IRQ(C67X00_IRQ),
+		.flags = IORESOURCE_IRQ,
+	},
+};
+
+static struct c67x00_platform_data c67x00_pdata = {
+	.sie_config = C67X00_SIE1_HOST | C67X00_SIE2_UNUSED,
+	.hpi_regstep = 4,
+};
+
+static struct platform_device c67x00_device = {
+	.name = "c67x00",
+	.id = -1,
+	.num_resources = ARRAY_SIZE(c67x00_res),
+	.resource = c67x00_res,
+	.dev = {
+		.platform_data = &c67x00_pdata,
+	},
+};
+
+/*----------------------------------------------------------------------------
  *  UART
  */
 
@@ -245,7 +280,7 @@ static struct resource serial_resource = {
 static struct plat_serial8250_port serial_platform_data[] = {
 	[0] = {
 		.mapbase	= DUART16552_PADDR,
-		.irq		= DUART16552_INTNUM,
+		.irq		= XTENSA_PIC_LINUX_IRQ(DUART16552_INTNUM),
 		.flags		= UPF_BOOT_AUTOCONF | UPF_SKIP_TEST |
 				  UPF_IOREMAP,
 		.iotype		= UPIO_MEM32,
@@ -268,6 +303,7 @@ static struct platform_device xtavnet_uart = {
 /* platform devices */
 static struct platform_device *platform_devices[] __initdata = {
 	&ethoc_device,
+	&c67x00_device,
 	&xtavnet_uart,
 };
 

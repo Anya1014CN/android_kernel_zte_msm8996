@@ -1,4 +1,4 @@
-/* Copyright (c) 2008-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2008-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -181,12 +181,11 @@ static ssize_t open_timeout_store(struct device *d,
 				smd_pkt_devp->open_modem_wait = tmp;
 				mutex_unlock(&smd_pkt_dev_lock_lha1);
 				return n;
-			} else {
-				mutex_unlock(&smd_pkt_dev_lock_lha1);
-				pr_err("%s: unable to convert: %s to an int\n",
-						__func__, buf);
-				return -EINVAL;
 			}
+			mutex_unlock(&smd_pkt_dev_lock_lha1);
+			pr_err("%s: unable to convert: %s to an int\n",
+						__func__, buf);
+			return -EINVAL;
 		}
 	}
 	mutex_unlock(&smd_pkt_dev_lock_lha1);
@@ -242,12 +241,11 @@ static ssize_t loopback_edge_store(struct device *d,
 				smd_pkt_devp->edge = tmp;
 				mutex_unlock(&smd_pkt_dev_lock_lha1);
 				return n;
-			} else {
-				mutex_unlock(&smd_pkt_dev_lock_lha1);
-				pr_err("%s: unable to convert: %s to an int\n",
-						__func__, buf);
-				return -EINVAL;
 			}
+			mutex_unlock(&smd_pkt_dev_lock_lha1);
+			pr_err("%s: unable to convert: %s to an int\n",
+						__func__, buf);
+			return -EINVAL;
 		}
 	}
 	mutex_unlock(&smd_pkt_dev_lock_lha1);
@@ -313,7 +311,8 @@ static void loopback_probe_worker(struct work_struct *work)
 	/* Wait for the modem SMSM to be inited for the SMD
 	** Loopback channel to be allocated at the modem. Since
 	** the wait need to be done atmost once, using msleep
-	** doesn't degrade the performance. */
+	** doesn't degrade the performance.
+	*/
 	if (!is_modem_smsm_inited())
 		schedule_delayed_work(&loopback_work, msecs_to_jiffies(1000));
 	else
@@ -620,23 +619,22 @@ ssize_t smd_pkt_write(struct file *file,
 			E_SMD_PKT_SSR(smd_pkt_devp);
 			kfree(buf);
 			return notify_reset(smd_pkt_devp);
-		} else {
-			r = smd_write_segment(smd_pkt_devp->ch,
-					      (void *)(buf + bytes_written),
-					      (count - bytes_written));
-			if (r < 0) {
-				mutex_unlock(&smd_pkt_devp->tx_lock);
-				if (smd_pkt_devp->has_reset) {
-					E_SMD_PKT_SSR(smd_pkt_devp);
-					return notify_reset(smd_pkt_devp);
-				}
-				pr_err_ratelimited("%s on smd_pkt_dev id:%d failed r:%d\n",
-					__func__, smd_pkt_devp->i, r);
-				kfree(buf);
-				return r;
-			}
-			bytes_written += r;
 		}
+		r = smd_write_segment(smd_pkt_devp->ch,
+				      (void *)(buf + bytes_written),
+				      (count - bytes_written));
+		if (r < 0) {
+			mutex_unlock(&smd_pkt_devp->tx_lock);
+			if (smd_pkt_devp->has_reset) {
+				E_SMD_PKT_SSR(smd_pkt_devp);
+				return notify_reset(smd_pkt_devp);
+			}
+			pr_err_ratelimited("%s on smd_pkt_dev id:%d failed r:%d\n",
+				__func__, smd_pkt_devp->i, r);
+			kfree(buf);
+			return r;
+		}
+		bytes_written += r;
 	} while (bytes_written != count);
 	smd_write_end(smd_pkt_devp->ch);
 	mutex_unlock(&smd_pkt_devp->tx_lock);
@@ -968,7 +966,8 @@ int smd_pkt_open(struct inode *inode, struct file *file)
 		/* Wait for the modem SMSM to be inited for the SMD
 		** Loopback channel to be allocated at the modem. Since
 		** the wait need to be done atmost once, using msleep
-		** doesn't degrade the performance. */
+		** doesn't degrade the performance.
+		*/
 		if (!strcmp(smd_pkt_devp->ch_name, "LOOPBACK")) {
 			if (!is_modem_smsm_inited())
 				msleep(5000);
@@ -1354,7 +1353,7 @@ static int msm_smd_pkt_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static struct of_device_id msm_smd_pkt_match_table[] = {
+static const struct of_device_id msm_smd_pkt_match_table[] = {
 	{ .compatible = "qcom,smdpkt" },
 	{},
 };

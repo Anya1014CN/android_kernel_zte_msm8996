@@ -14,9 +14,6 @@
 #include "edac_core.h"
 #include "edac_module.h"
 
-/* Turn off this whole feature if PCI is not configured */
-#ifdef CONFIG_PCI
-
 #define EDAC_PCI_SYMLINK	"device"
 
 /* data variables exported via sysfs */
@@ -397,7 +394,7 @@ static int edac_pci_main_kobj_setup(void)
 
 	/* Error unwind statck */
 kobject_init_and_add_fail:
-	kfree(edac_pci_top_main_kobj);
+	kobject_put(edac_pci_top_main_kobj);
 
 kzalloc_fail:
 	module_put(THIS_MODULE);
@@ -761,5 +758,3 @@ MODULE_PARM_DESC(check_pci_errors,
 module_param(edac_pci_panic_on_pe, int, 0644);
 MODULE_PARM_DESC(edac_pci_panic_on_pe,
 		 "Panic on PCI Bus Parity error: 0=off 1=on");
-
-#endif				/* CONFIG_PCI */

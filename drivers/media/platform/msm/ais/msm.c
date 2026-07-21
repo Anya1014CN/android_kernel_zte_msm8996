@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -31,6 +31,7 @@
 #include "msm_sd.h"
 #include "cam_hw_ops.h"
 #include <media/ais/msm_ais_buf_mgr.h>
+#include "msm_camera_diag_util.h"
 
 
 static struct v4l2_device *msm_v4l2_dev;
@@ -48,10 +49,10 @@ bool is_daemon_status = true;
 
 /* config node envent queue */
 static struct v4l2_fh  *msm_eventq;
-spinlock_t msm_eventq_lock;
+static spinlock_t msm_eventq_lock;
 
 static struct pid *msm_pid;
-spinlock_t msm_pid_lock;
+static spinlock_t msm_pid_lock;
 
 /*
  * It takes 20 bytes + NULL character to write the
@@ -62,7 +63,7 @@ spinlock_t msm_pid_lock;
 #define msm_dequeue(queue, type, member) ({				\
 	unsigned long flags;					\
 	struct msm_queue_head *__q = (queue);			\
-	type *node = 0;				\
+	type *node = NULL;				\
 	spin_lock_irqsave(&__q->lock, flags);			\
 	if (!list_empty(&__q->list)) {				\
 		__q->len--;					\
@@ -78,7 +79,7 @@ spinlock_t msm_pid_lock;
 #define msm_delete_sd_entry(queue, type, member, q_node) ({		\
 	unsigned long flags;					\
 	struct msm_queue_head *__q = (queue);			\
-	type *node = 0;				\
+	type *node = NULL;				\
 	spin_lock_irqsave(&__q->lock, flags);			\
 	if (!list_empty(&__q->list)) {				\
 		list_for_each_entry(node, &__q->list, member)	\
@@ -95,7 +96,7 @@ spinlock_t msm_pid_lock;
 #define msm_delete_entry(queue, type, member, q_node) ({		\
 	unsigned long flags;					\
 	struct msm_queue_head *__q = (queue);			\
-	type *node = 0;				\
+	type *node = NULL;				\
 	spin_lock_irqsave(&__q->lock, flags);			\
 	if (!list_empty(&__q->list)) {				\
 		list_for_each_entry(node, &__q->list, member)	\
@@ -131,7 +132,7 @@ typedef int (*msm_queue_func)(void *d1, void *d2);
 #define msm_queue_traverse_action(queue, type, member, func, data) do {\
 	unsigned long flags;					\
 	struct msm_queue_head *__q = (queue);			\
-	type *node = 0; \
+	type *node = NULL; \
 	msm_queue_func __f = (func); \
 	spin_lock_irqsave(&__q->lock, flags);			\
 	if (!list_empty(&__q->list)) { \
@@ -375,8 +376,8 @@ static inline int __msm_sd_register_subdev(struct v4l2_subdev *sd)
 	}
 
 #if defined(CONFIG_MEDIA_CONTROLLER)
-	sd->entity.info.v4l.major = VIDEO_MAJOR;
-	sd->entity.info.v4l.minor = vdev->minor;
+	sd->entity.info.dev.major = VIDEO_MAJOR;
+	sd->entity.info.dev.minor = vdev->minor;
 	sd->entity.name = video_device_node_name(vdev);
 #endif
 	sd->devnode = vdev;
@@ -624,7 +625,8 @@ static void msm_remove_session_cmd_ack_q(struct msm_session *session)
 
 	mutex_lock(&session->lock);
 	/* to ensure error handling purpose, it needs to detach all subdevs
-	 * which are being connected to streams */
+	 * which are being connected to streams
+	 */
 	msm_queue_traverse_action(&session->command_ack_q,
 		struct msm_command_ack,	list,
 		__msm_remove_session_cmd_ack_q, NULL);
@@ -1078,7 +1080,7 @@ static struct v4l2_file_operations msm_fops = {
 	.open   = msm_open,
 	.poll   = msm_poll,
 	.release = msm_close,
-	.ioctl   = video_ioctl2,
+	.unlocked_ioctl   = video_ioctl2,
 #ifdef CONFIG_COMPAT
 	.compat_ioctl32 = video_ioctl2,
 #endif
@@ -1199,7 +1201,7 @@ long msm_copy_camera_private_ioctl_args(unsigned long arg,
 		return -EIO;
 
 	if (copy_from_user(&up_ioctl,
-		(struct msm_camera_private_ioctl_arg *)arg,
+		(void __user *)arg,
 		sizeof(struct msm_camera_private_ioctl_arg)))
 		return -EFAULT;
 
@@ -1383,6 +1385,12 @@ static int msm_probe(struct platform_device *pdev)
 		goto v4l2_fail;
 	}
 
+	rc = msm_camera_diag_init();
+	if (rc < 0) {
+		pr_err("%s: failed to init diag clk list\n", __func__);
+		goto v4l2_fail;
+	}
+
 	goto probe_end;
 
 v4l2_fail:
@@ -1427,6 +1435,7 @@ static int __init msm_init(void)
 
 static void __exit msm_exit(void)
 {
+	msm_camera_diag_uninit();
 	platform_driver_unregister(&msm_driver);
 }
 

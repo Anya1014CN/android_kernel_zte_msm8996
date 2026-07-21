@@ -1,4 +1,4 @@
-/* Copyright (c) 2009-2010, 2013-2018 The Linux Foundation. All rights reserved.
+/* Copyright (c) 2009-2010, 2013-2017 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -28,15 +28,14 @@
 #include <linux/regulator/consumer.h>
 #include <net/cnss.h>
 
-#define BT_PWR_DBG(fmt, arg...)  pr_debug("%s: " fmt "\n" , __func__ , ## arg)
-#define BT_PWR_INFO(fmt, arg...) pr_info("%s: " fmt "\n" , __func__ , ## arg)
-#define BT_PWR_ERR(fmt, arg...)  pr_err("%s: " fmt "\n" , __func__ , ## arg)
+#define BT_PWR_DBG(fmt, arg...)  pr_debug("%s: " fmt "\n", __func__, ## arg)
+#define BT_PWR_INFO(fmt, arg...) pr_info("%s: " fmt "\n", __func__, ## arg)
+#define BT_PWR_ERR(fmt, arg...)  pr_err("%s: " fmt "\n", __func__, ## arg)
 
 
-static struct of_device_id bt_power_match_table[] = {
+static const struct of_device_id bt_power_match_table[] = {
 	{	.compatible = "qca,ar3002" },
 	{	.compatible = "qca,qca6174" },
-	{	.compatible = "qca,qca9379" },
 	{	.compatible = "qca,wcn3990" },
 	{}
 };
@@ -88,7 +87,7 @@ static int bt_vreg_enable(struct bt_power_vreg_data *vreg)
 		}
 
 		if (vreg->load_uA >= 0) {
-			rc = regulator_set_optimum_mode(vreg->reg,
+			rc = regulator_set_load(vreg->reg,
 					vreg->load_uA);
 			if (rc < 0) {
 				BT_PWR_ERR("vreg_set_mode(%s) failed rc=%d\n",
@@ -138,7 +137,7 @@ static int bt_vreg_disable(struct bt_power_vreg_data *vreg)
 			}
 		}
 		if (vreg->load_uA >= 0) {
-			rc = regulator_set_optimum_mode(vreg->reg, 0);
+			rc = regulator_set_load(vreg->reg, 0);
 			if (rc < 0) {
 				BT_PWR_ERR("vreg_set_mode(%s) failed rc=%d\n",
 						vreg->name, rc);
@@ -249,7 +248,7 @@ static int bluetooth_power(int on)
 				goto chip_pwd_fail;
 			}
 		}
-		if (bt_power_pdata->bt_gpio_sys_rst) {
+		if (bt_power_pdata->bt_gpio_sys_rst > 0) {
 			rc = bt_configure_gpios(on);
 			if (rc < 0) {
 				BT_PWR_ERR("bt_power gpio config failed");
@@ -259,7 +258,7 @@ static int bluetooth_power(int on)
 	} else {
 		bt_configure_gpios(on);
 gpio_fail:
-		if (bt_power_pdata->bt_gpio_sys_rst)
+		if (bt_power_pdata->bt_gpio_sys_rst > 0)
 			gpio_free(bt_power_pdata->bt_gpio_sys_rst);
 		bt_vreg_disable(bt_power_pdata->bt_chip_pwd);
 chip_pwd_fail:
@@ -441,46 +440,44 @@ static int bt_power_populate_dt_pinfo(struct platform_device *pdev)
 		bt_power_pdata->bt_gpio_sys_rst =
 			of_get_named_gpio(pdev->dev.of_node,
 						"qca,bt-reset-gpio", 0);
-		if (bt_power_pdata->bt_gpio_sys_rst < 0) {
+		if (bt_power_pdata->bt_gpio_sys_rst < 0)
 			BT_PWR_ERR("bt-reset-gpio not provided in device tree");
-			return bt_power_pdata->bt_gpio_sys_rst;
-		}
+
 		rc = bt_dt_parse_vreg_info(&pdev->dev,
 					&bt_power_pdata->bt_vdd_core,
 					"qca,bt-vdd-core");
 		if (rc < 0)
-			return rc;
+			BT_PWR_ERR("bt-vdd-core not provided in device tree");
 
 		rc = bt_dt_parse_vreg_info(&pdev->dev,
 					&bt_power_pdata->bt_vdd_io,
 					"qca,bt-vdd-io");
 		if (rc < 0)
-			return rc;
+			BT_PWR_ERR("bt-vdd-io not provided in device tree");
 
 		rc = bt_dt_parse_vreg_info(&pdev->dev,
 					&bt_power_pdata->bt_vdd_xtal,
 					"qca,bt-vdd-xtal");
 		if (rc < 0)
-			return rc;
+			BT_PWR_ERR("bt-vdd-xtal not provided in device tree");
 
 		rc = bt_dt_parse_vreg_info(&pdev->dev,
 					&bt_power_pdata->bt_vdd_pa,
 					"qca,bt-vdd-pa");
 		if (rc < 0)
-			return rc;
+			BT_PWR_ERR("bt-vdd-pa not provided in device tree");
 
 		rc = bt_dt_parse_vreg_info(&pdev->dev,
 					&bt_power_pdata->bt_vdd_ldo,
 					"qca,bt-vdd-ldo");
 		if (rc < 0)
-			return rc;
+			BT_PWR_ERR("bt-vdd-ldo not provided in device tree");
 
 		rc = bt_dt_parse_vreg_info(&pdev->dev,
 					&bt_power_pdata->bt_chip_pwd,
 					"qca,bt-chip-pwd");
 		if (rc < 0)
-			return rc;
-
+			BT_PWR_ERR("bt-chip-pwd not provided in device tree");
 	}
 
 	bt_power_pdata->bt_power_setup = bluetooth_power;
@@ -576,7 +573,6 @@ static void __exit bluetooth_power_exit(void)
 
 MODULE_LICENSE("GPL v2");
 MODULE_DESCRIPTION("MSM Bluetooth power control driver");
-MODULE_VERSION("1.40");
 
 module_init(bluetooth_power_init);
 module_exit(bluetooth_power_exit);

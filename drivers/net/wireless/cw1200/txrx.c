@@ -1079,7 +1079,7 @@ void cw1200_rx_cb(struct cw1200_common *priv,
 
 	hdr->band = ((arg->channel_number & 0xff00) ||
 		     (arg->channel_number > 14)) ?
-			IEEE80211_BAND_5GHZ : IEEE80211_BAND_2GHZ;
+			NL80211_BAND_5GHZ : NL80211_BAND_2GHZ;
 	hdr->freq = ieee80211_channel_to_frequency(
 			arg->channel_number,
 			hdr->band);
@@ -1429,7 +1429,7 @@ void cw1200_link_id_gc_work(struct work_struct *work)
 				priv->link_id_map &= ~mask;
 				priv->sta_asleep_mask &= ~mask;
 				priv->pspoll_mask &= ~mask;
-				memset(map_link.mac_addr, 0, ETH_ALEN);
+				eth_zero_addr(map_link.mac_addr);
 				spin_unlock_bh(&priv->ps_state_lock);
 				reset.link_id = i + 1;
 				wsm_reset(priv, &reset);

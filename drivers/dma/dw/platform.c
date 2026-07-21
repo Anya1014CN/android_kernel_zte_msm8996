@@ -15,6 +15,7 @@
 #include <linux/module.h>
 #include <linux/device.h>
 #include <linux/clk.h>
+#include <linux/pm_runtime.h>
 #include <linux/platform_device.h>
 #include <linux/dmaengine.h>
 #include <linux/dma-mapping.h>
@@ -86,13 +87,20 @@ static void dw_dma_acpi_controller_register(struct dw_dma *dw)
 	dma_cap_set(DMA_SLAVE, info->dma_cap);
 	info->filter_fn = dw_dma_acpi_filter;
 
-	ret = devm_acpi_dma_controller_register(dev, acpi_dma_simple_xlate,
-						info);
+	ret = acpi_dma_controller_register(dev, acpi_dma_simple_xlate, info);
 	if (ret)
 		dev_err(dev, "could not register acpi_dma_controller\n");
 }
+
+static void dw_dma_acpi_controller_free(struct dw_dma *dw)
+{
+	struct device *dev = dw->dma.dev;
+
+	acpi_dma_controller_free(dev);
+}
 #else /* !CONFIG_ACPI */
 static inline void dw_dma_acpi_controller_register(struct dw_dma *dw) {}
+static inline void dw_dma_acpi_controller_free(struct dw_dma *dw) {}
 #endif /* !CONFIG_ACPI */
 
 #ifdef CONFIG_OF
@@ -101,7 +109,7 @@ dw_dma_parse_dt(struct platform_device *pdev)
 {
 	struct device_node *np = pdev->dev.of_node;
 	struct dw_dma_platform_data *pdata;
-	u32 tmp, arr[4];
+	u32 tmp, arr[DW_DMA_MAX_NR_MASTERS];
 
 	if (!np) {
 		dev_err(&pdev->dev, "Missing DT data\n");
@@ -128,7 +136,7 @@ dw_dma_parse_dt(struct platform_device *pdev)
 		pdata->block_size = tmp;
 
 	if (!of_property_read_u32(np, "dma-masters", &tmp)) {
-		if (tmp > 4)
+		if (tmp > DW_DMA_MAX_NR_MASTERS)
 			return NULL;
 
 		pdata->nr_masters = tmp;
@@ -154,6 +162,7 @@ static int dw_probe(struct platform_device *pdev)
 	struct dw_dma_chip *chip;
 	struct device *dev = &pdev->dev;
 	struct resource *mem;
+	const struct acpi_device_id *id;
 	struct dw_dma_platform_data *pdata;
 	int err;
 
@@ -177,6 +186,11 @@ static int dw_probe(struct platform_device *pdev)
 	pdata = dev_get_platdata(dev);
 	if (!pdata)
 		pdata = dw_dma_parse_dt(pdev);
+	if (!pdata && has_acpi_companion(dev)) {
+		id = acpi_match_device(dev->driver->acpi_match_table, dev);
+		if (id)
+			pdata = (struct dw_dma_platform_data *)id->driver_data;
+	}
 
 	chip->dev = dev;
 
@@ -186,6 +200,8 @@ static int dw_probe(struct platform_device *pdev)
 	err = clk_prepare_enable(chip->clk);
 	if (err)
 		return err;
+
+	pm_runtime_enable(&pdev->dev);
 
 	err = dw_dma_probe(chip, pdata);
 	if (err)
@@ -207,6 +223,7 @@ static int dw_probe(struct platform_device *pdev)
 	return 0;
 
 err_dw_dma_probe:
+	pm_runtime_disable(&pdev->dev);
 	clk_disable_unprepare(chip->clk);
 	return err;
 }
@@ -215,10 +232,14 @@ static int dw_remove(struct platform_device *pdev)
 {
 	struct dw_dma_chip *chip = platform_get_drvdata(pdev);
 
+	if (ACPI_HANDLE(&pdev->dev))
+		dw_dma_acpi_controller_free(chip->dw);
+
 	if (pdev->dev.of_node)
 		of_dma_controller_free(pdev->dev.of_node);
 
 	dw_dma_remove(chip);
+	pm_runtime_disable(&pdev->dev);
 	clk_disable_unprepare(chip->clk);
 
 	return 0;
@@ -241,8 +262,17 @@ MODULE_DEVICE_TABLE(of, dw_dma_of_id_table);
 #endif
 
 #ifdef CONFIG_ACPI
+static struct dw_dma_platform_data dw_dma_acpi_pdata = {
+	.nr_channels = 8,
+	.is_private = true,
+	.chan_allocation_order = CHAN_ALLOCATION_ASCENDING,
+	.chan_priority = CHAN_PRIORITY_ASCENDING,
+	.block_size = 4095,
+	.nr_masters = 2,
+};
+
 static const struct acpi_device_id dw_dma_acpi_id_table[] = {
-	{ "INTL9C60", 0 },
+	{ "INTL9C60", (kernel_ulong_t)&dw_dma_acpi_pdata },
 	{ }
 };
 MODULE_DEVICE_TABLE(acpi, dw_dma_acpi_id_table);

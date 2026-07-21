@@ -58,12 +58,6 @@
  *
  * Since "struct usb_bus" is so thin, you can't share much code in it.
  * This framework is a layer over that, and should be more sharable.
- *
- * @authorized_default: Specifies if new devices are authorized to
- *                      connect by default or they require explicit
- *                      user space authorization; this bit is settable
- *                      through /sys/class/usb_host/X/authorized_default.
- *                      For the rest is RO, so we don't lock to r/w it.
  */
 
 /*-------------------------------------------------------------------------*/
@@ -93,7 +87,7 @@ struct usb_hcd {
 
 	struct timer_list	rh_timer;	/* drives root-hub polling */
 	struct urb		*status_urb;	/* the current status urb */
-#ifdef CONFIG_PM_RUNTIME
+#ifdef CONFIG_PM
 	struct work_struct	wakeup_work;	/* for remote wakeup */
 #endif
 
@@ -120,6 +114,8 @@ struct usb_hcd {
 #define HCD_FLAG_WAKEUP_PENDING		4	/* root hub is resuming? */
 #define HCD_FLAG_RH_RUNNING		5	/* root hub is running? */
 #define HCD_FLAG_DEAD			6	/* controller has died? */
+#define HCD_FLAG_INTF_AUTHORIZED	7	/* authorize interfaces? */
+#define HCD_FLAG_DEV_AUTHORIZED		8	/* authorize devices? */
 
 	/* The flags can be tested using these macros; they are likely to
 	 * be slightly faster than test_bit().
@@ -131,6 +127,22 @@ struct usb_hcd {
 #define HCD_RH_RUNNING(hcd)	((hcd)->flags & (1U << HCD_FLAG_RH_RUNNING))
 #define HCD_DEAD(hcd)		((hcd)->flags & (1U << HCD_FLAG_DEAD))
 
+	/*
+	 * Specifies if interfaces are authorized by default
+	 * or they require explicit user space authorization; this bit is
+	 * settable through /sys/class/usb_host/X/interface_authorized_default
+	 */
+#define HCD_INTF_AUTHORIZED(hcd) \
+	((hcd)->flags & (1U << HCD_FLAG_INTF_AUTHORIZED))
+
+	/*
+	 * Specifies if devices are authorized by default
+	 * or they require explicit user space authorization; this bit is
+	 * settable through /sys/class/usb_host/X/authorized_default
+	 */
+#define HCD_DEV_AUTHORIZED(hcd) \
+	((hcd)->flags & (1U << HCD_FLAG_DEV_AUTHORIZED))
+
 	/* Flags that get set only during HCD registration or removal. */
 	unsigned		rh_registered:1;/* is root hub registered? */
 	unsigned		rh_pollable:1;	/* may we poll the root hub? */
@@ -141,7 +153,6 @@ struct usb_hcd {
 	 * support the new root-hub polling mechanism. */
 	unsigned		uses_new_polling:1;
 	unsigned		wireless:1;	/* Wireless USB HCD */
-	unsigned		authorized_default:1;
 	unsigned		has_tt:1;	/* Integrated TT in root hub */
 	unsigned		amd_resume_bug:1; /* AMD remote wakeup quirk */
 	unsigned		can_do_streams:1; /* HC supports streams */
@@ -169,6 +180,7 @@ struct usb_hcd {
 	 * bandwidth_mutex should be dropped after a successful control message
 	 * to the device, or resetting the bandwidth after a failed attempt.
 	 */
+	struct mutex		*address0_mutex;
 	struct mutex		*bandwidth_mutex;
 	struct usb_hcd		*shared_hcd;
 	struct usb_hcd		*primary_hcd;
@@ -235,12 +247,11 @@ struct hc_driver {
 #define	HCD_MEMORY	0x0001		/* HC regs use memory (else I/O) */
 #define	HCD_LOCAL_MEM	0x0002		/* HC needs local memory */
 #define	HCD_SHARED	0x0004		/* Two (or more) usb_hcds share HW */
-#define	HCD_RT_OLD_ENUM	0x0008		/* HC supports short enumeration
-					   on root port */
 #define	HCD_USB11	0x0010		/* USB 1.1 */
 #define	HCD_USB2	0x0020		/* USB 2.0 */
 #define	HCD_USB25	0x0030		/* Wireless USB 1.0 (USB 2.5)*/
 #define	HCD_USB3	0x0040		/* USB 3.0 */
+#define	HCD_USB31	0x0050		/* USB 3.1 */
 #define	HCD_MASK	0x0070
 #define	HCD_BH		0x0100		/* URB complete in BH context */
 
@@ -383,10 +394,17 @@ struct hc_driver {
 	int	(*disable_usb3_lpm_timeout)(struct usb_hcd *,
 			struct usb_device *, enum usb3_link_state state);
 	int	(*find_raw_port_number)(struct usb_hcd *, int);
-	void	(*log_urb)(struct urb *urb, char *event, unsigned extra);
-	void	(*dump_regs)(struct usb_hcd *);
-	void	(*set_autosuspend_delay)(struct usb_device *);
-	void	(*reset_sof_bug_handler)(struct usb_hcd *hcd, u32 val);
+	/* Call for power on/off the port if necessary */
+	int	(*port_power)(struct usb_hcd *hcd, int portnum, bool enable);
+
+	int (*sec_event_ring_setup)(struct usb_hcd *hcd, unsigned intr_num);
+	int (*sec_event_ring_cleanup)(struct usb_hcd *hcd, unsigned intr_num);
+	dma_addr_t (*get_sec_event_ring_dma_addr)(struct usb_hcd *hcd,
+			unsigned intr_num);
+	dma_addr_t (*get_xfer_ring_dma_addr)(struct usb_hcd *hcd,
+			struct usb_device *udev, struct usb_host_endpoint *ep);
+	dma_addr_t (*get_dcba_dma_addr)(struct usb_hcd *hcd,
+			struct usb_device *udev);
 };
 
 static inline int hcd_giveback_urb_in_bh(struct usb_hcd *hcd)
@@ -425,6 +443,17 @@ extern int usb_hcd_alloc_bandwidth(struct usb_device *udev,
 		struct usb_host_interface *old_alt,
 		struct usb_host_interface *new_alt);
 extern int usb_hcd_get_frame_number(struct usb_device *udev);
+extern int usb_hcd_sec_event_ring_setup(struct usb_device *udev,
+	unsigned intr_num);
+extern int usb_hcd_sec_event_ring_cleanup(struct usb_device *udev,
+	unsigned intr_num);
+extern dma_addr_t
+usb_hcd_get_sec_event_ring_dma_addr(struct usb_device *udev,
+		unsigned intr_num);
+extern dma_addr_t usb_hcd_get_dcba_dma_addr(struct usb_device *udev);
+extern dma_addr_t
+usb_hcd_get_xfer_ring_dma_addr(struct usb_device *udev,
+	struct usb_host_endpoint *ep);
 
 extern struct usb_hcd *usb_create_hcd(const struct hc_driver *driver,
 		struct device *dev, const char *bus_name);
@@ -550,9 +579,9 @@ extern void usb_ep0_reinit(struct usb_device *);
 	((USB_DIR_IN|USB_TYPE_STANDARD|USB_RECIP_INTERFACE)<<8)
 
 #define EndpointRequest \
-	((USB_DIR_IN|USB_TYPE_STANDARD|USB_RECIP_INTERFACE)<<8)
+	((USB_DIR_IN|USB_TYPE_STANDARD|USB_RECIP_ENDPOINT)<<8)
 #define EndpointOutRequest \
-	((USB_DIR_OUT|USB_TYPE_STANDARD|USB_RECIP_INTERFACE)<<8)
+	((USB_DIR_OUT|USB_TYPE_STANDARD|USB_RECIP_ENDPOINT)<<8)
 
 /* class requests from the USB 2.0 hub spec, table 11-15 */
 /* GetBusState and SetHubDescriptor are optional, omitted */
@@ -567,9 +596,9 @@ extern void usb_ep0_reinit(struct usb_device *);
 
 /*-------------------------------------------------------------------------*/
 
-/* class requests from USB 3.0 hub spec, table 10-5 */
-#define SetHubDepth		(0x3000 | HUB_SET_DEPTH)
-#define GetPortErrorCount	(0x8000 | HUB_GET_PORT_ERR_COUNT)
+/* class requests from USB 3.1 hub spec, table 10-7 */
+#define SetHubDepth		(0x2000 | HUB_SET_DEPTH)
+#define GetPortErrorCount	(0xa300 | HUB_GET_PORT_ERR_COUNT)
 
 /*
  * Generic bandwidth allocation constants/support
@@ -625,8 +654,6 @@ extern struct list_head usb_bus_list;
 extern struct mutex usb_bus_list_lock;
 extern wait_queue_head_t usb_kill_urb_queue;
 
-extern int usb_find_interface_driver(struct usb_device *dev,
-	struct usb_interface *interface);
 
 #define usb_endpoint_out(ep_dir)	(!((ep_dir) & USB_DIR_IN))
 
@@ -634,16 +661,13 @@ extern int usb_find_interface_driver(struct usb_device *dev,
 extern void usb_root_hub_lost_power(struct usb_device *rhdev);
 extern int hcd_bus_suspend(struct usb_device *rhdev, pm_message_t msg);
 extern int hcd_bus_resume(struct usb_device *rhdev, pm_message_t msg);
-#endif /* CONFIG_PM */
-
-#ifdef CONFIG_PM_RUNTIME
 extern void usb_hcd_resume_root_hub(struct usb_hcd *hcd);
 #else
 static inline void usb_hcd_resume_root_hub(struct usb_hcd *hcd)
 {
 	return;
 }
-#endif /* CONFIG_PM_RUNTIME */
+#endif /* CONFIG_PM */
 
 /*-------------------------------------------------------------------------*/
 

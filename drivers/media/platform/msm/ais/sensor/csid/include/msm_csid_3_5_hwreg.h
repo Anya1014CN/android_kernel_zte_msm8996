@@ -1,4 +1,4 @@
-/* Copyright (c) 2015-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2015-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -15,9 +15,9 @@
 
 #include <sensor/csid/msm_csid.h>
 
-uint8_t csid_lane_assign_v3_5[PHY_LANE_MAX] = {0, 4, 1, 2, 3};
+static uint8_t csid_lane_assign_v3_5[PHY_LANE_MAX] = {0, 4, 1, 2, 3};
 
-struct csid_reg_parms_t csid_v3_5 = {
+static struct csid_reg_parms_t csid_v3_5 = {
 	/* MIPI	CSID registers */
 	0x0,
 	0x4,
@@ -56,7 +56,12 @@ struct csid_reg_parms_t csid_v3_5 = {
 	0xC,
 	0x84,
 	0xA4,
-	0x7f010800,
+	/*
+	 * Default IRQ enabled:
+	 * FIFO overflow, Unbounded frame, Stream underflow,
+	 * Error ECC,       Error CRC,            Reset done
+	 */
+	0x73000800,
 	20,
 	17,
 	16,

@@ -28,15 +28,7 @@
 
 #include <linux/compiler.h>
 
-#ifdef BIT
-#undef BIT
-#endif
-#define BIT(x)	(1 << (x))
-
-#define WLAN_ETHHDR_LEN		14
-#define WLAN_ETHADDR_LEN	6
 #define WLAN_IEEE_OUI_LEN	3
-#define WLAN_ADDR_LEN		6
 #define WLAN_CRC_LEN		4
 #define WLAN_BSSID_LEN		6
 #define WLAN_BSS_TS_LEN		8
@@ -52,7 +44,6 @@
 
 #define WLAN_MIN_ETHFRM_LEN	60
 #define WLAN_MAX_ETHFRM_LEN	1514
-#define WLAN_ETHHDR_LEN		14
 
 #define P80211CAPTURE_VERSION	0x80211001
 
@@ -235,11 +226,6 @@ enum WIFI_REG_DOMAIN {
 #define GetPrivacy(pbuf)	(((*(unsigned short *)(pbuf)) & \
 				le16_to_cpu(_PRIVACY_)) != 0)
 
-#define ClearPrivacy(pbuf) ({ \
-	*(unsigned short *)(pbuf) &= (~cpu_to_le16(_PRIVACY_)); \
-})
-
-
 #define GetOrder(pbuf)	(((*(unsigned short *)(pbuf)) & \
 			le16_to_cpu(_ORDER_)) != 0)
 
@@ -248,9 +234,9 @@ enum WIFI_REG_DOMAIN {
 
 #define SetFrameType(pbuf, type)	\
 	do {	\
-		*(unsigned short *)(pbuf) &= __constant_cpu_to_le16(~(BIT(3) | \
+		*(unsigned short *)(pbuf) &= cpu_to_le16(~(BIT(3) | \
 		BIT(2))); \
-		*(unsigned short *)(pbuf) |= __constant_cpu_to_le16(type); \
+		*(unsigned short *)(pbuf) |= cpu_to_le16(type); \
 	} while (0)
 
 #define GetFrameSubType(pbuf)	(cpu_to_le16(*(unsigned short *)(pbuf)) & \
@@ -269,16 +255,6 @@ enum WIFI_REG_DOMAIN {
 
 #define GetFragNum(pbuf)	(cpu_to_le16(*(unsigned short *)((addr_t)\
 				(pbuf) + 22)) & 0x0f)
-
-#define GetTupleCache(pbuf)	(cpu_to_le16(*(unsigned short *)\
-				((addr_t)(pbuf) + 22)))
-
-#define SetFragNum(pbuf, num) ({ \
-	*(unsigned short *)((addr_t)(pbuf) + 22) = \
-	((*(unsigned short *)((addr_t)(pbuf) + 22)) & \
-	le16_to_cpu(~(0x000f))) | \
-	cpu_to_le16(0x0f & (num));     \
-})
 
 #define SetSeqNum(pbuf, num) ({ \
 	*(unsigned short *)((addr_t)(pbuf) + 22) = \
@@ -306,16 +282,8 @@ enum WIFI_REG_DOMAIN {
 
 #define GetAMsdu(pbuf) (((le16_to_cpu(*(unsigned short *)pbuf)) >> 7) & 0x1)
 
-#define SetAMsdu(pbuf, amsdu) ({ \
-	*(unsigned short *)(pbuf) |= cpu_to_le16((amsdu & 1) << 7); \
-})
-
 #define GetAid(pbuf)	(cpu_to_le16(*(unsigned short *)((addr_t)(pbuf) + 2)) \
 			& 0x3fff)
-
-#define GetTid(pbuf)	(cpu_to_le16(*(unsigned short *)((addr_t)(pbuf) + \
-			(((GetToDs(pbuf) << 1)|GetFrDs(pbuf)) == 3 ? \
-			30 : 24))) & 0x000f)
 
 #define GetAddr1Ptr(pbuf)	((unsigned char *)((addr_t)(pbuf) + 4))
 
@@ -498,7 +466,7 @@ static inline unsigned char *get_hdr_bssid(unsigned char *pframe)
 /* block-ack parameters */
 #define IEEE80211_ADDBA_PARAM_POLICY_MASK 0x0002
 #define IEEE80211_ADDBA_PARAM_TID_MASK 0x003C
-#define IEEE80211_ADDBA_PARAM_BUF_SIZE_MASK 0xFFA0
+#define IEEE80211_ADDBA_PARAM_BUF_SIZE_MASK 0xFFC0
 #define IEEE80211_DELBA_PARAM_TID_MASK 0xF000
 #define IEEE80211_DELBA_PARAM_INITIATOR_MASK 0x0800
 
@@ -591,13 +559,6 @@ struct ieee80211_ht_addt_info {
 #define IEEE80211_HT_IE_HT_PROTECTION		0x0003
 #define IEEE80211_HT_IE_NON_GF_STA_PRSNT	0x0004
 #define IEEE80211_HT_IE_NON_HT_STA_PRSNT	0x0010
-
-/* block-ack parameters */
-#define IEEE80211_ADDBA_PARAM_POLICY_MASK 0x0002
-#define IEEE80211_ADDBA_PARAM_TID_MASK 0x003C
-#define IEEE80211_ADDBA_PARAM_BUF_SIZE_MASK 0xFFA0
-#define IEEE80211_DELBA_PARAM_TID_MASK 0xF000
-#define IEEE80211_DELBA_PARAM_INITIATOR_MASK 0x0800
 
 /*
  * A-PMDU buffer sizes

@@ -1,4 +1,4 @@
-/* Copyright (c) 2014-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014-2016,2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -180,6 +180,7 @@ static int gpubw_start(struct devfreq *devfreq)
 static int gpubw_stop(struct devfreq *devfreq)
 {
 	struct devfreq_msm_adreno_tz_data *priv = devfreq->data;
+
 	if (priv) {
 		kfree(priv->bus.up);
 		kfree(priv->bus.down);
@@ -212,9 +213,11 @@ static int devfreq_gpubw_event_handler(struct devfreq *devfreq,
 	case DEVFREQ_GOV_SUSPEND:
 		{
 			struct devfreq_msm_adreno_tz_data *priv = devfreq->data;
-			priv->bus.total_time = 0;
-			priv->bus.gpu_time = 0;
-			priv->bus.ram_time = 0;
+			if (priv) {
+				priv->bus.total_time = 0;
+				priv->bus.gpu_time = 0;
+				priv->bus.ram_time = 0;
+			}
 		}
 		break;
 	default:
@@ -245,7 +248,6 @@ static void __exit devfreq_gpubw_exit(void)
 	if (ret)
 		pr_err("%s: failed remove governor %d\n", __func__, ret);
 
-	return;
 }
 module_exit(devfreq_gpubw_exit);
 

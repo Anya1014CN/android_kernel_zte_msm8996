@@ -346,10 +346,13 @@ static int max3109_detect(struct device *dev)
 	unsigned int val = 0;
 	int ret;
 
-	ret = regmap_read(s->regmap, MAX310X_REVID_REG, &val);
+	ret = regmap_write(s->regmap, MAX310X_GLOBALCMD_REG,
+			   MAX310X_EXTREG_ENBL);
 	if (ret)
 		return ret;
 
+	regmap_read(s->regmap, MAX310X_REVID_EXTREG, &val);
+	regmap_write(s->regmap, MAX310X_GLOBALCMD_REG, MAX310X_EXTREG_DSBL);
 	if (((val & MAX310x_REV_MASK) != MAX3109_REV_ID)) {
 		dev_err(dev,
 			"%s ID 0x%02x does not match\n", s->devtype->name, val);
@@ -483,37 +486,48 @@ static bool max310x_reg_precious(struct device *dev, unsigned int reg)
 
 static int max310x_set_baud(struct uart_port *port, int baud)
 {
-	unsigned int mode = 0, clk = port->uartclk, div = clk / baud;
+	unsigned int mode = 0, div = 0, frac = 0, c = 0, F = 0;
 
-	/* Check for minimal value for divider */
-	if (div < 16)
-		div = 16;
-
-	if (clk % baud && (div / 16) < 0x8000) {
+	/*
+	 * Calculate the integer divisor first. Select a proper mode
+	 * in case if the requested baud is too high for the pre-defined
+	 * clocks frequency.
+	 */
+	div = port->uartclk / baud;
+	if (div < 8) {
+		/* Mode x4 */
+		c = 4;
+		mode = MAX310X_BRGCFG_4XMODE_BIT;
+	} else if (div < 16) {
 		/* Mode x2 */
+		c = 8;
 		mode = MAX310X_BRGCFG_2XMODE_BIT;
-		clk = port->uartclk * 2;
-		div = clk / baud;
-
-		if (clk % baud && (div / 16) < 0x8000) {
-			/* Mode x4 */
-			mode = MAX310X_BRGCFG_4XMODE_BIT;
-			clk = port->uartclk * 4;
-			div = clk / baud;
-		}
+	} else {
+		c = 16;
 	}
 
-	max310x_port_write(port, MAX310X_BRGDIVMSB_REG, (div / 16) >> 8);
-	max310x_port_write(port, MAX310X_BRGDIVLSB_REG, div / 16);
-	max310x_port_write(port, MAX310X_BRGCFG_REG, (div % 16) | mode);
+	/* Calculate the divisor in accordance with the fraction coefficient */
+	div /= c;
+	F = c*baud;
 
-	return DIV_ROUND_CLOSEST(clk, div);
+	/* Calculate the baud rate fraction */
+	if (div > 0)
+		frac = (16*(port->uartclk % F)) / F;
+	else
+		div = 1;
+
+	max310x_port_write(port, MAX310X_BRGDIVMSB_REG, div >> 8);
+	max310x_port_write(port, MAX310X_BRGDIVLSB_REG, div);
+	max310x_port_write(port, MAX310X_BRGCFG_REG, frac | mode);
+
+	/* Return the actual baud rate we just programmed */
+	return (16*port->uartclk) / (c*(16*div + frac));
 }
 
 static int max310x_update_best_err(unsigned long f, long *besterr)
 {
 	/* Use baudrate 115200 for calculate error */
-	long err = f % (115200 * 16);
+	long err = f % (460800 * 16);
 
 	if ((*besterr < 0) || (*besterr > err)) {
 		*besterr = err;
@@ -568,7 +582,7 @@ static int max310x_set_ref_clk(struct max310x_port *s, unsigned long freq,
 	}
 
 	/* Configure clock source */
-	clksrc = xtal ? MAX310X_CLKSRC_CRYST_BIT : MAX310X_CLKSRC_EXTCLK_BIT;
+	clksrc = MAX310X_CLKSRC_EXTCLK_BIT | (xtal ? MAX310X_CLKSRC_CRYST_BIT : 0);
 
 	/* Configure PLL */
 	if (pllcfg) {
@@ -749,12 +763,9 @@ static void max310x_start_tx(struct uart_port *port)
 
 static unsigned int max310x_tx_empty(struct uart_port *port)
 {
-	unsigned int lvl, sts;
+	u8 lvl = max310x_port_read(port, MAX310X_TXFIFOLVL_REG);
 
-	lvl = max310x_port_read(port, MAX310X_TXFIFOLVL_REG);
-	sts = max310x_port_read(port, MAX310X_IRQSTS_REG);
-
-	return ((sts & MAX310X_IRQ_TXEMPTY_BIT) && !lvl) ? TIOCSER_TEMT : 0;
+	return lvl ? 0 : TIOCSER_TEMT;
 }
 
 static unsigned int max310x_get_mctrl(struct uart_port *port)
@@ -874,55 +885,37 @@ static void max310x_set_termios(struct uart_port *port,
 	uart_update_timeout(port, termios->c_cflag, baud);
 }
 
-static int max310x_ioctl(struct uart_port *port, unsigned int cmd,
-			 unsigned long arg)
+static int max310x_rs485_config(struct uart_port *port,
+				struct serial_rs485 *rs485)
 {
-#if defined(TIOCSRS485) && defined(TIOCGRS485)
-	struct serial_rs485 rs485;
 	unsigned int val;
 
-	switch (cmd) {
-	case TIOCSRS485:
-		if (copy_from_user(&rs485, (void __user *)arg, sizeof(rs485)))
-			return -EFAULT;
-		if (rs485.delay_rts_before_send > 0x0f ||
-		    rs485.delay_rts_after_send > 0x0f)
-			return -ERANGE;
-		val = (rs485.delay_rts_before_send << 4) |
-		      rs485.delay_rts_after_send;
-		max310x_port_write(port, MAX310X_HDPIXDELAY_REG, val);
-		if (rs485.flags & SER_RS485_ENABLED) {
-			max310x_port_update(port, MAX310X_MODE1_REG,
-					    MAX310X_MODE1_TRNSCVCTRL_BIT,
-					    MAX310X_MODE1_TRNSCVCTRL_BIT);
-			max310x_port_update(port, MAX310X_MODE2_REG,
-					    MAX310X_MODE2_ECHOSUPR_BIT,
-					    MAX310X_MODE2_ECHOSUPR_BIT);
-		} else {
-			max310x_port_update(port, MAX310X_MODE1_REG,
-					    MAX310X_MODE1_TRNSCVCTRL_BIT, 0);
-			max310x_port_update(port, MAX310X_MODE2_REG,
-					    MAX310X_MODE2_ECHOSUPR_BIT, 0);
-		}
-		return 0;
-	case TIOCGRS485:
-		memset(&rs485, 0, sizeof(rs485));
-		val = max310x_port_read(port, MAX310X_MODE1_REG);
-		rs485.flags = (val & MAX310X_MODE1_TRNSCVCTRL_BIT) ?
-			      SER_RS485_ENABLED : 0;
-		rs485.flags |= SER_RS485_RTS_ON_SEND;
-		val = max310x_port_read(port, MAX310X_HDPIXDELAY_REG);
-		rs485.delay_rts_before_send = val >> 4;
-		rs485.delay_rts_after_send = val & 0x0f;
-		if (copy_to_user((void __user *)arg, &rs485, sizeof(rs485)))
-			return -EFAULT;
-		return 0;
-	default:
-		break;
-	}
-#endif
+	if (rs485->delay_rts_before_send > 0x0f ||
+		    rs485->delay_rts_after_send > 0x0f)
+		return -ERANGE;
 
-	return -ENOIOCTLCMD;
+	val = (rs485->delay_rts_before_send << 4) |
+		rs485->delay_rts_after_send;
+	max310x_port_write(port, MAX310X_HDPIXDELAY_REG, val);
+	if (rs485->flags & SER_RS485_ENABLED) {
+		max310x_port_update(port, MAX310X_MODE1_REG,
+				MAX310X_MODE1_TRNSCVCTRL_BIT,
+				MAX310X_MODE1_TRNSCVCTRL_BIT);
+		max310x_port_update(port, MAX310X_MODE2_REG,
+				MAX310X_MODE2_ECHOSUPR_BIT,
+				MAX310X_MODE2_ECHOSUPR_BIT);
+	} else {
+		max310x_port_update(port, MAX310X_MODE1_REG,
+				MAX310X_MODE1_TRNSCVCTRL_BIT, 0);
+		max310x_port_update(port, MAX310X_MODE2_REG,
+				MAX310X_MODE2_ECHOSUPR_BIT, 0);
+	}
+
+	rs485->flags &= SER_RS485_RTS_ON_SEND | SER_RS485_ENABLED;
+	memset(rs485->padding, 0, sizeof(rs485->padding));
+	port->rs485 = *rs485;
+
+	return 0;
 }
 
 static int max310x_startup(struct uart_port *port)
@@ -1017,7 +1010,6 @@ static const struct uart_ops max310x_ops = {
 	.release_port	= max310x_null_void,
 	.config_port	= max310x_config_port,
 	.verify_port	= max310x_verify_port,
-	.ioctl		= max310x_ioctl,
 };
 
 static int __maybe_unused max310x_suspend(struct device *dev)
@@ -1218,6 +1210,7 @@ static int max310x_probe(struct device *dev, struct max310x_devtype *devtype,
 		s->p[i].port.iobase	= i * 0x20;
 		s->p[i].port.membase	= (void __iomem *)~0;
 		s->p[i].port.uartclk	= uartclk;
+		s->p[i].port.rs485_config = max310x_rs485_config;
 		s->p[i].port.ops	= &max310x_ops;
 		/* Disable all interrupts */
 		max310x_port_write(&s->p[i].port, MAX310X_IRQEN_REG, 0);
@@ -1321,6 +1314,8 @@ static int max310x_spi_probe(struct spi_device *spi)
 	if (spi->dev.of_node) {
 		const struct of_device_id *of_id =
 			of_match_device(max310x_dt_ids, &spi->dev);
+		if (!of_id)
+			return -ENODEV;
 
 		devtype = (struct max310x_devtype *)of_id->data;
 	} else {
@@ -1353,7 +1348,6 @@ MODULE_DEVICE_TABLE(spi, max310x_id_table);
 static struct spi_driver max310x_uart_driver = {
 	.driver = {
 		.name		= MAX310X_NAME,
-		.owner		= THIS_MODULE,
 		.of_match_table	= of_match_ptr(max310x_dt_ids),
 		.pm		= &max310x_pm_ops,
 	},

@@ -718,7 +718,7 @@ icn_sendbuf(int channel, int ack, struct sk_buff *skb, icn_card *card)
 			return 0;
 		if (card->sndcount[channel] > ICN_MAX_SQUEUE)
 			return 0;
-#warning TODO test headroom or use skb->nb to flag ACK
+		/* TODO test headroom or use skb->nb to flag ACK */
 		nskb = skb_clone(skb, GFP_ATOMIC);
 		if (nskb) {
 			/* Push ACK flag as one
@@ -1609,7 +1609,7 @@ icn_setup(char *line)
 	if (ints[0] > 1)
 		membase = (unsigned long)ints[2];
 	if (str && *str) {
-		strcpy(sid, str);
+		strlcpy(sid, str, sizeof(sid));
 		icn_id = sid;
 		if ((p = strchr(sid, ','))) {
 			*p++ = 0;

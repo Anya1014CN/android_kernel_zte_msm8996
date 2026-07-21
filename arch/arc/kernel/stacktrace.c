@@ -39,11 +39,15 @@
 
 #ifdef CONFIG_ARC_DW2_UNWIND
 
-static void seed_unwind_frame_info(struct task_struct *tsk,
-				   struct pt_regs *regs,
-				   struct unwind_frame_info *frame_info)
+static int
+seed_unwind_frame_info(struct task_struct *tsk, struct pt_regs *regs,
+		       struct unwind_frame_info *frame_info)
 {
-	if (tsk == NULL && regs == NULL) {
+	/*
+	 * synchronous unwinding (e.g. dump_stack)
+	 *  - uses current values of SP and friends
+	 */
+	if (regs == NULL && (tsk == NULL || tsk == current)) {
 		unsigned long fp, sp, blink, ret;
 		frame_info->task = current;
 
@@ -61,6 +65,15 @@ static void seed_unwind_frame_info(struct task_struct *tsk,
 		frame_info->regs.r63 = ret;
 		frame_info->call_frame = 0;
 	} else if (regs == NULL) {
+		/*
+		 * Asynchronous unwinding of a likely sleeping task
+		 *  - first ensure it is actually sleeping
+		 *  - if so, it will be in __switch_to, kernel mode SP of task
+		 *    is safe-kept and BLINK at a well known location in there
+		 */
+
+		if (tsk->state == TASK_RUNNING)
+			return -1;
 
 		frame_info->task = tsk;
 
@@ -83,6 +96,10 @@ static void seed_unwind_frame_info(struct task_struct *tsk,
 		frame_info->call_frame = 0;
 
 	} else {
+		/*
+		 * Asynchronous unwinding of intr/exception
+		 *  - Just uses the pt_regs passed
+		 */
 		frame_info->task = tsk;
 
 		frame_info->regs.r27 = regs->fp;
@@ -91,36 +108,42 @@ static void seed_unwind_frame_info(struct task_struct *tsk,
 		frame_info->regs.r63 = regs->ret;
 		frame_info->call_frame = 0;
 	}
+
+	return 0;
 }
 
 #endif
 
-static noinline unsigned int
+notrace noinline unsigned int
 arc_unwind_core(struct task_struct *tsk, struct pt_regs *regs,
 		int (*consumer_fn) (unsigned int, void *), void *arg)
 {
 #ifdef CONFIG_ARC_DW2_UNWIND
-	int ret = 0;
+	int ret = 0, cnt = 0;
 	unsigned int address;
 	struct unwind_frame_info frame_info;
 
-	seed_unwind_frame_info(tsk, regs, &frame_info);
+	if (seed_unwind_frame_info(tsk, regs, &frame_info))
+		return 0;
 
 	while (1) {
 		address = UNW_PC(&frame_info);
 
-		if (address && __kernel_text_address(address)) {
-			if (consumer_fn(address, arg) == -1)
-				break;
-		}
+		if (!address || !__kernel_text_address(address))
+			break;
+
+		if (consumer_fn(address, arg) == -1)
+			break;
 
 		ret = arc_unwind(&frame_info);
-
-		if (ret == 0) {
-			frame_info.regs.r63 = frame_info.regs.r31;
-			continue;
-		} else {
+		if (ret)
 			break;
+
+		frame_info.regs.r63 = frame_info.regs.r31;
+
+		if (cnt++ > 128) {
+			printk("unwinder looping too long, aborting !\n");
+			return 0;
 		}
 	}
 

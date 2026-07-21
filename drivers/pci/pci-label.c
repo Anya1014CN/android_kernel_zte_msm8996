@@ -31,8 +31,6 @@
 #include <linux/pci-acpi.h>
 #include "pci.h"
 
-#define	DEVICE_LABEL_DSM	0x07
-
 #ifdef CONFIG_DMI
 enum smbios_attr_enum {
 	SMBIOS_ATTR_NONE = 0,
@@ -148,11 +146,6 @@ static inline void pci_remove_smbiosname_file(struct pci_dev *pdev)
 #endif
 
 #ifdef CONFIG_ACPI
-static const char device_label_dsm_uuid[] = {
-	0xD0, 0x37, 0xC9, 0xE5, 0x53, 0x35, 0x7A, 0x4D,
-	0x91, 0x17, 0xEA, 0x4D, 0x19, 0xC3, 0x43, 0x4D
-};
-
 enum acpi_attr_enum {
 	ACPI_ATTR_LABEL_SHOW,
 	ACPI_ATTR_INDEX_SHOW,
@@ -164,7 +157,7 @@ static void dsm_label_utf16s_to_utf8s(union acpi_object *obj, char *buf)
 	len = utf16s_to_utf8s((const wchar_t *)obj->buffer.pointer,
 			      obj->buffer.length,
 			      UTF16_LITTLE_ENDIAN,
-			      buf, PAGE_SIZE);
+			      buf, PAGE_SIZE - 1);
 	buf[len] = '\n';
 }
 
@@ -179,7 +172,7 @@ static int dsm_get_label(struct device *dev, char *buf,
 	if (!handle)
 		return -1;
 
-	obj = acpi_evaluate_dsm(handle, device_label_dsm_uuid, 0x2,
+	obj = acpi_evaluate_dsm(handle, pci_acpi_dsm_uuid, 0x2,
 				DEVICE_LABEL_DSM, NULL);
 	if (!obj)
 		return -1;
@@ -219,7 +212,7 @@ static bool device_has_dsm(struct device *dev)
 	if (!handle)
 		return false;
 
-	return !!acpi_check_dsm(handle, device_label_dsm_uuid, 0x2,
+	return !!acpi_check_dsm(handle, pci_acpi_dsm_uuid, 0x2,
 				1 << DEVICE_LABEL_DSM);
 }
 

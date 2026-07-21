@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2016, 2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -13,6 +13,7 @@
 #define pr_fmt(fmt) "%s: " fmt, __func__
 
 #include <linux/kernel.h>
+#include <linux/regmap.h>
 #include <linux/of.h>
 #include <linux/err.h>
 #include <linux/init.h>
@@ -24,6 +25,7 @@
 #include <linux/module.h>
 #include <linux/debugfs.h>
 #include <linux/spmi.h>
+#include <linux/platform_device.h>
 #include <linux/of_irq.h>
 #include <linux/interrupt.h>
 #include <linux/completion.h>
@@ -180,7 +182,6 @@ struct qpnp_vadc_chip {
 	struct device			*dev;
 	struct qpnp_adc_drv		*adc;
 	struct list_head		list;
-	struct dentry			*dent;
 	struct device			*vadc_hwmon;
 	bool				vadc_init_calib;
 	int				max_channels_available;
@@ -191,8 +192,6 @@ struct qpnp_vadc_chip {
 	bool				vadc_recalib_check;
 	u8				revision_ana_minor;
 	u8				revision_dig_major;
-	struct workqueue_struct		*high_thr_wq;
-	struct workqueue_struct		*low_thr_wq;
 	struct work_struct		trigger_high_thr_work;
 	struct work_struct		trigger_low_thr_work;
 	struct qpnp_vadc_mode_state	*state_copy;
@@ -219,8 +218,6 @@ static struct qpnp_vadc_scale_fn vadc_scale_fn[] = {
 	[SCALE_QRD_SKUH_BATT_THERM] = {qpnp_adc_scale_qrd_skuh_batt_therm},
 	[SCALE_NCP_03WF683_THERM] = {qpnp_adc_scale_therm_ncp03},
 	[SCALE_QRD_SKUT1_BATT_THERM] = {qpnp_adc_scale_qrd_skut1_batt_therm},
-	[SCALE_QRD_SKUC_BATT_THERM] = {qpnp_adc_scale_qrd_skuc_batt_therm},
-	[SCALE_QRD_SKUE_BATT_THERM] = {qpnp_adc_scale_qrd_skue_batt_therm},
 	[SCALE_PMI_CHG_TEMP] = {qpnp_adc_scale_pmi_chg_temp},
 };
 
@@ -235,7 +232,7 @@ static int32_t qpnp_vadc_read_reg(struct qpnp_vadc_chip *vadc, int16_t reg,
 {
 	int rc;
 
-	rc = spmi_ext_register_readl(vadc->adc->spmi->ctrl, vadc->adc->slave,
+	rc = regmap_bulk_read(vadc->adc->regmap,
 		(vadc->adc->offset + reg), data, len);
 	if (rc < 0) {
 		pr_err("qpnp adc read reg %d failed with %d\n", reg, rc);
@@ -250,7 +247,7 @@ static int32_t qpnp_vadc_write_reg(struct qpnp_vadc_chip *vadc, int16_t reg,
 {
 	int rc;
 
-	rc = spmi_ext_register_writel(vadc->adc->spmi->ctrl, vadc->adc->slave,
+	rc = regmap_bulk_write(vadc->adc->regmap,
 		(vadc->adc->offset + reg), buf, len);
 	if (rc < 0) {
 		pr_err("qpnp adc write reg %d failed with %d\n", reg, rc);
@@ -1491,7 +1488,7 @@ int32_t qpnp_vadc_calib_vref(struct qpnp_vadc_chip *vadc,
 	conv.mode_sel = ADC_OP_NORMAL_MODE << QPNP_VADC_OP_MODE_SHIFT;
 	conv.hw_settle_time = ADC_CHANNEL_HW_SETTLE_DELAY_0US;
 	conv.fast_avg_setup = ADC_FAST_AVG_SAMPLE_1;
-	conv.cal_val = calib_type;
+	conv.cal_val = (enum qpnp_adc_cal_val)calib_type;
 
 	if (vadc->vadc_hc) {
 		rc = qpnp_vadc_hc_configure(vadc, &conv);
@@ -1564,7 +1561,7 @@ int32_t qpnp_vadc_calib_gnd(struct qpnp_vadc_chip *vadc,
 	conv.mode_sel = ADC_OP_NORMAL_MODE << QPNP_VADC_OP_MODE_SHIFT;
 	conv.hw_settle_time = ADC_CHANNEL_HW_SETTLE_DELAY_0US;
 	conv.fast_avg_setup = ADC_FAST_AVG_SAMPLE_1;
-	conv.cal_val = calib_type;
+	conv.cal_val = (enum qpnp_adc_cal_val)calib_type;
 
 	if (vadc->vadc_hc) {
 		rc = qpnp_vadc_hc_configure(vadc, &conv);
@@ -1682,10 +1679,10 @@ static int32_t qpnp_vadc_calib_device(struct qpnp_vadc_chip *vadc)
 					(calib_read_1 - calib_read_2);
 	vadc->adc->amux_prop->chan_prop->adc_graph[CALIB_RATIOMETRIC].dx =
 					vadc->adc->adc_prop->adc_vdd_reference;
-	vadc->adc->amux_prop->chan_prop->adc_graph[CALIB_RATIOMETRIC].adc_vref
-					= calib_read_1;
-	vadc->adc->amux_prop->chan_prop->adc_graph[CALIB_RATIOMETRIC].adc_gnd
-					= calib_read_2;
+	vadc->adc->amux_prop->chan_prop->adc_graph[CALIB_RATIOMETRIC].adc_vref =
+					calib_read_1;
+	vadc->adc->amux_prop->chan_prop->adc_graph[CALIB_RATIOMETRIC].adc_gnd =
+					calib_read_2;
 
 calib_fail:
 	return rc;
@@ -1878,7 +1875,7 @@ struct qpnp_vadc_chip *qpnp_get_vadc(struct device *dev, const char *name)
 		return ERR_PTR(-ENODEV);
 
 	list_for_each_entry(vadc, &qpnp_vadc_device_list, list)
-		if (vadc->adc->spmi->dev.of_node == node)
+		if (vadc->adc->pdev->dev.of_node == node)
 			return vadc;
 	return ERR_PTR(-EPROBE_DEFER);
 }
@@ -2184,7 +2181,7 @@ int32_t qpnp_vadc_read(struct qpnp_vadc_chip *vadc,
 		prop = POWER_SUPPLY_PROP_FORCE_TLIM;
 		ret.intval = 1;
 
-		rc = vadc->vadc_chg_vote->set_property(vadc->vadc_chg_vote,
+		rc = power_supply_set_property(vadc->vadc_chg_vote,
 								prop, &ret);
 		if (rc) {
 			pr_err("error enabling the charger circuitry vote\n");
@@ -2197,7 +2194,7 @@ int32_t qpnp_vadc_read(struct qpnp_vadc_chip *vadc,
 			pr_err("Error reading die_temp\n");
 
 		ret.intval = 0;
-		rc = vadc->vadc_chg_vote->set_property(vadc->vadc_chg_vote,
+		rc = power_supply_set_property(vadc->vadc_chg_vote,
 								prop, &ret);
 		if (rc) {
 			pr_err("error enabling the charger circuitry vote\n");
@@ -2535,10 +2532,10 @@ static struct sensor_device_attribute qpnp_adc_attr =
 	SENSOR_ATTR(NULL, S_IRUGO, qpnp_adc_show, NULL, 0);
 
 static int32_t qpnp_vadc_init_hwmon(struct qpnp_vadc_chip *vadc,
-					struct spmi_device *spmi)
+					struct platform_device *pdev)
 {
 	struct device_node *child;
-	struct device_node *node = spmi->dev.of_node;
+	struct device_node *node = pdev->dev.of_node;
 	int rc = 0, i = 0, channel;
 
 	for_each_child_of_node(node, child) {
@@ -2549,10 +2546,10 @@ static int32_t qpnp_vadc_init_hwmon(struct qpnp_vadc_chip *vadc,
 		memcpy(&vadc->sens_attr[i], &qpnp_adc_attr,
 						sizeof(qpnp_adc_attr));
 		sysfs_attr_init(&vadc->sens_attr[i].dev_attr.attr);
-		rc = device_create_file(&spmi->dev,
+		rc = device_create_file(&pdev->dev,
 				&vadc->sens_attr[i].dev_attr);
 		if (rc) {
-			dev_err(&spmi->dev,
+			dev_err(&pdev->dev,
 				"device_create_file failed for dev %s\n",
 				vadc->adc->adc_channels[i].name);
 			goto hwmon_err_sens;
@@ -2567,7 +2564,7 @@ hwmon_err_sens:
 }
 
 static int qpnp_vadc_get_temp(struct thermal_zone_device *thermal,
-			     unsigned long *temp)
+			     int *temp)
 {
 	struct qpnp_vadc_thermal_data *vadc_therm = thermal->devdata;
 	struct qpnp_vadc_chip *vadc = vadc_therm->vadc_dev;
@@ -2592,10 +2589,10 @@ static struct thermal_zone_device_ops qpnp_vadc_thermal_ops = {
 };
 
 static int32_t qpnp_vadc_init_thermal(struct qpnp_vadc_chip *vadc,
-					struct spmi_device *spmi)
+					struct platform_device *pdev)
 {
 	struct device_node *child;
-	struct device_node *node = spmi->dev.of_node;
+	struct device_node *node = pdev->dev.of_node;
 	int rc = 0, i = 0;
 	bool thermal_node = false;
 
@@ -2641,12 +2638,12 @@ static const struct of_device_id qpnp_vadc_match_table[] = {
 	{}
 };
 
-static int qpnp_vadc_probe(struct spmi_device *spmi)
+static int qpnp_vadc_probe(struct platform_device *pdev)
 {
 	struct qpnp_vadc_chip *vadc;
 	struct qpnp_adc_drv *adc_qpnp;
 	struct qpnp_vadc_thermal_data *adc_thermal;
-	struct device_node *node = spmi->dev.of_node;
+	struct device_node *node = pdev->dev.of_node;
 	struct device_node *child;
 	const struct of_device_id *id;
 	int rc, count_adc_channel_list = 0, i = 0;
@@ -2666,31 +2663,37 @@ static int qpnp_vadc_probe(struct spmi_device *spmi)
 		return -ENODEV;
 	}
 
-	vadc = devm_kzalloc(&spmi->dev, sizeof(struct qpnp_vadc_chip) +
+	vadc = devm_kzalloc(&pdev->dev, sizeof(struct qpnp_vadc_chip) +
 		(sizeof(struct sensor_device_attribute) *
 				count_adc_channel_list), GFP_KERNEL);
 	if (!vadc) {
-		dev_err(&spmi->dev, "Unable to allocate memory\n");
+		dev_err(&pdev->dev, "Unable to allocate memory\n");
 		return -ENOMEM;
 	}
 
-	vadc->dev = &(spmi->dev);
-	adc_qpnp = devm_kzalloc(&spmi->dev, sizeof(struct qpnp_adc_drv),
+	vadc->dev = &(pdev->dev);
+	adc_qpnp = devm_kzalloc(&pdev->dev, sizeof(struct qpnp_adc_drv),
 			GFP_KERNEL);
 	if (!adc_qpnp)
 		return -ENOMEM;
 
-	vadc->state_copy = devm_kzalloc(&spmi->dev,
+	adc_qpnp->regmap = dev_get_regmap(pdev->dev.parent, NULL);
+	if (!adc_qpnp->regmap) {
+		dev_err(&pdev->dev, "Couldn't get parent's regmap\n");
+		return -EINVAL;
+	}
+
+	vadc->state_copy = devm_kzalloc(&pdev->dev,
 			sizeof(struct qpnp_vadc_mode_state), GFP_KERNEL);
 	if (!vadc->state_copy)
 		return -ENOMEM;
 
 	vadc->adc = adc_qpnp;
-	adc_thermal = devm_kzalloc(&spmi->dev,
+	adc_thermal = devm_kzalloc(&pdev->dev,
 			(sizeof(struct qpnp_vadc_thermal_data) *
 				count_adc_channel_list), GFP_KERNEL);
 	if (!adc_thermal) {
-		dev_err(&spmi->dev, "Unable to allocate memory\n");
+		dev_err(&pdev->dev, "Unable to allocate memory\n");
 		return -ENOMEM;
 	}
 
@@ -2700,22 +2703,22 @@ static int qpnp_vadc_probe(struct spmi_device *spmi)
 		vadc->adc->adc_hc = true;
 	}
 
-	rc = qpnp_adc_get_devicetree_data(spmi, vadc->adc);
+	rc = qpnp_adc_get_devicetree_data(pdev, vadc->adc);
 	if (rc) {
-		dev_err(&spmi->dev, "failed to read device tree\n");
+		dev_err(&pdev->dev, "failed to read device tree\n");
 		return rc;
 	}
 	mutex_init(&vadc->adc->adc_lock);
 
-	rc = qpnp_vadc_init_hwmon(vadc, spmi);
+	rc = qpnp_vadc_init_hwmon(vadc, pdev);
 	if (rc) {
-		dev_err(&spmi->dev, "failed to initialize qpnp hwmon adc\n");
+		dev_err(&pdev->dev, "failed to initialize qpnp hwmon adc\n");
 		return rc;
 	}
-	vadc->vadc_hwmon = hwmon_device_register(&vadc->adc->spmi->dev);
-	rc = qpnp_vadc_init_thermal(vadc, spmi);
+	vadc->vadc_hwmon = hwmon_device_register(&vadc->adc->pdev->dev);
+	rc = qpnp_vadc_init_thermal(vadc, pdev);
 	if (rc) {
-		dev_err(&spmi->dev, "failed to initialize qpnp thermal adc\n");
+		dev_err(&pdev->dev, "failed to initialize qpnp thermal adc\n");
 		return rc;
 	}
 	vadc->vadc_init_calib = false;
@@ -2756,11 +2759,11 @@ static int qpnp_vadc_probe(struct spmi_device *spmi)
 	vadc->vadc_poll_eoc = of_property_read_bool(node,
 						"qcom,vadc-poll-eoc");
 	if (!vadc->vadc_poll_eoc) {
-		rc = devm_request_irq(&spmi->dev, vadc->adc->adc_irq_eoc,
+		rc = devm_request_irq(&pdev->dev, vadc->adc->adc_irq_eoc,
 				qpnp_vadc_isr, IRQF_TRIGGER_RISING,
 				"qpnp_vadc_interrupt", vadc);
 		if (rc) {
-			dev_err(&spmi->dev,
+			dev_err(&pdev->dev,
 			"failed to request adc irq with error %d\n", rc);
 			goto err_setup;
 		} else {
@@ -2772,37 +2775,37 @@ static int qpnp_vadc_probe(struct spmi_device *spmi)
 	vadc->state_copy->vadc_meas_int_enable = of_property_read_bool(node,
 						"qcom,vadc-meas-int-mode");
 	if (vadc->state_copy->vadc_meas_int_enable) {
-		vadc->adc->adc_high_thr_irq = spmi_get_irq_byname(spmi,
-						NULL, "high-thr-en-set");
+		vadc->adc->adc_high_thr_irq = platform_get_irq_byname(pdev,
+								      "high-thr-en-set");
 		if (vadc->adc->adc_high_thr_irq < 0) {
 			pr_err("Invalid irq\n");
 			rc = -ENXIO;
 			goto err_setup;
 		}
 
-		vadc->adc->adc_low_thr_irq = spmi_get_irq_byname(spmi,
-						NULL, "low-thr-en-set");
+		vadc->adc->adc_low_thr_irq = platform_get_irq_byname(pdev,
+								     "low-thr-en-set");
 		if (vadc->adc->adc_low_thr_irq < 0) {
 			pr_err("Invalid irq\n");
 			rc = -ENXIO;
 			goto err_setup;
 		}
 
-		rc = devm_request_irq(&spmi->dev, vadc->adc->adc_high_thr_irq,
+		rc = devm_request_irq(&pdev->dev, vadc->adc->adc_high_thr_irq,
 					qpnp_vadc_high_thr_isr,
 			IRQF_TRIGGER_RISING, "qpnp_vadc_high_interrupt", vadc);
 		if (rc) {
-			dev_err(&spmi->dev, "failed to request adc irq\n");
+			dev_err(&pdev->dev, "failed to request adc irq\n");
 			goto err_setup;
 		} else {
 			enable_irq_wake(vadc->adc->adc_high_thr_irq);
 		}
 
-		rc = devm_request_irq(&spmi->dev, vadc->adc->adc_low_thr_irq,
+		rc = devm_request_irq(&pdev->dev, vadc->adc->adc_low_thr_irq,
 					qpnp_vadc_low_thr_isr,
 			IRQF_TRIGGER_RISING, "qpnp_vadc_low_interrupt", vadc);
 		if (rc) {
-			dev_err(&spmi->dev, "failed to request adc irq\n");
+			dev_err(&pdev->dev, "failed to request adc irq\n");
 			goto err_setup;
 		} else {
 			enable_irq_wake(vadc->adc->adc_low_thr_irq);
@@ -2813,15 +2816,14 @@ static int qpnp_vadc_probe(struct spmi_device *spmi)
 	}
 
 	vadc->vadc_iadc_sync_lock = false;
-	dev_set_drvdata(&spmi->dev, vadc);
+	dev_set_drvdata(&pdev->dev, vadc);
 	list_add(&vadc->list, &qpnp_vadc_device_list);
 
 	return 0;
 
 err_setup:
 	for_each_child_of_node(node, child) {
-		device_remove_file(&spmi->dev,
-			&vadc->sens_attr[i].dev_attr);
+		device_remove_file(&pdev->dev, &vadc->sens_attr[i].dev_attr);
 		if (vadc->vadc_therm_chan[i].thermal_node)
 			thermal_zone_device_unregister(
 					vadc->vadc_therm_chan[i].tz_dev);
@@ -2832,16 +2834,15 @@ err_setup:
 	return rc;
 }
 
-static int qpnp_vadc_remove(struct spmi_device *spmi)
+static int qpnp_vadc_remove(struct platform_device *pdev)
 {
-	struct qpnp_vadc_chip *vadc = dev_get_drvdata(&spmi->dev);
-	struct device_node *node = spmi->dev.of_node;
+	struct qpnp_vadc_chip *vadc = dev_get_drvdata(&pdev->dev);
+	struct device_node *node = pdev->dev.of_node;
 	struct device_node *child;
 	int i = 0;
 
 	for_each_child_of_node(node, child) {
-		device_remove_file(&spmi->dev,
-			&vadc->sens_attr[i].dev_attr);
+		device_remove_file(&pdev->dev, &vadc->sens_attr[i].dev_attr);
 		if (vadc->vadc_therm_chan[i].thermal_node)
 			thermal_zone_device_unregister(
 					vadc->vadc_therm_chan[i].tz_dev);
@@ -2851,7 +2852,7 @@ static int qpnp_vadc_remove(struct spmi_device *spmi)
 	list_del(&vadc->list);
 	if (vadc->adc->hkadc_ldo && vadc->adc->hkadc_ldo_ok)
 		qpnp_adc_free_voltage_resource(vadc->adc);
-	dev_set_drvdata(&spmi->dev, NULL);
+	dev_set_drvdata(&pdev->dev, NULL);
 
 	return 0;
 }
@@ -2882,10 +2883,10 @@ static const struct dev_pm_ops qpnp_vadc_pm_ops = {
 	.suspend_noirq	= qpnp_vadc_suspend_noirq,
 };
 
-static struct spmi_driver qpnp_vadc_driver = {
+static struct platform_driver qpnp_vadc_driver = {
 	.driver		= {
-		.name	= "qcom,qpnp-vadc",
-		.of_match_table = qpnp_vadc_match_table,
+		.name		= "qcom,qpnp-vadc",
+		.of_match_table	= qpnp_vadc_match_table,
 		.pm		= &qpnp_vadc_pm_ops,
 	},
 	.probe		= qpnp_vadc_probe,
@@ -2894,13 +2895,13 @@ static struct spmi_driver qpnp_vadc_driver = {
 
 static int __init qpnp_vadc_init(void)
 {
-	return spmi_driver_register(&qpnp_vadc_driver);
+	return platform_driver_register(&qpnp_vadc_driver);
 }
 module_init(qpnp_vadc_init);
 
 static void __exit qpnp_vadc_exit(void)
 {
-	spmi_driver_unregister(&qpnp_vadc_driver);
+	platform_driver_unregister(&qpnp_vadc_driver);
 }
 module_exit(qpnp_vadc_exit);
 

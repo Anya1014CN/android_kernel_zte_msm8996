@@ -1,6 +1,6 @@
 /* drivers/soc/qcom/smp2p.c
  *
- * Copyright (c) 2013-2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2016, 2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -214,6 +214,7 @@ static struct smp2p_interrupt_config smp2p_int_cfgs[SMP2P_NUM_PROCS] = {
 	[SMP2P_AUDIO_PROC].name = "lpass",
 	[SMP2P_SENSOR_PROC].name = "dsps",
 	[SMP2P_WIRELESS_PROC].name = "wcnss",
+	[SMP2P_CDSP_PROC].name = "cdsp",
 	[SMP2P_TZ_PROC].name = "tz",
 	[SMP2P_REMOTE_MOCK_PROC].name = "mock",
 };
@@ -333,6 +334,9 @@ static int smp2p_get_smem_item_id(int write_pid, int read_pid)
 	case SMP2P_WIRELESS_PROC:
 		ret = SMEM_SMP2P_WIRLESS_BASE + read_pid;
 		break;
+	case SMP2P_CDSP_PROC:
+		ret = SMEM_SMP2P_CDSP_BASE + read_pid;
+		break;
 	case SMP2P_POWER_PROC:
 		ret = SMEM_SMP2P_POWER_BASE + read_pid;
 		break;
@@ -416,10 +420,8 @@ static void *smp2p_get_remote_smem_item(int remote_pid,
 		if (smem_id >= 0)
 			item_ptr = smem_get_entry(smem_id, &size,
 								remote_pid, 0);
-#ifdef CONFIG_MSM_SMP2P_TEST
 	} else if (remote_pid == SMP2P_REMOTE_MOCK_PROC) {
 		item_ptr = msm_smp2p_get_remote_mock_smem_item(&size);
-#endif
 	}
 	item_ptr = out_item->ops_ptr->validate_size(remote_pid, item_ptr, size);
 
@@ -987,30 +989,28 @@ void smp2p_init_header(struct smp2p_smem __iomem *header_ptr,
 		int local_pid, int remote_pid,
 		uint32_t features, uint32_t version)
 {
-	u32 rem_loc = 0;
-	u32 feature_version = 0;
-	u32 valid_total = 0;
-
-	/*
-	 * Build the header in registers first, then emit only 32-bit Device
-	 * stores. Clang was free to turn adjacent field writes into an
-	 * unaligned 64-bit STUR on SMEM (alignment fault 0x96000061).
-	 */
-	rem_loc |= (local_pid << SMP2P_LOCAL_PID_BIT) & SMP2P_LOCAL_PID_MASK;
-	rem_loc |= (remote_pid << SMP2P_REMOTE_PID_BIT) & SMP2P_REMOTE_PID_MASK;
-	feature_version |= (features << SMP2P_FEATURE_BIT) & SMP2P_FEATURE_MASK;
-	valid_total |= (SMP2P_MAX_ENTRY << SMP2P_ENT_TOTAL_BIT) &
-		SMP2P_ENT_TOTAL_MASK;
+	uint32_t rem_loc_proc_id = 0;
+	uint32_t valid_total_ent = 0;
+	uint32_t feature_version = 0;
 
 	writel_relaxed(SMP2P_MAGIC, &header_ptr->magic);
-	writel_relaxed(rem_loc, &header_ptr->rem_loc_proc_id);
+
+	SMP2P_SET_LOCAL_PID(rem_loc_proc_id, local_pid);
+	SMP2P_SET_REMOTE_PID(rem_loc_proc_id, remote_pid);
+	writel_relaxed(rem_loc_proc_id, &header_ptr->rem_loc_proc_id);
+
+	SMP2P_SET_FEATURES(feature_version, features);
 	writel_relaxed(feature_version, &header_ptr->feature_version);
-	writel_relaxed(valid_total, &header_ptr->valid_total_ent);
+
+	SMP2P_SET_ENT_TOTAL(valid_total_ent, SMP2P_MAX_ENTRY);
+	SMP2P_SET_ENT_VALID(valid_total_ent, 0);
+	writel_relaxed(valid_total_ent, &header_ptr->valid_total_ent);
+
 	writel_relaxed(0, &header_ptr->flags);
 
 	/* ensure that all fields are valid before version is written */
 	wmb();
-	feature_version |= (version << SMP2P_VERSION_BIT) & SMP2P_VERSION_MASK;
+	SMP2P_SET_VERSION(feature_version, version);
 	writel_relaxed(feature_version, &header_ptr->feature_version);
 }
 
@@ -1061,10 +1061,8 @@ static int smp2p_do_negotiation(int remote_pid,
 
 	r_version = 0;
 	if (r_smem_ptr) {
-		u32 feature_version = readl_relaxed(&r_smem_ptr->feature_version);
-
-		r_version = SMP2P_GET_VERSION(feature_version);
-		r_feature = SMP2P_GET_FEATURES(feature_version);
+		r_version = SMP2P_GET_VERSION(r_smem_ptr->feature_version);
+		r_feature = SMP2P_GET_FEATURES(r_smem_ptr->feature_version);
 	}
 
 	if (r_version == 0) {
@@ -1613,10 +1611,8 @@ static void smp2p_send_interrupt(int remote_pid)
 		wmb();
 		writel_relaxed(smp2p_int_cfgs[remote_pid].out_int_mask,
 			smp2p_int_cfgs[remote_pid].out_int_ptr);
-#ifdef CONFIG_MSM_SMP2P_TEST
-	} else if (remote_pid == SMP2P_REMOTE_MOCK_PROC) {
+	} else {
 		smp2p_remote_mock_rx_interrupt();
-#endif
 	}
 }
 

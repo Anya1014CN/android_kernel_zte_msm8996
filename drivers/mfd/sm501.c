@@ -714,6 +714,7 @@ sm501_create_subdev(struct sm501_devdata *sm, char *name,
 	smdev->pdev.name = name;
 	smdev->pdev.id = sm->pdev_id;
 	smdev->pdev.dev.parent = sm->dev;
+	smdev->pdev.dev.coherent_dma_mask = 0xffffffff;
 
 	if (res_count) {
 		smdev->pdev.resource = (struct resource *)(smdev+1);
@@ -1429,8 +1430,14 @@ static int sm501_plat_probe(struct platform_device *dev)
 		goto err_claim;
 	}
 
-	return sm501_init_dev(sm);
+	ret = sm501_init_dev(sm);
+	if (ret)
+		goto err_unmap;
 
+	return 0;
+
+ err_unmap:
+	iounmap(sm->regs);
  err_claim:
 	release_resource(sm->regs_claim);
 	kfree(sm->regs_claim);
@@ -1719,11 +1726,11 @@ static const struct of_device_id of_sm501_match_tbl[] = {
 	{ .compatible = "smi,sm501", },
 	{ /* end */ }
 };
+MODULE_DEVICE_TABLE(of, of_sm501_match_tbl);
 
 static struct platform_driver sm501_plat_driver = {
 	.driver		= {
 		.name	= "sm501",
-		.owner	= THIS_MODULE,
 		.of_match_table = of_sm501_match_tbl,
 	},
 	.probe		= sm501_plat_probe,

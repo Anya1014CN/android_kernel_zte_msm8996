@@ -87,7 +87,8 @@ static long audio_compat_ioctl(struct file *file, unsigned int cmd,
 					audio->pcm_cfg.sample_rate,
 					audio->pcm_cfg.channel_count);
 			if (rc < 0) {
-				pr_err("pcm output block config failed\n");
+				pr_err("%s: pcm output block config failed rc=%d\n",
+					__func__, rc);
 				break;
 			}
 		}
@@ -99,7 +100,8 @@ static long audio_compat_ioctl(struct file *file, unsigned int cmd,
 			audio->enabled = 1;
 		} else {
 			audio->enabled = 0;
-			pr_err("Audio Start procedure failed rc=%d\n", rc);
+			pr_err("%s: Audio Start procedure failed rc=%d\n",
+				__func__, rc);
 			break;
 		}
 		pr_debug("AUDIO_START success enable[%d]\n", audio->enabled);
@@ -108,7 +110,7 @@ static long audio_compat_ioctl(struct file *file, unsigned int cmd,
 		break;
 	}
 	default:
-		pr_debug("%s[%pK]: Calling utils ioctl\n", __func__, audio);
+		pr_debug("%s[%pK]: Calling compat ioctl\n", __func__, audio);
 		rc = audio->codec_compat_ioctl(file, cmd, arg);
 	}
 	return rc;
@@ -135,8 +137,6 @@ static int audio_open(struct inode *inode, struct file *file)
 	audio->miscdevice = &audio_amrnb_misc;
 	audio->wakelock_voted = false;
 	audio->audio_ws_mgr = &audio_amrnb_ws_mgr;
-
-	init_waitqueue_head(&audio->event_wait);
 
 	audio->ac = q6asm_audio_client_alloc((app_cb) q6_audio_cb,
 					     (void *)audio);
@@ -204,7 +204,7 @@ static const struct file_operations audio_amrnb_fops = {
 	.release = audio_aio_release,
 	.unlocked_ioctl = audio_ioctl,
 	.fsync = audio_aio_fsync,
-	.compat_ioctl = audio_compat_ioctl
+	.compat_ioctl = audio_compat_ioctl,
 };
 
 static struct miscdevice audio_amrnb_misc = {

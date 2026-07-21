@@ -20,12 +20,12 @@
 #include <linux/cdev.h>
 #include <linux/fsnotify.h>
 #include <linux/sysctl.h>
-#include <linux/lglock.h>
 #include <linux/percpu_counter.h>
 #include <linux/percpu.h>
 #include <linux/hardirq.h>
 #include <linux/task_work.h>
 #include <linux/ima.h>
+#include <linux/swap.h>
 
 #include <linux/atomic.h>
 
@@ -52,7 +52,7 @@ struct global_filetable_lookup_key {
 	uintptr_t value;
 };
 
-static void global_filetable_print_warning_once(void)
+void global_filetable_print_warning_once(void)
 {
 	pr_err_once("\n**********************************************************\n");
 	pr_err_once("**   NOTICE NOTICE NOTICE NOTICE NOTICE NOTICE NOTICE   **\n");
@@ -303,10 +303,10 @@ struct file *alloc_file(struct path *path, fmode_t mode,
 	file->f_inode = path->dentry->d_inode;
 	file->f_mapping = path->dentry->d_inode->i_mapping;
 	if ((mode & FMODE_READ) &&
-	     likely(fop->read || fop->aio_read || fop->read_iter))
+	     likely(fop->read || fop->read_iter))
 		mode |= FMODE_CAN_READ;
 	if ((mode & FMODE_WRITE) &&
-	     likely(fop->write || fop->aio_write || fop->write_iter))
+	     likely(fop->write || fop->write_iter))
 		mode |= FMODE_CAN_WRITE;
 	file->f_mode = mode;
 	file->f_op = fop;
@@ -397,9 +397,9 @@ void flush_delayed_fput(void)
 
 static DECLARE_DELAYED_WORK(delayed_fput_work, delayed_fput);
 
-void fput(struct file *file)
+void fput_many(struct file *file, unsigned int refs)
 {
-	if (atomic_long_dec_and_test(&file->f_count)) {
+	if (atomic_long_sub_and_test(refs, &file->f_count)) {
 		struct task_struct *task = current;
 
 		if (likely(!in_interrupt() && !(task->flags & PF_KTHREAD))) {
@@ -416,6 +416,11 @@ void fput(struct file *file)
 		if (llist_add(&file->f_u.fu_llist, &delayed_fput_list))
 			schedule_delayed_work(&delayed_fput_work, 1);
 	}
+}
+
+void fput(struct file *file)
+{
+	fput_many(file, 1);
 }
 
 /*
@@ -445,20 +450,25 @@ void put_filp(struct file *file)
 	}
 }
 
-void __init files_init(unsigned long mempages)
+void __init files_init(void)
 { 
-	unsigned long n;
-
 	filp_cachep = kmem_cache_create("filp", sizeof(struct file), 0,
 			SLAB_HWCACHE_ALIGN | SLAB_PANIC, NULL);
-
-	/*
-	 * One file with associated inode and dcache is very roughly 1K.
-	 * Per default don't use more than 10% of our memory for files. 
-	 */ 
-
-	n = (mempages * (PAGE_SIZE / 1024)) / 10;
-	files_stat.max_files = max_t(unsigned long, n, NR_FILE);
 	percpu_counter_init(&nr_files, 0, GFP_KERNEL);
 	global_filetable_print_warning_once();
+}
+
+/*
+ * One file with associated inode and dcache is very roughly 1K. Per default
+ * do not use more than 10% of our memory for files.
+ */
+void __init files_maxfiles_init(void)
+{
+	unsigned long n;
+	unsigned long memreserve = (totalram_pages - nr_free_pages()) * 3/2;
+
+	memreserve = min(memreserve, totalram_pages - 1);
+	n = ((totalram_pages - memreserve) * (PAGE_SIZE / 1024)) / 10;
+
+	files_stat.max_files = max_t(unsigned long, n, NR_FILE);
 } 

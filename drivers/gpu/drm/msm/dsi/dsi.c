@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015, 2018 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -36,8 +36,10 @@ static int dsi_get_phy(struct msm_dsi *msm_dsi)
 	}
 
 	phy_pdev = of_find_device_by_node(phy_node);
-	if (phy_pdev)
+	if (phy_pdev) {
 		msm_dsi->phy = platform_get_drvdata(phy_pdev);
+		msm_dsi->phy_dev = &phy_pdev->dev;
+	}
 
 	of_node_put(phy_node);
 
@@ -45,8 +47,6 @@ static int dsi_get_phy(struct msm_dsi *msm_dsi)
 		dev_err(&pdev->dev, "%s: phy driver is not ready\n", __func__);
 		return -EPROBE_DEFER;
 	}
-
-	msm_dsi->phy_dev = get_device(&phy_pdev->dev);
 
 	return 0;
 }
@@ -193,6 +193,9 @@ int msm_dsi_modeset_init(struct msm_dsi *msm_dsi, struct drm_device *dev,
 	struct drm_bridge *ext_bridge;
 	int ret, i;
 
+	if (!msm_dsi)
+		return -EINVAL;
+
 	if (WARN_ON(!encoders[MSM_DSI_VIDEO_ENCODER_ID] ||
 		!encoders[MSM_DSI_CMD_ENCODER_ID]))
 		return -EINVAL;
@@ -246,19 +249,17 @@ int msm_dsi_modeset_init(struct msm_dsi *msm_dsi, struct drm_device *dev,
 
 	return 0;
 fail:
-	if (msm_dsi) {
-		/* bridge/connector are normally destroyed by drm: */
-		if (msm_dsi->bridge) {
-			msm_dsi_manager_bridge_destroy(msm_dsi->bridge);
-			msm_dsi->bridge = NULL;
-		}
-
-		/* don't destroy connector if we didn't make it */
-		if (msm_dsi->connector && !msm_dsi->external_bridge)
-			msm_dsi->connector->funcs->destroy(msm_dsi->connector);
-
-		msm_dsi->connector = NULL;
+	/* bridge/connector are normally destroyed by drm: */
+	if (msm_dsi->bridge) {
+		msm_dsi_manager_bridge_destroy(msm_dsi->bridge);
+		msm_dsi->bridge = NULL;
 	}
+
+	/* don't destroy connector if we didn't make it */
+	if (msm_dsi->connector && !msm_dsi->external_bridge)
+		msm_dsi->connector->funcs->destroy(msm_dsi->connector);
+
+	msm_dsi->connector = NULL;
 
 	return ret;
 }

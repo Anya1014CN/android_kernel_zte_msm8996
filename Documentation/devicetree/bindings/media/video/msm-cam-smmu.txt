@@ -1,4 +1,4 @@
-* Qualcomm MSM Camera SMMU
+* Qualcomm Technologies, Inc. MSM Camera SMMU
 
 [Root level node]
 The complete set of context banks for camera are encapsulated under this
@@ -15,7 +15,7 @@ Required properties:
 Required properties:
 - compatible : one of:
     - "qcom,msm-cam-smmu-cb" : For arm smmu iommu type.
-    - "qcom,qsmmu-cam-cb" : For qsmmu iommu type .
+    - "qcom,qsmmu-cam-cb" : For qsmmu iommu type.
 - iommus : Handle parsed by smmu driver. Number of entries will vary
   across targets.
 - label - string describing iommu domain usage.
@@ -23,7 +23,7 @@ Required properties:
 Optional properties:
 - qcom,scratch-buf-support : Enables iommu scratch buffer support in
   that context bank.
-- qcom,secure-context : To set the context domain type as secure.
+- qcom,secure-context : boolean type, to set the context domain type as secure.
 
 Example:
   qcom,cam_smmu@0 {
@@ -35,3 +35,4 @@ Example:
       qcom,scratch-buf-support;
     }
   }
+

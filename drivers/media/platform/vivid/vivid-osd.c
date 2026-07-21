@@ -85,6 +85,7 @@ static int vivid_fb_ioctl(struct fb_info *info, unsigned cmd, unsigned long arg)
 	case FBIOGET_VBLANK: {
 		struct fb_vblank vblank;
 
+		memset(&vblank, 0, sizeof(vblank));
 		vblank.flags = FB_VBLANK_HAVE_COUNT | FB_VBLANK_HAVE_VCOUNT |
 			FB_VBLANK_HAVE_VSYNC;
 		vblank.count = 0;
@@ -166,7 +167,7 @@ static int _vivid_fb_check_var(struct fb_var_screeninfo *var, struct vivid_dev *
 	var->nonstd = 0;
 
 	var->vmode &= ~FB_VMODE_MASK;
-	var->vmode = FB_VMODE_NONINTERLACED;
+	var->vmode |= FB_VMODE_NONINTERLACED;
 
 	/* Dummy values */
 	var->hsync_len = 24;

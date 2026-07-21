@@ -1091,7 +1091,6 @@ static int pasemi_mac_phy_init(struct net_device *dev)
 
 	dn = pci_device_to_OF_node(mac->pdev);
 	phy_dn = of_parse_phandle(dn, "phy-handle", 0);
-	of_node_put(phy_dn);
 
 	mac->link = 0;
 	mac->speed = 0;
@@ -1100,6 +1099,7 @@ static int pasemi_mac_phy_init(struct net_device *dev)
 	phydev = of_phy_connect(dev, phy_dn, &pasemi_adjust_link, 0,
 				PHY_INTERFACE_MODE_SGMII);
 
+	of_node_put(phy_dn);
 	if (!phydev) {
 		printk(KERN_ERR "%s: Could not attach to phy\n", dev->name);
 		return -ENODEV;
@@ -1129,16 +1129,20 @@ static int pasemi_mac_open(struct net_device *dev)
 
 	mac->tx = pasemi_mac_setup_tx_resources(dev);
 
-	if (!mac->tx)
+	if (!mac->tx) {
+		ret = -ENOMEM;
 		goto out_tx_ring;
+	}
 
 	/* We might already have allocated rings in case mtu was changed
 	 * before interface was brought up.
 	 */
 	if (dev->mtu > 1500 && !mac->num_cs) {
 		pasemi_mac_setup_csrings(mac);
-		if (!mac->num_cs)
+		if (!mac->num_cs) {
+			ret = -ENOMEM;
 			goto out_tx_ring;
+		}
 	}
 
 	/* Zero out rmon counters */
@@ -1239,11 +1243,9 @@ static int pasemi_mac_open(struct net_device *dev)
 	if (mac->phydev)
 		phy_start(mac->phydev);
 
-	init_timer(&mac->tx->clean_timer);
-	mac->tx->clean_timer.function = pasemi_mac_tx_timer;
-	mac->tx->clean_timer.data = (unsigned long)mac->tx;
-	mac->tx->clean_timer.expires = jiffies+HZ;
-	add_timer(&mac->tx->clean_timer);
+	setup_timer(&mac->tx->clean_timer, pasemi_mac_tx_timer,
+		    (unsigned long)mac->tx);
+	mod_timer(&mac->tx->clean_timer, jiffies + HZ);
 
 	return 0;
 
@@ -1837,10 +1839,8 @@ pasemi_mac_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	return err;
 
 out:
-	if (mac->iob_pdev)
-		pci_dev_put(mac->iob_pdev);
-	if (mac->dma_pdev)
-		pci_dev_put(mac->dma_pdev);
+	pci_dev_put(mac->iob_pdev);
+	pci_dev_put(mac->dma_pdev);
 
 	free_netdev(dev);
 out_disable_device:

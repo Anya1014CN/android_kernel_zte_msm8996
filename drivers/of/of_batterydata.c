@@ -1,4 +1,5 @@
-/* Copyright (c) 2013-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2016, The Linux Foundation. All rights reserved.
+ * Copyright (C) 2016 XiaoMi, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -19,6 +20,8 @@
 #include <linux/types.h>
 #include <linux/batterydata-lib.h>
 #include <linux/power_supply.h>
+
+#define SUPPORT_LENUK_BATTERY_ID_ALGO
 
 static int of_batterydata_read_lut(const struct device_node *np,
 			int max_cols, int max_rows, int *ncols, int *nrows,
@@ -312,30 +315,14 @@ static int64_t of_batterydata_convert_battery_id_kohm(int batt_id_uv,
 
 struct device_node *of_batterydata_get_best_profile(
 		const struct device_node *batterydata_container_node,
-		const char *psy_name,  const char  *batt_type)
+		int batt_id_kohm, const char *batt_type)
 {
 	struct batt_ids batt_ids;
-	struct device_node *node, *best_node = NULL;
-	struct power_supply *psy;
+	struct device_node *node, *best_node = NULL, *generic_node = NULL;
 	const char *battery_type = NULL;
-	union power_supply_propval ret = {0, };
 	int delta = 0, best_delta = 0, best_id_kohm = 0, id_range_pct,
-		batt_id_kohm = 0, i = 0, rc = 0, limit = 0;
+		i = 0, rc = 0, limit = 0;
 	bool in_range = false;
-
-	psy = power_supply_get_by_name(psy_name);
-	if (!psy) {
-		pr_err("%s supply not found. defer\n", psy_name);
-		return ERR_PTR(-EPROBE_DEFER);
-	}
-
-	rc = psy->get_property(psy, POWER_SUPPLY_PROP_RESISTANCE_ID, &ret);
-	if (rc) {
-		pr_err("failed to retrieve resistance value rc=%d\n", rc);
-		return ERR_PTR(-ENOSYS);
-	}
-
-	batt_id_kohm = ret.intval / 1000;
 
 	/* read battery id range percentage for best profile */
 	rc = of_property_read_u32(batterydata_container_node,
@@ -369,6 +356,32 @@ struct device_node *of_batterydata_get_best_profile(
 			if (rc)
 				continue;
 			for (i = 0; i < batt_ids.num; i++) {
+#ifdef SUPPORT_LENUK_BATTERY_ID_ALGO
+				if (((batt_id_kohm >= 1) && (batt_id_kohm < 20) && (batt_ids.kohm[i] == 9))
+						||  ((batt_id_kohm >= 20) && (batt_id_kohm < 80) && (batt_ids.kohm[i] == 50))
+						||  ((batt_id_kohm >= 80) && (batt_id_kohm < 120) && (batt_ids.kohm[i] == 100))) {
+					best_node = node;
+					best_id_kohm = batt_ids.kohm[i];
+					in_range = false;
+					limit = 0;
+					best_delta = 0;
+					delta = 0;
+					break;
+				} else {
+					pr_info("using relaxed battery checks\n");
+					if ((batt_ids.kohm[i] == 9) ||
+						(batt_ids.kohm[i] == 50) ||
+						(batt_ids.kohm[i] == 100)) {
+						best_node = node;
+						best_id_kohm = batt_ids.kohm[i];
+						in_range = false;
+						limit = 0;
+						best_delta = 0;
+						delta = 0;
+						break;
+					}
+				}
+#else
 				delta = abs(batt_ids.kohm[i] - batt_id_kohm);
 				limit = (batt_ids.kohm[i] * id_range_pct) / 100;
 				in_range = (delta <= limit);
@@ -383,15 +396,27 @@ struct device_node *of_batterydata_get_best_profile(
 					best_delta = delta;
 					best_id_kohm = batt_ids.kohm[i];
 				}
+#endif
 			}
 		}
+		rc = of_property_read_string(node, "qcom,battery-type",	&battery_type);
+		if (!rc && strcmp(battery_type, "itech_3020mah") == 0)
+			generic_node = node;
 	}
 
 	if (best_node == NULL) {
-		pr_err("No battery data found\n");
+		/* Now that best_node is null, there is no need to
+		 * check whether generic node is null.
+                 */
+		best_node = generic_node;
+		pr_err("No battery data found, use generic one\n");
 		return best_node;
 	}
 
+#ifdef SUPPORT_LENUK_BATTERY_ID_ALGO
+	pr_info("profile id %d batt id %d",
+		best_id_kohm, batt_id_kohm);
+#else
 	/* check that profile id is in range of the measured batt_id */
 	if (abs(best_id_kohm - batt_id_kohm) >
 			((best_id_kohm * id_range_pct) / 100)) {
@@ -399,6 +424,7 @@ struct device_node *of_batterydata_get_best_profile(
 			best_id_kohm, batt_id_kohm, id_range_pct);
 		return NULL;
 	}
+#endif
 
 	rc = of_property_read_string(best_node, "qcom,battery-type",
 							&battery_type);
@@ -442,15 +468,40 @@ int of_batterydata_read_data(struct device_node *batterydata_container_node,
 		if (rc)
 			continue;
 		for (i = 0; i < batt_ids.num; i++) {
+#ifdef SUPPORT_LENUK_BATTERY_ID_ALGO
+			if (((batt_id_kohm >= 1) && (batt_id_kohm < 20) && (batt_ids.kohm[i] == 9))
+					||  ((batt_id_kohm >= 20) && (batt_id_kohm < 80) && (batt_ids.kohm[i] == 50))
+					||  ((batt_id_kohm >= 80) && (batt_id_kohm < 120) && (batt_ids.kohm[i] == 100))) {
+				best_node = node;
+				best_id_kohm = batt_ids.kohm[i];
+				delta = 0;
+				break;
+			} else {
+				pr_info("using relaxed battery checks\n");
+				if ((batt_ids.kohm[i] == 9) ||
+					(batt_ids.kohm[i] == 50) ||
+					(batt_ids.kohm[i] == 100)) {
+					best_node = node;
+					best_id_kohm = batt_ids.kohm[i];
+					delta = 0;
+					break;
+				}
+			}
+#else
 			delta = abs(batt_ids.kohm[i] - batt_id_kohm);
 			if (delta < best_delta || !best_node) {
 				best_node = node;
 				best_delta = delta;
 				best_id_kohm = batt_ids.kohm[i];
 			}
+#endif
 		}
 	}
 
+#ifdef SUPPORT_LENUK_BATTERY_ID_ALGO
+	pr_info("profile id %d batt id %d",
+		best_id_kohm, batt_id_kohm);
+#endif
 	if (best_node == NULL) {
 		pr_err("No battery data found\n");
 		return -ENODATA;

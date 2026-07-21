@@ -1320,8 +1320,7 @@ static int fusb300_udc_start(struct usb_gadget *g,
 	return 0;
 }
 
-static int fusb300_udc_stop(struct usb_gadget *g,
-		struct usb_gadget_driver *driver)
+static int fusb300_udc_stop(struct usb_gadget *g)
 {
 	struct fusb300 *fusb300 = to_fusb300(g);
 
@@ -1343,15 +1342,18 @@ static const struct usb_gadget_ops fusb300_gadget_ops = {
 	.udc_stop	= fusb300_udc_stop,
 };
 
-static int __exit fusb300_remove(struct platform_device *pdev)
+static int fusb300_remove(struct platform_device *pdev)
 {
 	struct fusb300 *fusb300 = platform_get_drvdata(pdev);
+	int i;
 
 	usb_del_gadget_udc(&fusb300->gadget);
 	iounmap(fusb300->reg);
 	free_irq(platform_get_irq(pdev, 0), fusb300);
 
 	fusb300_free_request(&fusb300->ep[0]->ep, fusb300->ep0_req);
+	for (i = 0; i < FUSB300_MAX_NUM_EP; i++)
+		kfree(fusb300->ep[i]);
 	kfree(fusb300);
 
 	return 0;
@@ -1451,6 +1453,17 @@ static int fusb300_probe(struct platform_device *pdev)
 		ep->ep.name = fusb300_ep_name[i];
 		ep->ep.ops = &fusb300_ep_ops;
 		usb_ep_set_maxpacket_limit(&ep->ep, HS_BULK_MAX_PACKET_SIZE);
+
+		if (i == 0) {
+			ep->ep.caps.type_control = true;
+		} else {
+			ep->ep.caps.type_iso = true;
+			ep->ep.caps.type_bulk = true;
+			ep->ep.caps.type_int = true;
+		}
+
+		ep->ep.caps.dir_in = true;
+		ep->ep.caps.dir_out = true;
 	}
 	usb_ep_set_maxpacket_limit(&fusb300->ep[0]->ep, HS_CTL_MAX_PACKET_SIZE);
 	fusb300->ep[0]->epnum = 0;
@@ -1484,6 +1497,8 @@ clean_up:
 		if (fusb300->ep0_req)
 			fusb300_free_request(&fusb300->ep[0]->ep,
 				fusb300->ep0_req);
+		for (i = 0; i < FUSB300_MAX_NUM_EP; i++)
+			kfree(fusb300->ep[i]);
 		kfree(fusb300);
 	}
 	if (reg)
@@ -1493,10 +1508,9 @@ clean_up:
 }
 
 static struct platform_driver fusb300_driver = {
-	.remove =	__exit_p(fusb300_remove),
+	.remove =	fusb300_remove,
 	.driver		= {
 		.name =	(char *) udc_name,
-		.owner	= THIS_MODULE,
 	},
 };
 

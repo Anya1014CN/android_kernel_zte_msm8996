@@ -210,14 +210,6 @@ start_thread(struct pt_regs * regs, unsigned long pc, unsigned long sp)
 }
 EXPORT_SYMBOL(start_thread);
 
-/*
- * Free current thread data structures etc..
- */
-void
-exit_thread(void)
-{
-}
-
 void
 flush_thread(void)
 {
@@ -236,12 +228,11 @@ release_thread(struct task_struct *dead_task)
 }
 
 /*
- * Copy an alpha thread..
+ * Copy architecture-specific thread state
  */
-
 int
 copy_thread(unsigned long clone_flags, unsigned long usp,
-	    unsigned long arg,
+	    unsigned long kthread_arg,
 	    struct task_struct *p)
 {
 	extern void ret_from_fork(void);
@@ -262,7 +253,7 @@ copy_thread(unsigned long clone_flags, unsigned long usp,
 			sizeof(struct switch_stack) + sizeof(struct pt_regs));
 		childstack->r26 = (unsigned long) ret_from_kernel_thread;
 		childstack->r9 = usp;	/* function */
-		childstack->r10 = arg;
+		childstack->r10 = kthread_arg;
 		childregs->hae = alpha_mv.hae_cache,
 		childti->pcb.usp = 0;
 		return 0;
@@ -274,12 +265,13 @@ copy_thread(unsigned long clone_flags, unsigned long usp,
 	   application calling fork.  */
 	if (clone_flags & CLONE_SETTLS)
 		childti->pcb.unique = regs->r20;
+	else
+		regs->r20 = 0;	/* OSF/1 has some strange fork() semantics.  */
 	childti->pcb.usp = usp ?: rdusp();
 	*childregs = *regs;
 	childregs->r0 = 0;
 	childregs->r19 = 0;
 	childregs->r20 = 1;	/* OSF/1 has some strange fork() semantics.  */
-	regs->r20 = 0;
 	stack = ((struct switch_stack *) regs) - 1;
 	*childstack = *stack;
 	childstack->r26 = (unsigned long) ret_from_fork;

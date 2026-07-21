@@ -39,29 +39,33 @@
 #include <asm/pgalloc.h>
 #include <asm/hypervisor.h>
 #include <xen/grant_table.h>
+#include <xen/page.h>
 #include <xen/xenbus.h>
 #include <xen/interface/io/ring.h>
 #include <xen/interface/io/blkif.h>
 #include <xen/interface/io/protocols.h>
 
-#define DRV_PFX "xen-blkback:"
-#define DPRINTK(fmt, args...)				\
-	pr_debug(DRV_PFX "(%s:%d) " fmt ".\n",		\
-		 __func__, __LINE__, ##args)
-
-
+extern unsigned int xen_blkif_max_ring_order;
 /*
  * This is the maximum number of segments that would be allowed in indirect
  * requests. This value will also be passed to the frontend.
  */
 #define MAX_INDIRECT_SEGMENTS 256
 
-#define SEGS_PER_INDIRECT_FRAME \
-	(PAGE_SIZE/sizeof(struct blkif_request_segment))
+/*
+ * Xen use 4K pages. The guest may use different page size (4K or 64K)
+ * Number of Xen pages per segment
+ */
+#define XEN_PAGES_PER_SEGMENT   (PAGE_SIZE / XEN_PAGE_SIZE)
+
+#define XEN_PAGES_PER_INDIRECT_FRAME \
+	(XEN_PAGE_SIZE/sizeof(struct blkif_request_segment))
+#define SEGS_PER_INDIRECT_FRAME	\
+	(XEN_PAGES_PER_INDIRECT_FRAME / XEN_PAGES_PER_SEGMENT)
+
 #define MAX_INDIRECT_PAGES \
 	((MAX_INDIRECT_SEGMENTS + SEGS_PER_INDIRECT_FRAME - 1)/SEGS_PER_INDIRECT_FRAME)
-#define INDIRECT_PAGES(_segs) \
-	((_segs + SEGS_PER_INDIRECT_FRAME - 1)/SEGS_PER_INDIRECT_FRAME)
+#define INDIRECT_PAGES(_segs) DIV_ROUND_UP(_segs, XEN_PAGES_PER_INDIRECT_FRAME)
 
 /* Not a real protocol.  Used to generate ring structs which contain
  * the elements common to all protocols only.  This way we get a
@@ -70,9 +74,8 @@
 struct blkif_common_request {
 	char dummy;
 };
-struct blkif_common_response {
-	char dummy;
-};
+
+/* i386 protocol version */
 
 struct blkif_x86_32_request_rw {
 	uint8_t        nr_segments;  /* number of segments                   */
@@ -124,14 +127,6 @@ struct blkif_x86_32_request {
 	} u;
 } __attribute__((__packed__));
 
-/* i386 protocol version */
-#pragma pack(push, 4)
-struct blkif_x86_32_response {
-	uint64_t        id;              /* copied from request */
-	uint8_t         operation;       /* copied from request */
-	int16_t         status;          /* BLKIF_RSP_???       */
-};
-#pragma pack(pop)
 /* x86_64 protocol version */
 
 struct blkif_x86_64_request_rw {
@@ -188,18 +183,12 @@ struct blkif_x86_64_request {
 	} u;
 } __attribute__((__packed__));
 
-struct blkif_x86_64_response {
-	uint64_t       __attribute__((__aligned__(8))) id;
-	uint8_t         operation;       /* copied from request */
-	int16_t         status;          /* BLKIF_RSP_???       */
-};
-
 DEFINE_RING_TYPES(blkif_common, struct blkif_common_request,
-		  struct blkif_common_response);
+		  struct blkif_response);
 DEFINE_RING_TYPES(blkif_x86_32, struct blkif_x86_32_request,
-		  struct blkif_x86_32_response);
+		  struct blkif_response __packed);
 DEFINE_RING_TYPES(blkif_x86_64, struct blkif_x86_64_request,
-		  struct blkif_x86_64_response);
+		  struct blkif_response);
 
 union blkif_back_rings {
 	struct blkif_back_ring        native;
@@ -213,6 +202,15 @@ enum blkif_protocol {
 	BLKIF_PROTOCOL_X86_32 = 2,
 	BLKIF_PROTOCOL_X86_64 = 3,
 };
+
+/*
+ * Default protocol if the frontend doesn't specify one.
+ */
+#ifdef CONFIG_X86
+#  define BLKIF_PROTOCOL_DEFAULT BLKIF_PROTOCOL_X86_32
+#else
+#  define BLKIF_PROTOCOL_DEFAULT BLKIF_PROTOCOL_NATIVE
+#endif
 
 struct xen_vbd {
 	/* What the domain refers to this vbd as. */
@@ -245,7 +243,7 @@ struct backend_info;
 #define PERSISTENT_GNT_WAS_ACTIVE	1
 
 /* Number of requests that we can fit in a ring */
-#define XEN_BLKIF_REQS			32
+#define XEN_BLKIF_REQS_PER_PAGE		32
 
 struct persistent_gnt {
 	struct page *page;
@@ -317,6 +315,7 @@ struct xen_blkif {
 	struct work_struct	free_work;
 	/* Thread shutdown wait queue. */
 	wait_queue_head_t	shutdown_wq;
+	unsigned int nr_ring_pages;
 };
 
 struct seg_buf {
@@ -340,7 +339,7 @@ struct grant_page {
 struct pending_req {
 	struct xen_blkif	*blkif;
 	u64			id;
-	int			nr_pages;
+	int			nr_segs;
 	atomic_t		pendcnt;
 	unsigned short		operation;
 	int			status;
@@ -350,6 +349,9 @@ struct pending_req {
 	struct grant_page	*indirect_pages[MAX_INDIRECT_PAGES];
 	struct seg_buf		seg[MAX_INDIRECT_SEGMENTS];
 	struct bio		*biolist[MAX_INDIRECT_SEGMENTS];
+	struct gnttab_unmap_grant_ref unmap[MAX_INDIRECT_SEGMENTS];
+	struct page                   *unmap_pages[MAX_INDIRECT_SEGMENTS];
+	struct gntab_unmap_queue_data gnttab_unmap_data;
 };
 
 
@@ -391,8 +393,8 @@ static inline void blkif_get_x86_32_req(struct blkif_request *dst,
 					struct blkif_x86_32_request *src)
 {
 	int i, n = BLKIF_MAX_SEGMENTS_PER_REQUEST, j;
-	dst->operation = src->operation;
-	switch (src->operation) {
+	dst->operation = READ_ONCE(src->operation);
+	switch (dst->operation) {
 	case BLKIF_OP_READ:
 	case BLKIF_OP_WRITE:
 	case BLKIF_OP_WRITE_BARRIER:
@@ -439,8 +441,8 @@ static inline void blkif_get_x86_64_req(struct blkif_request *dst,
 					struct blkif_x86_64_request *src)
 {
 	int i, n = BLKIF_MAX_SEGMENTS_PER_REQUEST, j;
-	dst->operation = src->operation;
-	switch (src->operation) {
+	dst->operation = READ_ONCE(src->operation);
+	switch (dst->operation) {
 	case BLKIF_OP_READ:
 	case BLKIF_OP_WRITE:
 	case BLKIF_OP_WRITE_BARRIER:

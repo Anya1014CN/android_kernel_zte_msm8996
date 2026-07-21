@@ -22,41 +22,6 @@
 #include <linux/of.h>
 
 #include <asm/cputype.h>
-
-/*ZTE_BOOT_20141011 huang.yanjun*/
-//#ifdef CONFIG_ZTE_BOOT_MODE
-
-#define ANDROID_BOOT_MODE              "androidboot.mode="
-#define ANDROID_BOOT_MODE_NORMAL       "normal"
-#define ANDROID_BOOT_MODE_FTM          "ftm"
-#define ANDROID_BOOT_MODE_RECOVERY     "recovery"
-#define ANDROID_BOOT_MODE_FFBM     "ffbm"
-#define ANDROID_BOOT_MODE_CHARGER     "charger"
-
-#define MAGIC_NUM_FTM_MODE          0x6D6D5446 /*FTMM*/
-#define MAGIC_NUM_NON_FTM_MODE      0x4D54464E /*NFTM*/
-
-/*
- * Boot mode definition
- */
-enum {
-    ENUM_BOOT_MODE_NORMAL            = 0,
-    ENUM_BOOT_MODE_FTM               = 1,
-    ENUM_BOOT_MODE_RTC_ALARM         = 2,
-    ENUM_BOOT_MODE_CHARGER           = 3,      //ZTE charge
-    ENUM_BOOT_MODE_RECOVERY          = 4,
-    ENUM_BOOT_MODE_FFBM              = 5,      //ZTE FFBM
-    ENUM_BOOT_MODE_UNKNOWN,
-    ENUM_BOOT_MODE_MAX
-};
-
-void socinfo_set_boot_mode(int boot_mode);
-int socinfo_get_ftm_flag(void);
-int socinfo_get_ffbm_flag(void);
-int socinfo_get_charger_flag(void);
-int socinfo_get_normal_flag(void);
-
-//#endif
 /*
  * SOC version type with major number in the upper 16 bits and minor
  * number in the lower 16 bits.  For example:
@@ -95,12 +60,6 @@ int socinfo_get_normal_flag(void);
 	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,msm8909")
 #define early_machine_is_msm8916()	\
 	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,msm8916")
-#define early_machine_is_msm8917()	\
-	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,msm8917")
-#define early_machine_is_msm8920()	\
-	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,msm8920")
-#define early_machine_is_msm8940()	\
-	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,msm8940")
 #define early_machine_is_msm8936()	\
 	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,msm8936")
 #define early_machine_is_msm8939()	\
@@ -109,12 +68,8 @@ int socinfo_get_normal_flag(void);
 	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,apq8084")
 #define early_machine_is_mdm9630()	\
 	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,mdm9630")
-#define early_machine_is_mdm9640()	\
-	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,mdm9640")
-#define early_machine_is_mdm9650()	\
-	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,mdm9650")
-#define early_machine_is_sdx20()	\
-	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,sdx20")
+#define early_machine_is_msmzirc()	\
+	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,msmzirc")
 #define early_machine_is_fsm9900()	\
 	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,fsm9900")
 #define early_machine_is_msm8994()	\
@@ -125,22 +80,36 @@ int socinfo_get_normal_flag(void);
 	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,fsm9010")
 #define early_machine_is_msm8976()	\
 	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,msm8976")
-#define early_machine_is_msm8952()	\
-	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,msm8952")
-#define early_machine_is_msm8953()	\
-	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,msm8953")
-#define early_machine_is_sdm450()	\
-	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,sdm450")
-#define early_machine_is_msm8937()	\
-	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,msm8937")
+#define early_machine_is_msmtellurium()	\
+	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,msmtellurium")
 #define early_machine_is_msm8996()	\
 	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,msm8996")
 #define early_machine_is_msm8929()	\
 	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,msm8929")
-#define early_machine_is_mdm9607()	\
-	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,mdm9607")
-#define early_machine_is_msmcobalt()	\
-	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,msmcobalt")
+#define early_machine_is_msm8998()	\
+	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,msm8998")
+#define early_machine_is_apq8098()	\
+	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,apq8098")
+#define early_machine_is_msmhamster()	\
+	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,msmhamster")
+#define early_machine_is_sdm660()	\
+	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,sdm660")
+#define early_machine_is_sda660()	\
+	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,sda660")
+#define early_machine_is_sdm455()	\
+	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,sdm455")
+#define early_machine_is_sdm636()	\
+	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,sdm636")
+#define early_machine_is_sda636()	\
+	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,sda636")
+#define early_machine_is_sdm658()	\
+	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,sdm658")
+#define early_machine_is_sda658()	\
+	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,sda658")
+#define early_machine_is_sdm630()	\
+	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,sdm630")
+#define early_machine_is_sda630()	\
+	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,sda630")
 #else
 #define of_board_is_sim()		0
 #define of_board_is_rumi()		0
@@ -164,26 +133,28 @@ int socinfo_get_normal_flag(void);
 #define early_machine_is_msm8610()	0
 #define early_machine_is_msm8909()	0
 #define early_machine_is_msm8916()	0
-#define early_machine_is_msm8917()	0
-#define early_machine_is_msm8920()	0
-#define early_machine_is_msm8940()	0
 #define early_machine_is_msm8936()	0
 #define early_machine_is_msm8939()	0
 #define early_machine_is_apq8084()	0
 #define early_machine_is_mdm9630()	0
 #define early_machine_is_fsm9900()	0
 #define early_machine_is_fsm9010()	0
-#define early_machine_is_msm8952()	0
-#define early_machine_is_msm8953()	0
-#define early_machine_is_sdm450()	0
-#define early_machine_is_msm8937()	0
+#define early_machine_is_msmtellurium()	0
 #define early_machine_is_msm8996()	0
 #define early_machine_is_msm8976() 0
 #define early_machine_is_msm8929()	0
-#define early_machine_is_mdm9607()	0
-#define early_machine_is_mdm9650()	0
-#define early_machine_is_sdx20()	0
-#define early_machine_is_msmcobalt()	0
+#define early_machine_is_msm8998()	0
+#define early_machine_is_apq8098()	0
+#define early_machine_is_msmhamster()	0
+#define early_machine_is_sdm660()	0
+#define early_machine_is_sda660()	0
+#define early_machine_is_sdm455()	0
+#define early_machine_is_sdm636()	0
+#define early_machine_is_sda636()	0
+#define early_machine_is_sdm658()	0
+#define early_machine_is_sda658()	0
+#define early_machine_is_sdm630()	0
+#define early_machine_is_sda630()	0
 #endif
 
 #define PLATFORM_SUBTYPE_MDM	1
@@ -224,9 +195,6 @@ enum msm_cpu {
 	MSM_CPU_9625,
 	MSM_CPU_8909,
 	MSM_CPU_8916,
-	MSM_CPU_8917,
-	MSM_CPU_8920,
-	MSM_CPU_8940,
 	MSM_CPU_8936,
 	MSM_CPU_8939,
 	MSM_CPU_8226,
@@ -239,18 +207,16 @@ enum msm_cpu {
 	MSM_CPU_8994,
 	MSM_CPU_8992,
 	FSM_CPU_9010,
-	MSM_CPU_8952,
-	MSM_CPU_8953,
-	MSM_CPU_SDM450,
-	MSM_CPU_8937,
+	MSM_CPU_TELLURIUM,
 	MSM_CPU_8996,
 	MSM_CPU_8976,
 	MSM_CPU_8929,
-	MSM_CPU_9607,
-	MSM_CPU_9650,
-	MSM_CPU_COBALT,
-	SDX_CPU_20,
-	MSM_CPU_9150,
+	MSM_CPU_8998,
+	MSM_CPU_HAMSTER,
+	MSM_CPU_660,
+	MSM_CPU_455,
+	MSM_CPU_630,
+	MSM_CPU_636,
 };
 
 struct msm_soc_info {
@@ -287,22 +253,5 @@ uint32_t socinfo_get_serial_number(void);
 enum pmic_model socinfo_get_pmic_model(void);
 uint32_t socinfo_get_pmic_die_revision(void);
 int __init socinfo_init(void) __must_check;
-
-/*
- * Support for FTM & RECOVERY mode by ZTE_BOOT
- */
-#ifdef CONFIG_ZTE_BOOT_MODE
-void socinfo_set_pv_flag(int val);
-int socinfo_get_pv_flag(void);
-void socinfo_set_hw_ver(char *ver);
-void socinfo_set_fp_hw(int val);
-int socinfo_get_fp_hw(void);
-#endif
-
-/*
- * Support for PV mode for hall
- */
-void socinfo_set_pv_flag(int val);
-int socinfo_get_pv_flag(void);
 
 #endif

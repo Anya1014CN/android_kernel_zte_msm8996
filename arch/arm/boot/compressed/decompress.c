@@ -46,7 +46,10 @@ extern char * strstr(const char * s1, const char *s2);
 #endif
 
 #ifdef CONFIG_KERNEL_XZ
+/* Prevent KASAN override of string helpers in decompressor */
+#undef memmove
 #define memmove memmove
+#undef memcpy
 #define memcpy memcpy
 #include "../../../../lib/decompress_unxz.c"
 #endif
@@ -57,5 +60,5 @@ extern char * strstr(const char * s1, const char *s2);
 
 int do_decompress(u8 *input, int len, u8 *output, void (*error)(char *x))
 {
-	return decompress(input, len, NULL, NULL, output, NULL, error);
+	return __decompress(input, len, NULL, NULL, output, 0, NULL, error);
 }

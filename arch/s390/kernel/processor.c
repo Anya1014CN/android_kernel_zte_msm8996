@@ -8,15 +8,27 @@
 
 #include <linux/kernel.h>
 #include <linux/init.h>
-#include <linux/smp.h>
 #include <linux/seq_file.h>
 #include <linux/delay.h>
 #include <linux/cpu.h>
+#include <asm/diag.h>
 #include <asm/elf.h>
+#include <asm/facility.h>
 #include <asm/lowcore.h>
 #include <asm/param.h>
+#include <asm/smp.h>
 
 static DEFINE_PER_CPU(struct cpuid, cpu_id);
+
+void notrace cpu_relax(void)
+{
+	if (!smp_cpu_mtid && MACHINE_HAS_DIAG44) {
+		diag_stat_inc(DIAG_STAT_X044);
+		asm volatile("diag 0,0,0x44");
+	}
+	barrier();
+}
+EXPORT_SYMBOL(cpu_relax);
 
 /*
  * cpu_init - initializes state that is per-CPU.
@@ -31,6 +43,15 @@ void cpu_init(void)
 	BUG_ON(current->mm);
 	enter_lazy_tlb(&init_mm, current);
 }
+
+/*
+ * cpu_have_feature - Test CPU features on module initialization
+ */
+int cpu_have_feature(unsigned int num)
+{
+	return elf_hwcap & (1UL << num);
+}
+EXPORT_SYMBOL(cpu_have_feature);
 
 /*
  * show_cpuinfo - Get information on one CPU for use by procfs.
@@ -93,3 +114,20 @@ const struct seq_operations cpuinfo_op = {
 	.show	= show_cpuinfo,
 };
 
+int s390_isolate_bp(void)
+{
+	if (!test_facility(82))
+		return -EOPNOTSUPP;
+	set_thread_flag(TIF_ISOLATE_BP);
+	return 0;
+}
+EXPORT_SYMBOL(s390_isolate_bp);
+
+int s390_isolate_bp_guest(void)
+{
+	if (!test_facility(82))
+		return -EOPNOTSUPP;
+	set_thread_flag(TIF_ISOLATE_BP_GUEST);
+	return 0;
+}
+EXPORT_SYMBOL(s390_isolate_bp_guest);

@@ -17,15 +17,13 @@
 #undef CDBG
 #define CDBG(fmt, args...) pr_debug(fmt, ##args)
 #define S_I2C_DBG(fmt, args...) pr_debug(fmt, ##args)
-#define MAX_I2C_ADDR_TYPE_SIZE (MSM_CAMERA_I2C_3B_ADDR + 1)
-#define MAX_I2C_DATA_TYPE_SIZE (MSM_CAMERA_I2C_SET_BYTE_WRITE_MASK_DATA + 1)
 
 int32_t msm_camera_cci_i2c_read(struct msm_camera_i2c_client *client,
 	uint32_t addr, uint16_t *data,
 	enum msm_camera_i2c_data_type data_type)
 {
 	int32_t rc = -EFAULT;
-	unsigned char buf[MAX_I2C_ADDR_TYPE_SIZE + MAX_I2C_DATA_TYPE_SIZE];
+	unsigned char *buf = NULL;
 	struct msm_camera_cci_ctrl cci_ctrl;
 
 	if ((client->addr_type != MSM_CAMERA_I2C_BYTE_ADDR
@@ -34,6 +32,11 @@ int32_t msm_camera_cci_i2c_read(struct msm_camera_i2c_client *client,
 		|| (data_type != MSM_CAMERA_I2C_BYTE_DATA
 		&& data_type != MSM_CAMERA_I2C_WORD_DATA))
 		return rc;
+
+	buf = kzalloc((uint32_t)client->addr_type + (uint32_t)data_type,
+					GFP_KERNEL);
+	if (!buf)
+		return -ENOMEM;
 
 	cci_ctrl.cmd = MSM_CCI_I2C_READ;
 	cci_ctrl.cci_info = client->cci_client;
@@ -44,6 +47,8 @@ int32_t msm_camera_cci_i2c_read(struct msm_camera_i2c_client *client,
 	rc = v4l2_subdev_call(client->cci_client->cci_subdev,
 			core, ioctl, VIDIOC_MSM_CCI_CFG, &cci_ctrl);
 	if (rc < 0) {
+		kfree(buf);
+		buf = NULL;
 		pr_err("%s: line %d rc = %d\n", __func__, __LINE__, rc);
 		return rc;
 	}
@@ -53,9 +58,12 @@ int32_t msm_camera_cci_i2c_read(struct msm_camera_i2c_client *client,
 	else
 		*data = buf[0] << 8 | buf[1];
 
+	kfree(buf);
+	buf = NULL;
 	S_I2C_DBG("%s addr = 0x%x data: 0x%x\n", __func__, addr, *data);
 	return rc;
 }
+EXPORT_SYMBOL(msm_camera_cci_i2c_read);
 
 int32_t msm_camera_cci_i2c_read_seq(struct msm_camera_i2c_client *client,
 	uint32_t addr, uint8_t *data, uint32_t num_byte)
@@ -103,6 +111,7 @@ int32_t msm_camera_cci_i2c_read_seq(struct msm_camera_i2c_client *client,
 	kfree(buf);
 	return rc;
 }
+EXPORT_SYMBOL(msm_camera_cci_i2c_read_seq);
 
 int32_t msm_camera_cci_i2c_write(struct msm_camera_i2c_client *client,
 	uint32_t addr, uint16_t data,
@@ -138,6 +147,7 @@ int32_t msm_camera_cci_i2c_write(struct msm_camera_i2c_client *client,
 	rc = cci_ctrl.status;
 	return rc;
 }
+EXPORT_SYMBOL(msm_camera_cci_i2c_write);
 
 int32_t msm_camera_cci_i2c_write_seq(struct msm_camera_i2c_client *client,
 	uint32_t addr, uint8_t *data, uint32_t num_byte)
@@ -186,6 +196,7 @@ int32_t msm_camera_cci_i2c_write_seq(struct msm_camera_i2c_client *client,
 	reg_conf_tbl = NULL;
 	return rc;
 }
+EXPORT_SYMBOL(msm_camera_cci_i2c_write_seq);
 
 static int32_t msm_camera_cci_i2c_write_table_cmd(
 	struct msm_camera_i2c_client *client,
@@ -258,6 +269,7 @@ int32_t msm_camera_cci_i2c_write_table(
 	return msm_camera_cci_i2c_write_table_cmd(client, write_setting,
 		MSM_CCI_I2C_WRITE);
 }
+EXPORT_SYMBOL(msm_camera_cci_i2c_write_table);
 
 int32_t msm_camera_cci_i2c_write_seq_table(
 	struct msm_camera_i2c_client *client,
@@ -304,6 +316,7 @@ int32_t msm_camera_cci_i2c_write_seq_table(
 	client->addr_type = client_addr_type;
 	return rc;
 }
+EXPORT_SYMBOL(msm_camera_cci_i2c_write_seq_table);
 
 int32_t msm_camera_cci_i2c_write_table_w_microdelay(
 	struct msm_camera_i2c_client *client,
@@ -337,6 +350,7 @@ int32_t msm_camera_cci_i2c_write_table_w_microdelay(
 	rc = cci_ctrl.status;
 	return rc;
 }
+EXPORT_SYMBOL(msm_camera_cci_i2c_write_table_w_microdelay);
 
 static int32_t msm_camera_cci_i2c_compare(struct msm_camera_i2c_client *client,
 	uint32_t addr, uint16_t data,
@@ -428,6 +442,7 @@ int32_t msm_camera_cci_i2c_poll(struct msm_camera_i2c_client *client,
 
 	return rc;
 }
+EXPORT_SYMBOL(msm_camera_cci_i2c_poll);
 
 static int32_t msm_camera_cci_i2c_set_mask(struct msm_camera_i2c_client *client,
 	uint32_t addr, uint16_t mask,
@@ -578,3 +593,4 @@ int32_t msm_sensor_cci_i2c_util(struct msm_camera_i2c_client *client,
 	}
 	return cci_ctrl.status;
 }
+EXPORT_SYMBOL(msm_sensor_cci_i2c_util);

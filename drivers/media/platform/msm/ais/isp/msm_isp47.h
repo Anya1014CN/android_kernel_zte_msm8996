@@ -1,4 +1,4 @@
-/* Copyright (c) 2013-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -30,6 +30,8 @@ enum msm_vfe47_stats_comp_idx {
 
 extern struct msm_vfe_hardware_info vfe47_hw_info;
 
+uint32_t msm_vfe47_ub_reg_offset(struct vfe_device *vfe_dev, int wm_idx);
+uint32_t msm_vfe47_get_ub_size(struct vfe_device *vfe_dev);
 void msm_vfe47_read_irq_status(struct vfe_device *vfe_dev,
 	uint32_t *irq_status0, uint32_t *irq_status1);
 void msm_vfe47_read_irq_status_and_clear(struct vfe_device *vfe_dev,
@@ -40,6 +42,9 @@ void msm_vfe47_process_reg_update(struct vfe_device *vfe_dev,
 	uint32_t irq_status0, uint32_t irq_status1,
 	struct msm_isp_timestamp *ts);
 void msm_vfe47_process_epoch_irq(struct vfe_device *vfe_dev,
+	uint32_t irq_status0, uint32_t irq_status1,
+	struct msm_isp_timestamp *ts);
+void msm_isp47_process_sof_irq(struct vfe_device *vfe_dev,
 	uint32_t irq_status0, uint32_t irq_status1,
 	struct msm_isp_timestamp *ts);
 void msm_isp47_process_eof_irq(struct vfe_device *vfe_dev,
@@ -69,6 +74,8 @@ void msm_vfe47_clear_framedrop(struct vfe_device *vfe_dev,
 int32_t msm_vfe47_cfg_io_format(struct vfe_device *vfe_dev,
 	enum msm_vfe_axi_stream_src stream_src, uint32_t io_format);
 int msm_vfe47_start_fetch_engine(struct vfe_device *vfe_dev,
+	void *arg);
+int msm_vfe47_start_fetch_engine_multi_pass(struct vfe_device *vfe_dev,
 	void *arg);
 void msm_vfe47_cfg_fetch_engine(struct vfe_device *vfe_dev,
 	struct msm_vfe_pix_cfg *pix_cfg);

@@ -421,7 +421,7 @@ static int kaweth_download_firmware(struct kaweth_device *kaweth,
 		   kaweth->firmware_buf[2]);
 
 	netdev_dbg(kaweth->net,
-		   "Downloading firmware at %pK to kaweth device at %pK\n",
+		   "Downloading firmware at %p to kaweth device at %p\n",
 		   kaweth->firmware_buf, kaweth);
 	netdev_dbg(kaweth->net, "Firmware length: %d\n", data_len);
 
@@ -471,7 +471,7 @@ static int kaweth_reset(struct kaweth_device *kaweth)
 {
 	int result;
 
-	netdev_dbg(kaweth->net, "kaweth_reset(%pK)\n", kaweth);
+	netdev_dbg(kaweth->net, "kaweth_reset(%p)\n", kaweth);
 	result = usb_reset_configuration(kaweth->dev);
 	mdelay(10);
 
@@ -812,18 +812,12 @@ static netdev_tx_t kaweth_start_xmit(struct sk_buff *skb,
 	}
 
 	/* We now decide whether we can put our special header into the sk_buff */
-	if (skb_cloned(skb) || skb_headroom(skb) < 2) {
-		/* no such luck - we make our own */
-		struct sk_buff *copied_skb;
-		copied_skb = skb_copy_expand(skb, 2, 0, GFP_ATOMIC);
-		dev_kfree_skb_irq(skb);
-		skb = copied_skb;
-		if (!copied_skb) {
-			kaweth->stats.tx_errors++;
-			netif_start_queue(net);
-			spin_unlock_irq(&kaweth->device_lock);
-			return NETDEV_TX_OK;
-		}
+	if (skb_cow_head(skb, 2)) {
+		kaweth->stats.tx_errors++;
+		netif_start_queue(net);
+		spin_unlock_irq(&kaweth->device_lock);
+		dev_kfree_skb_any(skb);
+		return NETDEV_TX_OK;
 	}
 
 	private_header = (__le16 *)__skb_push(skb, 2);
@@ -1017,7 +1011,7 @@ static int kaweth_probe(
 		le16_to_cpu(udev->descriptor.idProduct),
 		le16_to_cpu(udev->descriptor.bcdDevice));
 
-	dev_dbg(dev, "Device at %pK\n", udev);
+	dev_dbg(dev, "Device at %p\n", udev);
 
 	dev_dbg(dev, "Descriptor length: %x type: %x\n",
 		(int)udev->descriptor.bLength,
@@ -1114,7 +1108,7 @@ err_fw:
 	dev_info(dev, "Statistics collection: %x\n", kaweth->configuration.statistics_mask);
 	dev_info(dev, "Multicast filter limit: %x\n", kaweth->configuration.max_multicast_filters & ((1 << 15) - 1));
 	dev_info(dev, "MTU: %d\n", le16_to_cpu(kaweth->configuration.segment_size));
-	dev_info(dev, "Read MAC address %pKM\n", kaweth->configuration.hw_addr);
+	dev_info(dev, "Read MAC address %pM\n", kaweth->configuration.hw_addr);
 
 	if(!memcmp(&kaweth->configuration.hw_addr,
                    &bcast_addr,
@@ -1180,12 +1174,6 @@ err_fw:
 	/* kaweth is zeroed as part of alloc_netdev */
 	INIT_DELAYED_WORK(&kaweth->lowmem_work, kaweth_resubmit_tl);
 	usb_set_intfdata(intf, kaweth);
-
-#if 0
-// dma_supported() is deeply broken on almost all architectures
-	if (dma_supported (dev, 0xffffffffffffffffULL))
-		kaweth->net->features |= NETIF_F_HIGHDMA;
-#endif
 
 	SET_NETDEV_DEV(netdev, dev);
 	if (register_netdev(netdev) != 0) {
@@ -1280,7 +1268,7 @@ static int usb_start_wait_urb(struct urb *urb, int timeout, int* actual_length)
         awd.done = 0;
 
         urb->context = &awd;
-        status = usb_submit_urb(urb, GFP_NOIO);
+        status = usb_submit_urb(urb, GFP_ATOMIC);
         if (status) {
                 // something went wrong
                 usb_free_urb(urb);

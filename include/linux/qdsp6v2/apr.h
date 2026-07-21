@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2010-2017, 2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -69,7 +69,9 @@ struct apr_hdr {
 #define APR_DOMAIN_MODEM	0x3
 #define APR_DOMAIN_ADSP	0x4
 #define APR_DOMAIN_APPS	0x5
-#define APR_DOMAIN_MAX	0x6
+#define APR_DOMAIN_SDSP	0x8
+#define APR_DOMAIN_MAX	0x9
+
 
 /* ADSP service IDs */
 #define APR_SVC_TEST_CLIENT     0x2
@@ -93,6 +95,9 @@ struct apr_hdr {
 #define APR_SVC_CVS		0x5
 #define APR_SVC_CVP		0x6
 #define APR_SVC_SRD		0x7
+
+/* Sensor DSP Micro Audio Service IDs */
+#define APR_SVC_MAS     0x3
 
 /* APR Port IDs */
 #define APR_MAX_PORTS		0x80
@@ -137,6 +142,10 @@ struct apr_svc {
 	struct mutex m_lock;
 	spinlock_t w_lock;
 	uint8_t pkt_owner;
+#ifdef CONFIG_MSM_QDSP6_APRV2_VM
+	uint16_t vm_dest_svc;
+	uint32_t vm_handle;
+#endif
 };
 
 struct apr_client {
@@ -172,8 +181,8 @@ inline int apr_fill_hdr(void *handle, uint32_t *buf, uint16_t src_port,
 
 int apr_send_pkt(void *handle, uint32_t *buf);
 int apr_deregister(void *handle);
-void subsys_notif_register(struct notifier_block *mod_notif,
-				struct notifier_block *lp_notif);
+void subsys_notif_register(char *client_name, int domain,
+			   struct notifier_block *nb);
 int apr_get_dest_id(char *dest);
 uint16_t apr_get_data_src(struct apr_hdr *hdr);
 void change_q6_state(int state);
@@ -187,4 +196,20 @@ int apr_set_q6_state(enum apr_subsys_state state);
 void apr_set_subsys_state(void);
 const char *apr_get_lpass_subsys_name(void);
 uint16_t apr_get_reset_domain(uint16_t proc);
+#ifdef CONFIG_MSM_QDSP6_APRV2_VM
+static inline int apr_start_rx_rt(void *handle)
+{
+	return 0;
+}
+
+static inline int apr_end_rx_rt(void *handle)
+{
+	return 0;
+}
+#else
+int apr_start_rx_rt(void *handle);
+int apr_end_rx_rt(void *handle);
+#endif
+int apr_dummy_init(void);
+void apr_dummy_exit(void);
 #endif

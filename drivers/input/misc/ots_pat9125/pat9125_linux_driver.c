@@ -295,7 +295,7 @@ static int pat9125_regulator_init(struct pixart_pat9125_data *data)
 		return err;
 	}
 
-	err = regulator_set_optimum_mode(data->vdd, VDD_ACTIVE_LOAD_UA);
+	err = regulator_set_load(data->vdd, VDD_ACTIVE_LOAD_UA);
 	if (err < 0) {
 		dev_err(dev, "Failed to set opt mode for vdd reg %d\n", err);
 		return err;
@@ -307,7 +307,7 @@ static int pat9125_regulator_init(struct pixart_pat9125_data *data)
 		return err;
 	}
 
-	err = regulator_set_optimum_mode(data->vld, VLD_ACTIVE_LOAD_UA);
+	err = regulator_set_load(data->vld, VLD_ACTIVE_LOAD_UA);
 	if (err < 0) {
 		dev_err(dev, "Failed to set opt mode for vld reg %d\n", err);
 		return err;
@@ -506,8 +506,8 @@ static int pat9125_i2c_probe(struct i2c_client *client,
 err_sysfs_create:
 err_request_threaded_irq:
 err_power_on:
-	regulator_set_optimum_mode(data->vdd, 0);
-	regulator_set_optimum_mode(data->vld, 0);
+	regulator_set_load(data->vdd, 0);
+	regulator_set_load(data->vld, 0);
 	if (pat9125_power_on(data, false) < 0)
 		dev_err(dev, "Failed to disable regulators\n");
 	if (data->pinctrl)
@@ -528,8 +528,8 @@ static int pat9125_i2c_remove(struct i2c_client *client)
 		if (pinctrl_select_state(data->pinctrl,
 				data->pinctrl_state_release) < 0)
 			dev_err(dev, "Couldn't set pin to release state\n");
-	regulator_set_optimum_mode(data->vdd, 0);
-	regulator_set_optimum_mode(data->vld, 0);
+	regulator_set_load(data->vdd, 0);
+	regulator_set_load(data->vld, 0);
 	pat9125_power_on(data, false);
 	return 0;
 }

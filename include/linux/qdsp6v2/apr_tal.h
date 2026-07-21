@@ -1,4 +1,5 @@
-/* Copyright (c) 2010-2011, 2016 The Linux Foundation. All rights reserved.
+/* Copyright (c) 2010-2011, 2016-2017, 2019 The Linux Foundation.
+ * All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -27,12 +28,12 @@
 
 #define APR_DEST_MODEM 0
 #define APR_DEST_QDSP6 1
-#define APR_DEST_MAX   2
+#define APR_DEST_DSPS  3
+#define APR_DEST_MAX   4
 
 #if defined(CONFIG_MSM_QDSP6_APRV2_GLINK) || \
 	defined(CONFIG_MSM_QDSP6_APRV3_GLINK)
 #define APR_MAX_BUF			512
-#define APR_NUM_OF_TX_BUF		20
 #else
 #define APR_MAX_BUF			8092
 #endif
@@ -78,6 +79,9 @@ int apr_tal_rx_intents_config(struct apr_svc_ch_dev *apr_ch,
 
 #if defined(CONFIG_MSM_QDSP6_APRV2_GLINK) || \
 	 defined(CONFIG_MSM_QDSP6_APRV3_GLINK)
+int apr_tal_start_rx_rt(struct apr_svc_ch_dev *apr_ch);
+int apr_tal_end_rx_rt(struct apr_svc_ch_dev *apr_ch);
+
 struct apr_svc_ch_dev {
 	void               *handle;
 	spinlock_t         w_lock;
@@ -90,6 +94,10 @@ struct apr_svc_ch_dev {
 	bool               if_remote_intent_ready;
 };
 #else
+static inline int apr_tal_start_rx_rt(struct apr_svc_ch_dev *apr_ch)
+{ return 0; }
+static inline int apr_tal_end_rx_rt(struct apr_svc_ch_dev *apr_ch) { return 0; }
+
 struct apr_svc_ch_dev {
 	struct smd_channel *ch;
 	spinlock_t         lock;

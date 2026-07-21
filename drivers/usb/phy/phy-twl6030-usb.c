@@ -336,6 +336,11 @@ static int twl6030_usb_probe(struct platform_device *pdev)
 	twl->irq2		= platform_get_irq(pdev, 1);
 	twl->linkstat		= OMAP_MUSB_UNKNOWN;
 
+	if (twl->irq1 < 0)
+		return twl->irq1;
+	if (twl->irq2 < 0)
+		return twl->irq2;
+
 	twl->comparator.set_vbus	= twl6030_set_vbus;
 	twl->comparator.start_srp	= twl6030_start_srp;
 
@@ -430,7 +435,6 @@ static struct platform_driver twl6030_usb_driver = {
 	.remove		= twl6030_usb_remove,
 	.driver		= {
 		.name	= "twl6030_usb",
-		.owner	= THIS_MODULE,
 		.of_match_table = of_match_ptr(twl6030_usb_id_table),
 	},
 };

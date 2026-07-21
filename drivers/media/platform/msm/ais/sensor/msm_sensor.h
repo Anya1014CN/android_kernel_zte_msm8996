@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -52,6 +52,8 @@ struct msm_sensor_ctrl_t;
 enum msm_sensor_state_t {
 	MSM_SENSOR_POWER_DOWN,
 	MSM_SENSOR_POWER_UP,
+	MSM_SENSOR_CCI_DOWN,
+	MSM_SENSOR_CCI_UP,
 };
 
 struct msm_sensor_fn_t {
@@ -102,7 +104,7 @@ struct msm_sensor_ctrl_t {
 int msm_sensor_send_event(struct msm_sensor_ctrl_t *s_ctrl,
 	uint32_t event_type, struct msm_sensor_event_data *event_data);
 
-int msm_sensor_config(struct msm_sensor_ctrl_t *s_ctrl, void __user *argp);
+int msm_sensor_config(struct msm_sensor_ctrl_t *s_ctrl, void *argp);
 
 int msm_sensor_power_up(struct msm_sensor_ctrl_t *s_ctrl);
 
@@ -134,4 +136,6 @@ long msm_sensor_subdev_fops_ioctl(struct file *file,
 	unsigned int cmd,
 	unsigned long arg);
 #endif
+void msm_sensor_misc_regulator(
+	struct msm_sensor_ctrl_t *sctrl, uint32_t enable);
 #endif

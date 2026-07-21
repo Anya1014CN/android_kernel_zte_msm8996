@@ -115,7 +115,8 @@ static inline int soc_is_qca955x(void)
 	return soc_is_qca9556() || soc_is_qca9558();
 }
 
-extern void __iomem *ath79_ddr_base;
+void ath79_ddr_set_pci_windows(void);
+
 extern void __iomem *ath79_pll_base;
 extern void __iomem *ath79_reset_base;
 
@@ -132,6 +133,7 @@ static inline u32 ath79_pll_rr(unsigned reg)
 static inline void ath79_reset_wr(unsigned reg, u32 val)
 {
 	__raw_writel(val, ath79_reset_base + reg);
+	(void) __raw_readl(ath79_reset_base + reg); /* flush */
 }
 
 static inline u32 ath79_reset_rr(unsigned reg)

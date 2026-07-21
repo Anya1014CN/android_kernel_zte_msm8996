@@ -18,7 +18,6 @@
 #include <linux/pagemap.h>
 #include <linux/parser.h>
 #include <linux/bitops.h>
-#include <linux/magic.h>
 #include "autofs_i.h"
 #include <linux/module.h>
 
@@ -71,7 +70,7 @@ void autofs4_kill_sb(struct super_block *sb)
 static int autofs4_show_options(struct seq_file *m, struct dentry *root)
 {
 	struct autofs_sb_info *sbi = autofs4_sbi(root->d_sb);
-	struct inode *root_inode = root->d_sb->s_root->d_inode;
+	struct inode *root_inode = d_inode(root->d_sb->s_root);
 
 	if (!sbi)
 		return 0;
@@ -256,8 +255,10 @@ int autofs4_fill_super(struct super_block *s, void *data, int silent)
 	}
 	root_inode = autofs4_get_inode(s, S_IFDIR | 0755);
 	root = d_make_root(root_inode);
-	if (!root)
+	if (!root) {
+		ret = -ENOMEM;
 		goto fail_ino;
+	}
 	pipe = NULL;
 
 	root->d_fsdata = ino;
@@ -352,8 +353,8 @@ struct inode *autofs4_get_inode(struct super_block *sb, umode_t mode)
 
 	inode->i_mode = mode;
 	if (sb->s_root) {
-		inode->i_uid = sb->s_root->d_inode->i_uid;
-		inode->i_gid = sb->s_root->d_inode->i_gid;
+		inode->i_uid = d_inode(sb->s_root)->i_uid;
+		inode->i_gid = d_inode(sb->s_root)->i_gid;
 	}
 	inode->i_atime = inode->i_mtime = inode->i_ctime = CURRENT_TIME;
 	inode->i_ino = get_next_ino();

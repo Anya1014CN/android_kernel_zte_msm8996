@@ -24,8 +24,8 @@ unexport MAKEFLAGS
 # (To override it, run 'make JOBS=1' and similar.)
 #
 ifeq ($(JOBS),)
-  JOBS := $(shell grep -c ^processor /proc/cpuinfo 2>/dev/null)
-  ifeq ($(JOBS),)
+  JOBS := $(shell (getconf _NPROCESSORS_ONLN || egrep -c '^processor|^CPU[0-9]' /proc/cpuinfo) 2>/dev/null)
+  ifeq ($(JOBS),0)
     JOBS := 1
   endif
 endif
@@ -34,7 +34,7 @@ endif
 # Only pass canonical directory names as the output directory:
 #
 ifneq ($(O),)
-  FULL_O := $(shell readlink -f $(O) || echo $(O))
+  FULL_O := $(shell cd $(PWD); readlink -f $(O) || echo $(O))
 endif
 
 #
@@ -69,22 +69,22 @@ all tags TAGS:
 	$(make)
 
 #
-# The clean target is not really parallel, don't print the jobs info:
+# Explicitly disable parallelism for the clean target.
 #
 clean:
-	$(make)
+	$(make) -j1
 
 #
 # The build-test target is not really parallel, don't print the jobs info:
 #
 build-test:
-	@$(MAKE) -f tests/make --no-print-directory
+	@$(MAKE) SHUF=1 -f tests/make --no-print-directory
 
 #
 # All other targets get passed through:
 #
-%:
+%: FORCE
 	$(print_msg)
 	$(make)
 
-.PHONY: tags TAGS
+.PHONY: tags TAGS FORCE Makefile

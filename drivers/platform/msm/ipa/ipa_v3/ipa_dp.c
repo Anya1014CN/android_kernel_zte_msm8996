@@ -19,7 +19,9 @@
 #include "ipa_i.h"
 #include "ipa_trace.h"
 #include "ipahal/ipahal.h"
+#include "ipahal/ipahal_fltrt.h"
 
+#define IPA_WAN_AGGR_PKT_CNT 5
 #define IPA_LAST_DESC_CNT 0xFFFF
 #define POLLING_INACTIVITY_RX 40
 #define POLLING_MIN_SLEEP_RX 1010
@@ -59,7 +61,6 @@
 #define IPA_ODU_RX_POOL_SZ 64
 #define IPA_SIZE_DL_CSUM_META_TRAILER 8
 
-#define IPA_GSI_EVT_RING_LEN 4096
 #define IPA_GSI_MAX_CH_LOW_WEIGHT 15
 #define IPA_GSI_EVT_RING_INT_MODT (32 * 1) /* 1ms under 32KHz clock */
 
@@ -68,9 +69,6 @@
 #define IPA_GSI_CH_20_WA_VIRT_CHAN 29
 
 #define IPA_DEFAULT_SYS_YELLOW_WM 32
-#define IPA_REPL_XFER_THRESH 10
-
-#define IPA_TX_SEND_COMPL_NOP_DELAY_NS (2 * 1000 * 1000)
 
 static struct sk_buff *ipa3_get_skb_ipa_rx(unsigned int len, gfp_t flags);
 static void ipa3_replenish_wlan_rx_cache(struct ipa3_sys_context *sys);
@@ -199,21 +197,10 @@ static void ipa3_wq_write_done(struct work_struct *work)
 {
 	struct ipa3_tx_pkt_wrapper *tx_pkt;
 	struct ipa3_sys_context *sys;
-	struct ipa3_tx_pkt_wrapper *this_pkt;
 
 	tx_pkt = container_of(work, struct ipa3_tx_pkt_wrapper, work);
 	sys = tx_pkt->sys;
-	spin_lock_bh(&sys->spinlock);
-	this_pkt = list_first_entry(&sys->head_desc_list,
-		struct ipa3_tx_pkt_wrapper, link);
-	while (tx_pkt != this_pkt) {
-		spin_unlock_bh(&sys->spinlock);
-		ipa3_wq_write_done_common(sys, this_pkt);
-		spin_lock_bh(&sys->spinlock);
-		this_pkt = list_first_entry(&sys->head_desc_list,
-			struct ipa3_tx_pkt_wrapper, link);
-	}
-	spin_unlock_bh(&sys->spinlock);
+
 	ipa3_wq_write_done_common(sys, tx_pkt);
 }
 
@@ -262,6 +249,7 @@ static void ipa3_tx_switch_to_intr_mode(struct ipa3_sys_context *sys)
 
 	if (ipa3_ctx->transport_prototype == IPA_TRANSPORT_TYPE_GSI) {
 		atomic_set(&sys->curr_polling_state, 0);
+		ipa3_dec_release_wakelock();
 		ret = gsi_config_channel_mode(sys->ep->gsi_chan_hdl,
 			GSI_CHAN_MODE_CALLBACK);
 		if (ret != GSI_STATUS_SUCCESS) {
@@ -289,51 +277,13 @@ static void ipa3_tx_switch_to_intr_mode(struct ipa3_sys_context *sys)
 		}
 		atomic_set(&sys->curr_polling_state, 0);
 		ipa3_handle_tx_core(sys, true, false);
+		ipa3_dec_release_wakelock();
 	}
-	ipa3_dec_release_wakelock();
 	return;
 
 fail:
 	queue_delayed_work(sys->wq, &sys->switch_to_intr_work,
 			msecs_to_jiffies(1));
-}
-
-static void ipa3_send_nop_desc(struct work_struct *work)
-{
-	struct ipa3_sys_context *sys = container_of(work,
-		struct ipa3_sys_context, work);
-	struct gsi_xfer_elem nop_xfer;
-	struct ipa3_tx_pkt_wrapper *tx_pkt;
-
-	IPADBG_LOW("gsi send NOP for ch: %lu\n", sys->ep->gsi_chan_hdl);
-	tx_pkt = kmem_cache_zalloc(ipa3_ctx->tx_pkt_wrapper_cache, GFP_KERNEL);
-	if (!tx_pkt) {
-		IPAERR("failed to alloc tx wrapper\n");
-		queue_work(sys->wq, &sys->work);
-		return;
-	}
-
-	INIT_LIST_HEAD(&tx_pkt->link);
-	tx_pkt->cnt = 1;
-	INIT_WORK(&tx_pkt->work, ipa3_wq_write_done);
-	tx_pkt->no_unmap_dma = true;
-	tx_pkt->sys = sys;
-	spin_lock_bh(&sys->spinlock);
-	list_add_tail(&tx_pkt->link, &sys->head_desc_list);
-	spin_unlock_bh(&sys->spinlock);
-
-	memset(&nop_xfer, 0, sizeof(nop_xfer));
-	nop_xfer.type = GSI_XFER_ELEM_NOP;
-	nop_xfer.flags = GSI_XFER_FLAG_EOT;
-	nop_xfer.xfer_user_data = tx_pkt;
-	if (gsi_queue_xfer(sys->ep->gsi_chan_hdl, 1, &nop_xfer, true)) {
-		IPAERR("gsi_queue_xfer for ch:%lu failed\n",
-			sys->ep->gsi_chan_hdl);
-		queue_work(sys->wq, &sys->work);
-		return;
-	}
-	sys->len_pending_xfer = 0;
-
 }
 
 static void ipa3_handle_tx(struct ipa3_sys_context *sys)
@@ -366,6 +316,125 @@ static void ipa3_wq_handle_tx(struct work_struct *work)
 	ipa3_handle_tx(sys);
 }
 
+/**
+ * ipa3_send_one() - Send a single descriptor
+ * @sys:	system pipe context
+ * @desc:	descriptor to send
+ * @in_atomic:  whether caller is in atomic context
+ *
+ * - Allocate tx_packet wrapper
+ * - transfer data to the IPA
+ * - after the transfer was done the SPS will
+ *   notify the sending user via ipa_sps_irq_comp_tx()
+ *
+ * Return codes: 0: success, -EFAULT: failure
+ */
+int ipa3_send_one(struct ipa3_sys_context *sys, struct ipa3_desc *desc,
+		bool in_atomic)
+{
+	struct ipa3_tx_pkt_wrapper *tx_pkt;
+	struct gsi_xfer_elem gsi_xfer;
+	int result;
+	u16 sps_flags = SPS_IOVEC_FLAG_EOT;
+	dma_addr_t dma_address;
+	u16 len = 0;
+	u32 mem_flag = GFP_ATOMIC;
+
+	if (unlikely(!in_atomic))
+		mem_flag = GFP_KERNEL;
+
+	tx_pkt = kmem_cache_zalloc(ipa3_ctx->tx_pkt_wrapper_cache, mem_flag);
+	if (!tx_pkt) {
+		IPAERR("failed to alloc tx wrapper\n");
+		goto fail_mem_alloc;
+	}
+
+	if (!desc->dma_address_valid) {
+		dma_address = dma_map_single(ipa3_ctx->pdev, desc->pyld,
+			desc->len, DMA_TO_DEVICE);
+	} else {
+		dma_address = desc->dma_address;
+		tx_pkt->no_unmap_dma = true;
+	}
+	if (dma_mapping_error(ipa3_ctx->pdev, dma_address)) {
+		IPAERR("failed to DMA wrap\n");
+		goto fail_dma_map;
+	}
+
+	INIT_LIST_HEAD(&tx_pkt->link);
+	tx_pkt->type = desc->type;
+	tx_pkt->cnt = 1;    /* only 1 desc in this "set" */
+
+	tx_pkt->mem.phys_base = dma_address;
+	tx_pkt->mem.base = desc->pyld;
+	tx_pkt->mem.size = desc->len;
+	tx_pkt->sys = sys;
+	tx_pkt->callback = desc->callback;
+	tx_pkt->user1 = desc->user1;
+	tx_pkt->user2 = desc->user2;
+
+	if (ipa3_ctx->transport_prototype == IPA_TRANSPORT_TYPE_GSI) {
+		memset(&gsi_xfer, 0, sizeof(gsi_xfer));
+		gsi_xfer.addr = dma_address;
+		gsi_xfer.flags |= GSI_XFER_FLAG_EOT;
+		gsi_xfer.xfer_user_data = tx_pkt;
+		if (desc->type == IPA_IMM_CMD_DESC) {
+			gsi_xfer.len = desc->opcode;
+			gsi_xfer.type = GSI_XFER_ELEM_IMME_CMD;
+		} else {
+			gsi_xfer.len = desc->len;
+			gsi_xfer.type = GSI_XFER_ELEM_DATA;
+		}
+	} else {
+		/*
+		 * Special treatment for immediate commands, where the
+		 * structure of the descriptor is different
+		 */
+		if (desc->type == IPA_IMM_CMD_DESC) {
+			sps_flags |= SPS_IOVEC_FLAG_IMME;
+			len = desc->opcode;
+			IPADBG_LOW("sending cmd=%d pyld_len=%d sps_flags=%x\n",
+					desc->opcode, desc->len, sps_flags);
+			IPA_DUMP_BUFF(desc->pyld, dma_address, desc->len);
+		} else {
+			len = desc->len;
+		}
+	}
+
+	INIT_WORK(&tx_pkt->work, ipa3_wq_write_done);
+
+	spin_lock_bh(&sys->spinlock);
+	list_add_tail(&tx_pkt->link, &sys->head_desc_list);
+
+	if (ipa3_ctx->transport_prototype == IPA_TRANSPORT_TYPE_GSI) {
+		result = gsi_queue_xfer(sys->ep->gsi_chan_hdl, 1,
+					&gsi_xfer, true);
+		if (result != GSI_STATUS_SUCCESS) {
+			IPAERR("GSI xfer failed.\n");
+			goto fail_transport_send;
+		}
+	} else {
+		result = sps_transfer_one(sys->ep->ep_hdl, dma_address,
+					len, tx_pkt, sps_flags);
+		if (result) {
+			IPAERR("sps_transfer_one failed rc=%d\n", result);
+			goto fail_transport_send;
+		}
+	}
+
+	spin_unlock_bh(&sys->spinlock);
+
+	return 0;
+
+fail_transport_send:
+	list_del(&tx_pkt->link);
+	spin_unlock_bh(&sys->spinlock);
+	dma_unmap_single(ipa3_ctx->pdev, dma_address, desc->len, DMA_TO_DEVICE);
+fail_dma_map:
+	kmem_cache_free(ipa3_ctx->tx_pkt_wrapper_cache, tx_pkt);
+fail_mem_alloc:
+	return -EFAULT;
+}
 
 /**
  * ipa3_send() - Send multiple descriptors in one HW transaction
@@ -395,35 +464,76 @@ int ipa3_send(struct ipa3_sys_context *sys,
 	struct ipa3_tx_pkt_wrapper *tx_pkt, *tx_pkt_first;
 	struct ipahal_imm_cmd_pyld *tag_pyld_ret = NULL;
 	struct ipa3_tx_pkt_wrapper *next_pkt;
+	struct sps_transfer transfer = { 0 };
+	struct sps_iovec *iovec;
 	struct gsi_xfer_elem *gsi_xfer_elem_array = NULL;
+	dma_addr_t dma_addr;
 	int i = 0;
 	int j;
 	int result;
+	uint size;
 	u32 mem_flag = GFP_ATOMIC;
-	const struct ipa_gsi_ep_config *gsi_ep_cfg;
+	int ipa_ep_idx;
+	struct ipa_gsi_ep_config *gsi_ep_cfg;
 
 	if (unlikely(!in_atomic))
 		mem_flag = GFP_KERNEL;
 
-	gsi_ep_cfg = ipa3_get_gsi_ep_info(sys->ep->client);
-	if (unlikely(!gsi_ep_cfg)) {
-		IPAERR("failed to get gsi EP config of client=%d\n",
-			sys->ep->client);
-		return -EFAULT;
-	}
-	if (unlikely(num_desc > gsi_ep_cfg->ipa_if_tlv)) {
-		IPAERR("Too many chained descriptors need=%d max=%d\n",
-			num_desc, gsi_ep_cfg->ipa_if_tlv);
-		WARN_ON(1);
-		return -EPERM;
-	}
+	size = num_desc * sizeof(struct sps_iovec);
 
-	gsi_xfer_elem_array =
-		kzalloc(num_desc * sizeof(struct gsi_xfer_elem),
-		mem_flag);
-	if (!gsi_xfer_elem_array) {
-		IPAERR("Failed to alloc mem for gsi xfer array.\n");
-		return -EFAULT;
+	if (ipa3_ctx->transport_prototype == IPA_TRANSPORT_TYPE_GSI) {
+		ipa_ep_idx = ipa3_get_ep_mapping(sys->ep->client);
+		if (unlikely(ipa_ep_idx < 0)) {
+			IPAERR("invalid ep_index of client = %d\n",
+				sys->ep->client);
+			return -EFAULT;
+		}
+		gsi_ep_cfg = ipa3_get_gsi_ep_info(ipa_ep_idx);
+		if (unlikely(!gsi_ep_cfg)) {
+			IPAERR("failed to get gsi EP config of ep_idx=%d\n",
+				ipa_ep_idx);
+			return -EFAULT;
+		}
+		if (unlikely(num_desc > gsi_ep_cfg->ipa_if_tlv)) {
+			IPAERR("Too many chained descriptors need=%d max=%d\n",
+				num_desc, gsi_ep_cfg->ipa_if_tlv);
+			WARN_ON(1);
+			return -EPERM;
+		}
+
+		gsi_xfer_elem_array =
+			kzalloc(num_desc * sizeof(struct gsi_xfer_elem),
+			mem_flag);
+		if (!gsi_xfer_elem_array) {
+			IPAERR("Failed to alloc mem for gsi xfer array.\n");
+			return -EFAULT;
+		}
+	} else {
+		if (num_desc == IPA_NUM_DESC_PER_SW_TX) {
+			transfer.iovec = dma_pool_alloc(ipa3_ctx->dma_pool,
+					mem_flag, &dma_addr);
+			if (!transfer.iovec) {
+				IPAERR("fail to alloc dma mem\n");
+				return -EFAULT;
+			}
+		} else {
+			transfer.iovec = kmalloc(size, mem_flag);
+			if (!transfer.iovec) {
+				IPAERR("fail to alloc mem for sps xfr buff ");
+				IPAERR("num_desc = %d size = %d\n",
+						num_desc, size);
+				return -EFAULT;
+			}
+			dma_addr  = dma_map_single(ipa3_ctx->pdev,
+					transfer.iovec, size, DMA_TO_DEVICE);
+			if (dma_mapping_error(ipa3_ctx->pdev, dma_addr)) {
+				IPAERR("dma_map_single failed\n");
+				kfree(transfer.iovec);
+				return -EFAULT;
+			}
+		}
+		transfer.iovec_phys = dma_addr;
+		transfer.iovec_count = num_desc;
 	}
 
 	spin_lock_bh(&sys->spinlock);
@@ -500,57 +610,91 @@ int ipa3_send(struct ipa3_sys_context *sys,
 
 		list_add_tail(&tx_pkt->link, &sys->head_desc_list);
 
-		gsi_xfer_elem_array[i].addr = tx_pkt->mem.phys_base;
+		if (ipa3_ctx->transport_prototype == IPA_TRANSPORT_TYPE_GSI) {
+			gsi_xfer_elem_array[i].addr = tx_pkt->mem.phys_base;
 
-		/*
-		 * Special treatment for immediate commands, where
-		 * the structure of the descriptor is different
-		 */
-		if (desc[i].type == IPA_IMM_CMD_DESC) {
-			gsi_xfer_elem_array[i].len = desc[i].opcode;
-			gsi_xfer_elem_array[i].type =
-				GSI_XFER_ELEM_IMME_CMD;
-		} else {
-			gsi_xfer_elem_array[i].len = desc[i].len;
-			gsi_xfer_elem_array[i].type =
-				GSI_XFER_ELEM_DATA;
-		}
+			/*
+			 * Special treatment for immediate commands, where
+			 * the structure of the descriptor is different
+			 */
+			if (desc[i].type == IPA_IMM_CMD_DESC) {
+				gsi_xfer_elem_array[i].len = desc[i].opcode;
+				gsi_xfer_elem_array[i].type =
+					GSI_XFER_ELEM_IMME_CMD;
+			} else {
+				gsi_xfer_elem_array[i].len = desc[i].len;
+				gsi_xfer_elem_array[i].type =
+					GSI_XFER_ELEM_DATA;
+			}
 
-		if (i == (num_desc - 1)) {
-			if (!sys->use_comm_evt_ring) {
+			if (i == (num_desc - 1)) {
 				gsi_xfer_elem_array[i].flags |=
 					GSI_XFER_FLAG_EOT;
-				gsi_xfer_elem_array[i].flags |=
-					GSI_XFER_FLAG_BEI;
-			}
-			gsi_xfer_elem_array[i].xfer_user_data =
-				tx_pkt_first;
-		} else {
+				if (sys->ep->client == IPA_CLIENT_APPS_WAN_PROD
+					&& sys->policy == IPA_POLICY_INTR_MODE)
+					gsi_xfer_elem_array[i].flags |=
+						GSI_XFER_FLAG_BEI;
+				gsi_xfer_elem_array[i].xfer_user_data =
+					tx_pkt_first;
+			} else
 				gsi_xfer_elem_array[i].flags |=
 					GSI_XFER_FLAG_CHAIN;
+		} else {
+			/*
+			 * first desc of set is "special" as it
+			 * holds the count and other info
+			 */
+			if (i == 0) {
+				transfer.user = tx_pkt;
+				tx_pkt->mult.phys_base = dma_addr;
+				tx_pkt->mult.base = transfer.iovec;
+				tx_pkt->mult.size = size;
+			}
+
+			iovec = &transfer.iovec[i];
+			iovec->flags = 0;
+			/*
+			 * Point the iovec to the buffer and
+			 */
+			iovec->addr = tx_pkt->mem.phys_base;
+			/*
+			 * Special treatment for immediate commands, where
+			 * the structure of the descriptor is different
+			 */
+			if (desc[i].type == IPA_IMM_CMD_DESC) {
+				iovec->size = desc[i].opcode;
+				iovec->flags |= SPS_IOVEC_FLAG_IMME;
+				IPA_DUMP_BUFF(desc[i].pyld,
+					tx_pkt->mem.phys_base, desc[i].len);
+			} else {
+				iovec->size = desc[i].len;
+			}
+
+			if (i == (num_desc - 1)) {
+				iovec->flags |= SPS_IOVEC_FLAG_EOT;
+				/* "mark" the last desc */
+				tx_pkt->cnt = IPA_LAST_DESC_CNT;
+			}
 		}
 	}
 
-	IPADBG_LOW("ch:%lu queue xfer\n", sys->ep->gsi_chan_hdl);
-	result = gsi_queue_xfer(sys->ep->gsi_chan_hdl, num_desc,
-			gsi_xfer_elem_array, true);
-	if (result != GSI_STATUS_SUCCESS) {
-		IPAERR("GSI xfer failed.\n");
-		goto failure;
+	if (ipa3_ctx->transport_prototype == IPA_TRANSPORT_TYPE_GSI) {
+		result = gsi_queue_xfer(sys->ep->gsi_chan_hdl, num_desc,
+				gsi_xfer_elem_array, true);
+		if (result != GSI_STATUS_SUCCESS) {
+			IPAERR("GSI xfer failed.\n");
+			goto failure;
+		}
+		kfree(gsi_xfer_elem_array);
+	} else {
+		result = sps_transfer(sys->ep->ep_hdl, &transfer);
+		if (result) {
+			IPAERR("sps_transfer failed rc=%d\n", result);
+			goto failure;
+		}
 	}
 
-	kfree(gsi_xfer_elem_array);
 	spin_unlock_bh(&sys->spinlock);
-
-	/* set the timer for sending the NOP descriptor */
-	if (sys->use_comm_evt_ring && !hrtimer_active(&sys->db_timer)) {
-		ktime_t time = ktime_set(0, IPA_TX_SEND_COMPL_NOP_DELAY_NS);
-
-		IPADBG_LOW("scheduling timer for ch %lu\n",
-			sys->ep->gsi_chan_hdl);
-		hrtimer_start(&sys->db_timer, time, HRTIMER_MODE_REL);
-	}
-
 	return 0;
 
 failure_dma_map:
@@ -578,29 +722,23 @@ failure:
 		kmem_cache_free(ipa3_ctx->tx_pkt_wrapper_cache, tx_pkt);
 		tx_pkt = next_pkt;
 	}
-
-	kfree(gsi_xfer_elem_array);
+	if (ipa3_ctx->transport_prototype == IPA_TRANSPORT_TYPE_GSI) {
+		kfree(gsi_xfer_elem_array);
+	} else {
+		if (transfer.iovec_phys) {
+			if (num_desc == IPA_NUM_DESC_PER_SW_TX) {
+				dma_pool_free(ipa3_ctx->dma_pool,
+					transfer.iovec, transfer.iovec_phys);
+			} else {
+				dma_unmap_single(ipa3_ctx->pdev,
+					transfer.iovec_phys, size,
+					DMA_TO_DEVICE);
+				kfree(transfer.iovec);
+			}
+		}
+	}
 	spin_unlock_bh(&sys->spinlock);
 	return -EFAULT;
-}
-
-/**
- * ipa3_send_one() - Send a single descriptor
- * @sys:	system pipe context
- * @desc:	descriptor to send
- * @in_atomic:  whether caller is in atomic context
- *
- * - Allocate tx_packet wrapper
- * - transfer data to the IPA
- * - after the transfer was done the SPS will
- *   notify the sending user via ipa_sps_irq_comp_tx()
- *
- * Return codes: 0: success, -EFAULT: failure
- */
-int ipa3_send_one(struct ipa3_sys_context *sys, struct ipa3_desc *desc,
-	bool in_atomic)
-{
-	return ipa3_send(sys, 1, desc, in_atomic);
 }
 
 /**
@@ -911,6 +1049,7 @@ static void ipa3_rx_switch_to_intr_mode(struct ipa3_sys_context *sys)
 			goto fail;
 		}
 		atomic_set(&sys->curr_polling_state, 0);
+		ipa3_dec_release_wakelock();
 		ret = gsi_config_channel_mode(sys->ep->gsi_chan_hdl,
 			GSI_CHAN_MODE_CALLBACK);
 		if (ret != GSI_STATUS_SUCCESS) {
@@ -947,8 +1086,8 @@ static void ipa3_rx_switch_to_intr_mode(struct ipa3_sys_context *sys)
 		}
 		atomic_set(&sys->curr_polling_state, 0);
 		ipa3_handle_rx_core(sys, true, false);
+		ipa3_dec_release_wakelock();
 	}
-	ipa3_dec_release_wakelock();
 	return;
 
 fail:
@@ -981,25 +1120,28 @@ static void ipa3_sps_irq_rx_notify(struct sps_event_notify *notify)
 		if (IPA_CLIENT_IS_APPS_CONS(sys->ep->client))
 			atomic_set(&ipa3_ctx->transport_pm.eot_activity, 1);
 		if (!atomic_read(&sys->curr_polling_state)) {
-			ret = sps_get_config(sys->ep->ep_hdl,
-					&sys->ep->connect);
-			if (ret) {
-				IPAERR("sps_get_config() failed %d\n", ret);
-				break;
-			}
-			sys->ep->connect.options = SPS_O_AUTO_ENABLE |
-				SPS_O_ACK_TRANSFERS | SPS_O_POLL;
-			ret = sps_set_config(sys->ep->ep_hdl,
-					&sys->ep->connect);
-			if (ret) {
-				IPAERR("sps_set_config() failed %d\n", ret);
-				break;
-			}
-			ipa3_inc_acquire_wakelock();
-			atomic_set(&sys->curr_polling_state, 1);
-			trace_intr_to_poll3(sys->ep->client);
-			queue_work(sys->wq, &sys->work);
+			sys->ep->eot_in_poll_err++;
+			break;
 		}
+
+		ret = sps_get_config(sys->ep->ep_hdl,
+							 &sys->ep->connect);
+		if (ret) {
+			IPAERR("sps_get_config() failed %d\n", ret);
+			break;
+		}
+		sys->ep->connect.options = SPS_O_AUTO_ENABLE |
+			  SPS_O_ACK_TRANSFERS | SPS_O_POLL;
+		ret = sps_set_config(sys->ep->ep_hdl,
+							 &sys->ep->connect);
+		if (ret) {
+			IPAERR("sps_set_config() failed %d\n", ret);
+			break;
+		}
+		ipa3_inc_acquire_wakelock();
+		atomic_set(&sys->curr_polling_state, 1);
+		trace_intr_to_poll3(sys->ep->client);
+		queue_work(sys->wq, &sys->work);
 		break;
 	default:
 		IPAERR("received unexpected event id %d\n", notify->event_id);
@@ -1037,21 +1179,22 @@ static void ipa3_handle_rx(struct ipa3_sys_context *sys)
 	IPA_ACTIVE_CLIENTS_INC_SIMPLE();
 	do {
 		cnt = ipa3_handle_rx_core(sys, true, true);
-		if (cnt == 0)
+		if (cnt == 0) {
 			inactive_cycles++;
-		else
+			trace_idle_sleep_enter3(sys->ep->client);
+			usleep_range(POLLING_MIN_SLEEP_RX,
+					POLLING_MAX_SLEEP_RX);
+			trace_idle_sleep_exit3(sys->ep->client);
+		} else {
 			inactive_cycles = 0;
-
-		trace_idle_sleep_enter3(sys->ep->client);
-		usleep_range(POLLING_MIN_SLEEP_RX, POLLING_MAX_SLEEP_RX);
-		trace_idle_sleep_exit3(sys->ep->client);
+		}
 
 		/*
 		 * if pipe is out of buffers there is no point polling for
 		 * completed descs; release the worker so delayed work can
 		 * run in a timely manner
 		 */
-		if (sys->len - sys->len_pending_xfer == 0)
+		if (sys->len == 0)
 			break;
 
 	} while (inactive_cycles <= POLLING_INACTIVITY_RX);
@@ -1068,16 +1211,18 @@ static void ipa3_switch_to_intr_rx_work_func(struct work_struct *work)
 
 	dwork = container_of(work, struct delayed_work, work);
 	sys = container_of(dwork, struct ipa3_sys_context, switch_to_intr_work);
-	ipa3_handle_rx(sys);
-}
 
-enum hrtimer_restart ipa3_ring_doorbell_timer_fn(struct hrtimer *param)
-{
-	struct ipa3_sys_context *sys = container_of(param,
-		struct ipa3_sys_context, db_timer);
-
-	queue_work(sys->wq, &sys->work);
-	return HRTIMER_NORESTART;
+	if (sys->ep->napi_enabled) {
+		if (sys->ep->switch_to_intr) {
+			ipa3_rx_switch_to_intr_mode(sys);
+			IPA_ACTIVE_CLIENTS_DEC_SPECIAL("NAPI");
+			sys->ep->switch_to_intr = false;
+			sys->ep->inactive_cycles = 0;
+		} else
+			sys->ep->client_notify(sys->ep->priv,
+				IPA_CLIENT_START_POLL, 0);
+	} else
+		ipa3_handle_rx(sys);
 }
 
 /**
@@ -1166,9 +1311,6 @@ int ipa3_setup_sys_pipe(struct ipa_sys_connect_params *sys_in, u32 *clnt_hdl)
 		INIT_LIST_HEAD(&ep->sys->head_desc_list);
 		INIT_LIST_HEAD(&ep->sys->rcycl_list);
 		spin_lock_init(&ep->sys->spinlock);
-		hrtimer_init(&ep->sys->db_timer, CLOCK_MONOTONIC,
-			HRTIMER_MODE_REL);
-		ep->sys->db_timer.function = ipa3_ring_doorbell_timer_fn;
 	} else {
 		memset(ep->sys, 0, offsetof(struct ipa3_sys_context, ep));
 	}
@@ -1183,6 +1325,7 @@ int ipa3_setup_sys_pipe(struct ipa_sys_connect_params *sys_in, u32 *clnt_hdl)
 	ep->valid = 1;
 	ep->client = sys_in->client;
 	ep->client_notify = sys_in->notify;
+	ep->napi_enabled = sys_in->napi_enabled;
 	ep->priv = sys_in->priv;
 	ep->keep_ipa_awake = sys_in->keep_ipa_awake;
 	atomic_set(&ep->avail_fifo_desc,
@@ -1390,6 +1533,12 @@ int ipa3_teardown_sys_pipe(u32 clnt_hdl)
 		IPA_ACTIVE_CLIENTS_INC_EP(ipa3_get_client_mapping(clnt_hdl));
 
 	ipa3_disable_data_path(clnt_hdl);
+	if (ep->napi_enabled) {
+		ep->switch_to_intr = true;
+		do {
+			usleep_range(95, 105);
+		} while (atomic_read(&ep->sys->curr_polling_state));
+	}
 
 	if (IPA_CLIENT_IS_PROD(ep->client)) {
 		do {
@@ -1441,10 +1590,7 @@ int ipa3_teardown_sys_pipe(u32 clnt_hdl)
 		}
 
 		/* free event ring only when it is present */
-		if (ep->sys->use_comm_evt_ring) {
-			ipa3_ctx->gsi_evt_comm_ring_rem +=
-				ep->gsi_mem_info.chan_ring_len;
-		} else  if (ep->gsi_evt_ring_hdl != ~0) {
+		if (ep->gsi_evt_ring_hdl != ~0) {
 			result = gsi_reset_evt_ring(ep->gsi_evt_ring_hdl);
 			if (result != GSI_STATUS_SUCCESS) {
 				IPAERR("Failed to reset evt ring: %d.\n",
@@ -1526,7 +1672,7 @@ static void ipa3_tx_comp_usr_notify_release(void *user1, int user2)
 		dev_kfree_skb_any(skb);
 }
 
-void ipa3_tx_cmd_comp(void *user1, int user2)
+static void ipa3_tx_cmd_comp(void *user1, int user2)
 {
 	ipahal_destroy_imm_cmd(user1);
 }
@@ -1564,12 +1710,13 @@ int ipa3_tx_dp(enum ipa_client_type dst, struct sk_buff *skb,
 	struct ipa3_desc *desc;
 	struct ipa3_desc _desc[3];
 	int dst_ep_idx;
+	struct ipahal_imm_cmd_ip_packet_init cmd;
 	struct ipahal_imm_cmd_pyld *cmd_pyld = NULL;
 	struct ipa3_sys_context *sys;
 	int src_ep_idx;
 	int num_frags, f;
 	int data_idx;
-	const struct ipa_gsi_ep_config *gsi_ep;
+	struct ipa_gsi_ep_config *gsi_ep;
 
 	if (unlikely(!ipa3_ctx)) {
 		IPAERR("IPA3 driver was not initialized\n");
@@ -1623,7 +1770,7 @@ int ipa3_tx_dp(enum ipa_client_type dst, struct sk_buff *skb,
 	 * 2 descriptors are needed for IP_PACKET_INIT and TAG_STATUS.
 	 * 1 descriptor needed for the linear portion of skb.
 	 */
-	gsi_ep = ipa3_get_gsi_ep_info(ipa3_ctx->ep[src_ep_idx].client);
+	gsi_ep = ipa3_get_gsi_ep_info(src_ep_idx);
 	if (gsi_ep && (num_frags + 3 > gsi_ep->ipa_if_tlv)) {
 		if (skb_linearize(skb)) {
 			IPAERR("Failed to linear skb with %d frags\n",
@@ -1650,58 +1797,54 @@ int ipa3_tx_dp(enum ipa_client_type dst, struct sk_buff *skb,
 
 	if (dst_ep_idx != -1) {
 		/* SW data path */
-		data_idx = 0;
-		if (sys->policy == IPA_POLICY_NOINTR_MODE) {
-			/*
-			* For non-interrupt mode channel (where there is no
-			* event ring) TAG STATUS are used for completion
-			* notification. IPA will generate a status packet with
-			* tag info as a result of the TAG STATUS command.
-			*/
-			desc[data_idx].opcode =
-				ipahal_imm_cmd_get_opcode(
-				IPA_IMM_CMD_IP_PACKET_TAG_STATUS);
-			desc[data_idx].type = IPA_IMM_CMD_DESC;
-			desc[data_idx].callback = ipa3_tag_destroy_imm;
-			data_idx++;
+		cmd.destination_pipe_index = dst_ep_idx;
+		cmd_pyld = ipahal_construct_imm_cmd(
+			IPA_IMM_CMD_IP_PACKET_INIT, &cmd, true);
+		if (unlikely(!cmd_pyld)) {
+			IPAERR("failed to construct ip_packet_init imm cmd\n");
+			goto fail_mem;
 		}
-		desc[data_idx].opcode =
+
+		/* the tag field will be populated in ipa3_send() function */
+		desc[0].opcode = ipahal_imm_cmd_get_opcode(
+			IPA_IMM_CMD_IP_PACKET_TAG_STATUS);
+		desc[0].type = IPA_IMM_CMD_DESC;
+		desc[0].callback = ipa3_tag_destroy_imm;
+		desc[1].opcode =
 			ipahal_imm_cmd_get_opcode(IPA_IMM_CMD_IP_PACKET_INIT);
-		desc[data_idx].dma_address_valid = true;
-		desc[data_idx].dma_address = ipa3_ctx->pkt_init_imm[dst_ep_idx];
-		desc[data_idx].type = IPA_IMM_CMD_DESC;
-		desc[data_idx].callback = NULL;
-		data_idx++;
-		desc[data_idx].pyld = skb->data;
-		desc[data_idx].len = skb_headlen(skb);
-		desc[data_idx].type = IPA_DATA_DESC_SKB;
-		desc[data_idx].callback = ipa3_tx_comp_usr_notify_release;
-		desc[data_idx].user1 = skb;
-		desc[data_idx].user2 = (meta && meta->pkt_init_dst_ep_valid &&
+		desc[1].pyld = cmd_pyld->data;
+		desc[1].len = cmd_pyld->len;
+		desc[1].type = IPA_IMM_CMD_DESC;
+		desc[1].callback = ipa3_tx_cmd_comp;
+		desc[1].user1 = cmd_pyld;
+		desc[2].pyld = skb->data;
+		desc[2].len = skb_headlen(skb);
+		desc[2].type = IPA_DATA_DESC_SKB;
+		desc[2].callback = ipa3_tx_comp_usr_notify_release;
+		desc[2].user1 = skb;
+		desc[2].user2 = (meta && meta->pkt_init_dst_ep_valid &&
 				meta->pkt_init_dst_ep_remote) ?
 				src_ep_idx :
 				dst_ep_idx;
 		if (meta && meta->dma_address_valid) {
-			desc[data_idx].dma_address_valid = true;
-			desc[data_idx].dma_address = meta->dma_address;
+			desc[2].dma_address_valid = true;
+			desc[2].dma_address = meta->dma_address;
 		}
-		data_idx++;
 
 		for (f = 0; f < num_frags; f++) {
-			desc[data_idx + f].frag = &skb_shinfo(skb)->frags[f];
-			desc[data_idx + f].type = IPA_DATA_DESC_SKB_PAGED;
-			desc[data_idx + f].len =
-				skb_frag_size(desc[data_idx + f].frag);
+			desc[3+f].frag = &skb_shinfo(skb)->frags[f];
+			desc[3+f].type = IPA_DATA_DESC_SKB_PAGED;
+			desc[3+f].len = skb_frag_size(desc[3+f].frag);
 		}
 		/* don't free skb till frag mappings are released */
 		if (num_frags) {
-			desc[data_idx + f - 1].callback = desc[2].callback;
-			desc[data_idx + f - 1].user1 = desc[2].user1;
-			desc[data_idx + f - 1].user2 = desc[2].user2;
-			desc[data_idx - 1].callback = NULL;
+			desc[3+f-1].callback = desc[2].callback;
+			desc[3+f-1].user1 = desc[2].user1;
+			desc[3+f-1].user2 = desc[2].user2;
+			desc[2].callback = NULL;
 		}
 
-		if (ipa3_send(sys, num_frags + data_idx, desc, true)) {
+		if (ipa3_send(sys, num_frags + 3, desc, true)) {
 			IPAERR("fail to send skb %p num_frags %u SWP\n",
 				skb, num_frags);
 			goto fail_send;
@@ -1785,7 +1928,13 @@ static void ipa3_wq_handle_rx(struct work_struct *work)
 	struct ipa3_sys_context *sys;
 
 	sys = container_of(work, struct ipa3_sys_context, work);
-	ipa3_handle_rx(sys);
+
+	if (sys->ep->napi_enabled) {
+		IPA_ACTIVE_CLIENTS_INC_SPECIAL("NAPI");
+		sys->ep->client_notify(sys->ep->priv,
+				IPA_CLIENT_START_POLL, 0);
+	} else
+		ipa3_handle_rx(sys);
 }
 
 static void ipa3_wq_repl_rx(struct work_struct *work)
@@ -2093,20 +2242,11 @@ static void ipa3_replenish_rx_cache(struct ipa3_sys_context *sys)
 			gsi_xfer_elem_one.xfer_user_data = rx_pkt;
 
 			ret = gsi_queue_xfer(sys->ep->gsi_chan_hdl,
-					1, &gsi_xfer_elem_one, false);
+					1, &gsi_xfer_elem_one, true);
 			if (ret != GSI_STATUS_SUCCESS) {
 				IPAERR("failed to provide buffer: %d\n",
 					ret);
 				goto fail_provide_rx_buffer;
-			}
-
-			/*
-			 * As doorbell is a costly operation, notify to GSI
-			 * of new buffers if threshold is exceeded
-			 */
-			if (++sys->len_pending_xfer >= IPA_REPL_XFER_THRESH) {
-				sys->len_pending_xfer = 0;
-				gsi_start_xfer(sys->ep->gsi_chan_hdl);
 			}
 		} else {
 			ret = sps_transfer_one(sys->ep->ep_hdl,
@@ -2132,7 +2272,7 @@ fail_dma_mapping:
 fail_skb_alloc:
 	kmem_cache_free(ipa3_ctx->rx_pkt_wrapper_cache, rx_pkt);
 fail_kmem_cache_alloc:
-	if (rx_len_cached - sys->len_pending_xfer == 0)
+	if (rx_len_cached == 0)
 		queue_delayed_work(sys->wq, &sys->replenish_rx_work,
 				msecs_to_jiffies(1));
 }
@@ -2209,20 +2349,11 @@ static void ipa3_replenish_rx_cache_recycle(struct ipa3_sys_context *sys)
 			gsi_xfer_elem_one.xfer_user_data = rx_pkt;
 
 			ret = gsi_queue_xfer(sys->ep->gsi_chan_hdl,
-					1, &gsi_xfer_elem_one, false);
+					1, &gsi_xfer_elem_one, true);
 			if (ret != GSI_STATUS_SUCCESS) {
 				IPAERR("failed to provide buffer: %d\n",
 					ret);
 				goto fail_provide_rx_buffer;
-			}
-
-			/*
-			 * As doorbell is a costly operation, notify to GSI
-			 * of new buffers if threshold is exceeded
-			 */
-			if (++sys->len_pending_xfer >= IPA_REPL_XFER_THRESH) {
-				sys->len_pending_xfer = 0;
-				gsi_start_xfer(sys->ep->gsi_chan_hdl);
 			}
 		} else {
 			ret = sps_transfer_one(sys->ep->ep_hdl,
@@ -2249,7 +2380,7 @@ fail_dma_mapping:
 	INIT_LIST_HEAD(&rx_pkt->link);
 	spin_unlock_bh(&sys->spinlock);
 fail_kmem_cache_alloc:
-	if (rx_len_cached - sys->len_pending_xfer == 0)
+	if (rx_len_cached == 0)
 		queue_delayed_work(sys->wq, &sys->replenish_rx_work,
 		msecs_to_jiffies(1));
 }
@@ -2284,20 +2415,11 @@ static void ipa3_fast_replenish_rx_cache(struct ipa3_sys_context *sys)
 			gsi_xfer_elem_one.xfer_user_data = rx_pkt;
 
 			ret = gsi_queue_xfer(sys->ep->gsi_chan_hdl, 1,
-				&gsi_xfer_elem_one, false);
+				&gsi_xfer_elem_one, true);
 			if (ret != GSI_STATUS_SUCCESS) {
 				IPAERR("failed to provide buffer: %d\n",
 					ret);
 				break;
-			}
-
-			/*
-			 * As doorbell is a costly operation, notify to GSI
-			 * of new buffers if threshold is exceeded
-			 */
-			if (++sys->len_pending_xfer >= IPA_REPL_XFER_THRESH) {
-				sys->len_pending_xfer = 0;
-				gsi_start_xfer(sys->ep->gsi_chan_hdl);
 			}
 		} else {
 			ret = sps_transfer_one(sys->ep->ep_hdl,
@@ -2319,8 +2441,7 @@ static void ipa3_fast_replenish_rx_cache(struct ipa3_sys_context *sys)
 
 	queue_work(sys->repl_wq, &sys->repl_work);
 
-	if (rx_len_cached - sys->len_pending_xfer
-		<= IPA_DEFAULT_SYS_YELLOW_WM) {
+	if (rx_len_cached <= IPA_DEFAULT_SYS_YELLOW_WM) {
 		if (sys->ep->client == IPA_CLIENT_APPS_WAN_CONS)
 			IPA_STATS_INC_CNT(ipa3_ctx->stats.wan_rx_empty);
 		else if (sys->ep->client == IPA_CLIENT_APPS_LAN_CONS)
@@ -2581,7 +2702,7 @@ begin:
 			 */
 			if (status.exception ==
 				IPAHAL_PKT_STATUS_EXCEPTION_NONE &&
-				status.rt_rule_id == IPA_RULE_ID_INVALID)
+				ipahal_is_rule_miss_id(status.rt_rule_id))
 				sys->drop_packet = true;
 
 			if (skb->len == pkt_status_sz &&
@@ -2763,6 +2884,11 @@ static int ipa3_wan_rx_pyld_hdlr(struct sk_buff *skb,
 			IPA_RECEIVE, (unsigned long)(skb));
 		return rc;
 	}
+	if (sys->repl_hdlr == ipa3_replenish_rx_cache_recycle) {
+		IPAERR("Recycle should enable only with GRO Aggr\n");
+		ipa_assert();
+	}
+
 	/*
 	 * payload splits across 2 buff or more,
 	 * take the start of the payload from prev_skb
@@ -2955,6 +3081,30 @@ static void ipa3_recycle_rx_wrapper(struct ipa3_rx_pkt_wrapper *rx_pkt)
 	spin_unlock_bh(&rx_pkt->sys->spinlock);
 }
 
+void ipa3_recycle_wan_skb(struct sk_buff *skb)
+{
+	struct ipa3_rx_pkt_wrapper *rx_pkt;
+	int ep_idx = ipa3_get_ep_mapping(
+	   IPA_CLIENT_APPS_WAN_CONS);
+	gfp_t flag = GFP_NOWAIT | __GFP_NOWARN;
+
+	if (unlikely(ep_idx == -1)) {
+		IPAERR("dest EP does not exist\n");
+		ipa_assert();
+	}
+
+	rx_pkt = kmem_cache_zalloc(ipa3_ctx->rx_pkt_wrapper_cache,
+					flag);
+	if (!rx_pkt)
+		ipa_assert();
+
+	INIT_WORK(&rx_pkt->work, ipa3_wq_rx_avail);
+	rx_pkt->sys = ipa3_ctx->ep[ep_idx].sys;
+
+	rx_pkt->data.skb = skb;
+	ipa3_recycle_rx_wrapper(rx_pkt);
+}
+
 static void ipa3_wq_rx_common(struct ipa3_sys_context *sys, u32 size)
 {
 	struct ipa3_rx_pkt_wrapper *rx_pkt_expected;
@@ -2964,7 +3114,6 @@ static void ipa3_wq_rx_common(struct ipa3_sys_context *sys, u32 size)
 		WARN_ON(1);
 		return;
 	}
-	spin_lock_bh(&sys->spinlock);
 	rx_pkt_expected = list_first_entry(&sys->head_desc_list,
 					   struct ipa3_rx_pkt_wrapper,
 					   link);
@@ -2972,7 +3121,6 @@ static void ipa3_wq_rx_common(struct ipa3_sys_context *sys, u32 size)
 	sys->len--;
 	if (size)
 		rx_pkt_expected->len = size;
-	spin_unlock_bh(&sys->spinlock);
 	rx_skb = rx_pkt_expected->data.skb;
 	dma_unmap_single(ipa3_ctx->pdev, rx_pkt_expected->data.dma_addr,
 			sys->rx_buff_sz, DMA_FROM_DEVICE);
@@ -3096,9 +3244,9 @@ static void ipa3_free_rx_wrapper(struct ipa3_rx_pkt_wrapper *rk_pkt)
 static int ipa3_assign_policy(struct ipa_sys_connect_params *in,
 		struct ipa3_sys_context *sys)
 {
-	if (in->client == IPA_CLIENT_APPS_CMD_PROD) {
+	if (in->client == IPA_CLIENT_APPS_CMD_PROD ||
+		in->client == IPA_CLIENT_APPS_WAN_PROD) {
 		sys->policy = IPA_POLICY_INTR_MODE;
-		sys->use_comm_evt_ring = false;
 		sys->sps_option = (SPS_O_AUTO_ENABLE | SPS_O_EOT);
 		sys->sps_callback = ipa3_sps_irq_tx_no_aggr_notify;
 		return 0;
@@ -3114,7 +3262,6 @@ static int ipa3_assign_policy(struct ipa_sys_connect_params *in,
 	if (IPA_CLIENT_IS_PROD(in->client)) {
 		if (sys->ep->skip_ep_cfg) {
 			sys->policy = IPA_POLICY_INTR_POLL_MODE;
-			sys->use_comm_evt_ring = true;
 			sys->sps_option = (SPS_O_AUTO_ENABLE|
 				SPS_O_EOT | SPS_O_ACK_TRANSFERS);
 			sys->sps_callback = ipa3_sps_irq_tx_notify;
@@ -3123,11 +3270,12 @@ static int ipa3_assign_policy(struct ipa_sys_connect_params *in,
 				ipa3_switch_to_intr_tx_work_func);
 			atomic_set(&sys->curr_polling_state, 0);
 		} else {
-			sys->policy = IPA_POLICY_INTR_MODE;
-			sys->use_comm_evt_ring = true;
-			INIT_WORK(&sys->work, ipa3_send_nop_desc);
+			sys->policy = IPA_POLICY_NOINTR_MODE;
 			sys->sps_option = SPS_O_AUTO_ENABLE;
-			sys->sps_callback = ipa3_sps_irq_tx_no_aggr_notify;
+			sys->sps_callback = NULL;
+			sys->ep->status.status_en = true;
+			sys->ep->status.status_ep = ipa3_get_ep_mapping(
+					IPA_CLIENT_APPS_LAN_CONS);
 		}
 	} else {
 		if (in->client == IPA_CLIENT_APPS_LAN_CONS ||
@@ -3168,14 +3316,17 @@ static int ipa3_assign_policy(struct ipa_sys_connect_params *in,
 					IPA_CLIENT_APPS_WAN_CONS) {
 				sys->pyld_hdlr = ipa3_wan_rx_pyld_hdlr;
 				sys->free_rx_wrapper = ipa3_free_rx_wrapper;
-				if (nr_cpu_ids > 1)
+				sys->rx_pool_sz = ipa3_ctx->wan_rx_ring_size;
+				if (nr_cpu_ids > 1) {
 					sys->repl_hdlr =
-						ipa3_fast_replenish_rx_cache;
-				else
+					   ipa3_fast_replenish_rx_cache;
+				} else {
 					sys->repl_hdlr =
-						ipa3_replenish_rx_cache;
-				sys->rx_pool_sz =
-					ipa3_ctx->wan_rx_ring_size;
+					   ipa3_replenish_rx_cache;
+				}
+				if (in->napi_enabled && in->recycle_enabled)
+					sys->repl_hdlr =
+					 ipa3_replenish_rx_cache_recycle;
 				in->ipa_ep_cfg.aggr.aggr_sw_eof_active
 					= true;
 				if (ipa3_ctx->
@@ -3808,53 +3959,13 @@ static void ipa_dma_gsi_irq_rx_notify_cb(struct gsi_chan_xfer_notify *notify)
 	}
 }
 
-int ipa3_alloc_common_event_ring(void)
-{
-	struct gsi_evt_ring_props gsi_evt_ring_props;
-	dma_addr_t evt_dma_addr;
-	int result;
-
-	memset(&gsi_evt_ring_props, 0, sizeof(gsi_evt_ring_props));
-	gsi_evt_ring_props.intf = GSI_EVT_CHTYPE_GPI_EV;
-	gsi_evt_ring_props.intr = GSI_INTR_IRQ;
-	gsi_evt_ring_props.re_size = GSI_EVT_RING_RE_SIZE_16B;
-
-	gsi_evt_ring_props.ring_len = IPA_COMMON_EVENT_RING_SIZE;
-
-	gsi_evt_ring_props.ring_base_vaddr =
-		dma_alloc_coherent(ipa3_ctx->pdev,
-		gsi_evt_ring_props.ring_len, &evt_dma_addr, GFP_KERNEL);
-	if (!gsi_evt_ring_props.ring_base_vaddr) {
-		IPAERR("fail to dma alloc %u bytes\n",
-			gsi_evt_ring_props.ring_len);
-		return -ENOMEM;
-	}
-	gsi_evt_ring_props.ring_base_addr = evt_dma_addr;
-	gsi_evt_ring_props.int_modt = 0;
-	gsi_evt_ring_props.int_modc = 1; /* moderation comes from channel*/
-	gsi_evt_ring_props.rp_update_addr = 0;
-	gsi_evt_ring_props.exclusive = false;
-	gsi_evt_ring_props.err_cb = ipa_gsi_evt_ring_err_cb;
-	gsi_evt_ring_props.user_data = NULL;
-
-	result = gsi_alloc_evt_ring(&gsi_evt_ring_props,
-		ipa3_ctx->gsi_dev_hdl, &ipa3_ctx->gsi_evt_comm_hdl);
-	if (result) {
-		IPAERR("gsi_alloc_evt_ring failed %d\n", result);
-		return result;
-	}
-	ipa3_ctx->gsi_evt_comm_ring_rem = IPA_COMMON_EVENT_RING_SIZE;
-
-	return 0;
-}
-
 static int ipa_gsi_setup_channel(struct ipa_sys_connect_params *in,
 	struct ipa3_ep_context *ep)
 {
 	struct gsi_evt_ring_props gsi_evt_ring_props;
 	struct gsi_chan_props gsi_channel_props;
 	union __packed gsi_channel_scratch ch_scratch;
-	const struct ipa_gsi_ep_config *gsi_ep_info;
+	struct ipa_gsi_ep_config *gsi_ep_info;
 	dma_addr_t dma_addr;
 	dma_addr_t evt_dma_addr;
 	int result;
@@ -3864,32 +3975,29 @@ static int ipa_gsi_setup_channel(struct ipa_sys_connect_params *in,
 		return -EINVAL;
 	}
 
-	evt_dma_addr = 0;
 	ep->gsi_evt_ring_hdl = ~0;
 	memset(&gsi_evt_ring_props, 0, sizeof(gsi_evt_ring_props));
-	if (ep->sys->use_comm_evt_ring) {
-		if (ipa3_ctx->gsi_evt_comm_ring_rem < 2 * in->desc_fifo_sz) {
-			IPAERR("not enough space in common event ring\n");
-			IPAERR("available: %d needed: %d\n",
-				ipa3_ctx->gsi_evt_comm_ring_rem,
-				2 * in->desc_fifo_sz);
-			WARN_ON(1);
-			return -EFAULT;
-		}
-		ipa3_ctx->gsi_evt_comm_ring_rem -= (2 * in->desc_fifo_sz);
-		ep->gsi_evt_ring_hdl = ipa3_ctx->gsi_evt_comm_hdl;
-	} else if (ep->sys->policy != IPA_POLICY_NOINTR_MODE ||
+	/*
+	 * allocate event ring for all interrupt-policy
+	 * pipes and IPA consumers pipes
+	 */
+	if (ep->sys->policy != IPA_POLICY_NOINTR_MODE ||
 	     IPA_CLIENT_IS_CONS(ep->client)) {
 		gsi_evt_ring_props.intf = GSI_EVT_CHTYPE_GPI_EV;
 		gsi_evt_ring_props.intr = GSI_INTR_IRQ;
 		gsi_evt_ring_props.re_size =
 			GSI_EVT_RING_RE_SIZE_16B;
 
+		/*
+		* GSI ring length is calculated based on the desc_fifo_sz
+		* which was meant to define the BAM desc fifo. GSI descriptors
+		* are 16B as opposed to 8B for BAM.
+		*/
 		gsi_evt_ring_props.ring_len = 2 * in->desc_fifo_sz;
+
 		gsi_evt_ring_props.ring_base_vaddr =
 			dma_alloc_coherent(ipa3_ctx->pdev,
-			gsi_evt_ring_props.ring_len,
-			&evt_dma_addr, GFP_KERNEL);
+			gsi_evt_ring_props.ring_len, &evt_dma_addr, GFP_KERNEL);
 		if (!gsi_evt_ring_props.ring_base_vaddr) {
 			IPAERR("fail to dma alloc %u bytes\n",
 				gsi_evt_ring_props.ring_len);
@@ -3905,7 +4013,10 @@ static int ipa_gsi_setup_channel(struct ipa_sys_connect_params *in,
 			gsi_evt_ring_props.ring_base_vaddr;
 
 		gsi_evt_ring_props.int_modt = IPA_GSI_EVT_RING_INT_MODT;
-		gsi_evt_ring_props.int_modc = 1;
+		if (ep->client == IPA_CLIENT_APPS_WAN_PROD)
+			gsi_evt_ring_props.int_modc = 248;
+		else
+			gsi_evt_ring_props.int_modc = 1;
 
 		IPADBG("client=%d moderation threshold cycles=%u cnt=%u\n",
 			ep->client,
@@ -3931,10 +4042,9 @@ static int ipa_gsi_setup_channel(struct ipa_sys_connect_params *in,
 		gsi_channel_props.max_re_expected = ep->sys->rx_pool_sz;
 	}
 
-	gsi_ep_info = ipa3_get_gsi_ep_info(ep->client);
+	gsi_ep_info = ipa3_get_gsi_ep_info(ipa3_get_ep_mapping(ep->client));
 	if (!gsi_ep_info) {
-		IPAERR("Failed getting GSI EP info for client=%d\n",
-		       ep->client);
+		IPAERR("Invalid ep number\n");
 		result = -EINVAL;
 		goto fail_get_gsi_ep_info;
 	} else
@@ -4066,70 +4176,42 @@ static int ipa_populate_tag_field(struct ipa3_desc *desc,
 	return 0;
 }
 
+static int ipa_poll_gsi_pkt(struct ipa3_sys_context *sys,
+		struct ipa_mem_buffer *mem_info)
+{
+	int ret;
+	struct gsi_chan_xfer_notify xfer_notify;
+	struct ipa3_rx_pkt_wrapper *rx_pkt;
+
+	if (sys->ep->bytes_xfered_valid) {
+		mem_info->phys_base = sys->ep->phys_base;
+		mem_info->size = (u32)sys->ep->bytes_xfered;
+		sys->ep->bytes_xfered_valid = false;
+		return GSI_STATUS_SUCCESS;
+	}
+
+	ret = gsi_poll_channel(sys->ep->gsi_chan_hdl,
+		&xfer_notify);
+	if (ret == GSI_STATUS_POLL_EMPTY)
+		return ret;
+	else if (ret != GSI_STATUS_SUCCESS) {
+		IPAERR("Poll channel err: %d\n", ret);
+		return ret;
+	}
+
+	rx_pkt = (struct ipa3_rx_pkt_wrapper *)
+		xfer_notify.xfer_user_data;
+	mem_info->phys_base = rx_pkt->data.dma_addr;
+	mem_info->size = xfer_notify.bytes_xfered;
+
+	return ret;
+}
+
 static int ipa_handle_rx_core_gsi(struct ipa3_sys_context *sys,
 	bool process_all, bool in_poll_state)
 {
 	int ret;
 	int cnt = 0;
-	struct ipa3_sys_context *sys_ptr;
-	struct ipa3_rx_pkt_wrapper *rx_pkt;
-	struct gsi_chan_xfer_notify xfer_notify;
-	struct ipa_mem_buffer mem_info = {0};
-	enum ipa_client_type client;
-
-	if (sys->ep->bytes_xfered_valid) {
-		mem_info.phys_base = sys->ep->phys_base;
-		mem_info.size = (u32)sys->ep->bytes_xfered;
-		sys_ptr = sys;
-		if (IPA_CLIENT_IS_MEMCPY_DMA_CONS(sys->ep->client))
-			ipa3_dma_memcpy_notify(sys_ptr, &mem_info);
-		else if (IPA_CLIENT_IS_WLAN_CONS(sys->ep->client))
-			ipa3_wlan_wq_rx_common(sys_ptr, mem_info.size);
-		else
-			ipa3_wq_rx_common(sys_ptr, mem_info.size);
-
-		cnt++;
-		sys->ep->bytes_xfered_valid = false;
-	}
-
-	while ((in_poll_state ? atomic_read(&sys->curr_polling_state) :
-			!atomic_read(&sys->curr_polling_state))) {
-		if (cnt && !process_all)
-			break;
-
-		ret = gsi_poll_channel(sys->ep->gsi_chan_hdl,
-			&xfer_notify);
-		if (ret == GSI_STATUS_POLL_EMPTY)
-			break;
-		else if (ret == GSI_STATUS_SUCCESS) {
-			sys_ptr = (struct ipa3_sys_context *)
-				xfer_notify.chan_user_data;
-			rx_pkt = (struct ipa3_rx_pkt_wrapper *)
-				xfer_notify.xfer_user_data;
-			mem_info.phys_base = rx_pkt->data.dma_addr;
-			mem_info.size = xfer_notify.bytes_xfered;
-
-			client = sys->ep->client;
-			if (IPA_CLIENT_IS_MEMCPY_DMA_CONS(client))
-				ipa3_dma_memcpy_notify(sys_ptr, &mem_info);
-			else if (IPA_CLIENT_IS_WLAN_CONS(client))
-				ipa3_wlan_wq_rx_common(sys_ptr, mem_info.size);
-			else
-				ipa3_wq_rx_common(sys_ptr, mem_info.size);
-
-			cnt++;
-		} else
-			IPAERR("Poll channel err: %d\n", ret);
-	}
-	return cnt;
-}
-
-static int ipa_handle_rx_core_sps(struct ipa3_sys_context *sys,
-	bool process_all, bool in_poll_state)
-{
-	struct sps_iovec iov;
-	int ret;
-	int cnt = 0;
 	struct ipa_mem_buffer mem_info = {0};
 
 	while ((in_poll_state ? atomic_read(&sys->curr_polling_state) :
@@ -4137,17 +4219,10 @@ static int ipa_handle_rx_core_sps(struct ipa3_sys_context *sys,
 		if (cnt && !process_all)
 			break;
 
-		ret = sps_get_iovec(sys->ep->ep_hdl, &iov);
-		if (ret) {
-			IPAERR("sps_get_iovec failed %d\n", ret);
-			break;
-		}
-
-		if (iov.addr == 0)
+		ret = ipa_poll_gsi_pkt(sys, &mem_info);
+		if (ret)
 			break;
 
-		mem_info.phys_base = iov.addr;
-		mem_info.size = iov.size;
 		if (IPA_CLIENT_IS_MEMCPY_DMA_CONS(sys->ep->client))
 			ipa3_dma_memcpy_notify(sys, &mem_info);
 		else if (IPA_CLIENT_IS_WLAN_CONS(sys->ep->client))
@@ -4157,6 +4232,114 @@ static int ipa_handle_rx_core_sps(struct ipa3_sys_context *sys,
 
 		cnt++;
 	}
+	return cnt;
+}
+
+static int ipa_poll_sps_pkt(struct ipa3_sys_context *sys,
+		struct ipa_mem_buffer *mem_info)
+{
+	int ret;
+	struct sps_iovec iov;
+
+	ret = sps_get_iovec(sys->ep->ep_hdl, &iov);
+	if (ret) {
+		IPAERR("sps_get_iovec failed %d\n", ret);
+		return ret;
+	}
+
+	if (iov.addr == 0)
+		return -EIO;
+
+	mem_info->phys_base = iov.addr;
+	mem_info->size = iov.size;
+	return 0;
+}
+
+static int ipa_handle_rx_core_sps(struct ipa3_sys_context *sys,
+	bool process_all, bool in_poll_state)
+{
+	int ret;
+	int cnt = 0;
+	struct ipa_mem_buffer mem_info = {0};
+
+	while ((in_poll_state ? atomic_read(&sys->curr_polling_state) :
+			!atomic_read(&sys->curr_polling_state))) {
+		if (cnt && !process_all)
+			break;
+
+		ret = ipa_poll_sps_pkt(sys, &mem_info);
+		if (ret)
+			break;
+
+		if (IPA_CLIENT_IS_MEMCPY_DMA_CONS(sys->ep->client))
+			ipa3_dma_memcpy_notify(sys, &mem_info);
+		else if (IPA_CLIENT_IS_WLAN_CONS(sys->ep->client))
+			ipa3_wlan_wq_rx_common(sys, mem_info.size);
+		else
+			ipa3_wq_rx_common(sys, mem_info.size);
+
+		cnt++;
+	}
+
+	return cnt;
+}
+
+/**
+ * ipa3_rx_poll() - Poll the rx packets from IPA HW. This
+ * function is exectued in the softirq context
+ *
+ * if input budget is zero, the driver switches back to
+ * interrupt mode
+ *
+ * return number of polled packets, on error 0(zero)
+ */
+int ipa3_rx_poll(u32 clnt_hdl, int weight)
+{
+	struct ipa3_ep_context *ep;
+	int ret;
+	int cnt = 0;
+	unsigned int delay = 1;
+	struct ipa_mem_buffer mem_info = {0};
+
+	IPADBG("\n");
+	if (clnt_hdl >= ipa3_ctx->ipa_num_pipes ||
+		ipa3_ctx->ep[clnt_hdl].valid == 0) {
+		IPAERR("bad parm 0x%x\n", clnt_hdl);
+		return cnt;
+	}
+
+	ep = &ipa3_ctx->ep[clnt_hdl];
+
+	while (cnt < weight &&
+		   atomic_read(&ep->sys->curr_polling_state)) {
+
+		if (ipa3_ctx->transport_prototype == IPA_TRANSPORT_TYPE_GSI)
+			ret = ipa_poll_gsi_pkt(ep->sys, &mem_info);
+		else
+			ret = ipa_poll_sps_pkt(ep->sys, &mem_info);
+
+		if (ret)
+			break;
+
+		ipa3_wq_rx_common(ep->sys, mem_info.size);
+		cnt += IPA_WAN_AGGR_PKT_CNT;
+	};
+
+	if (cnt == 0 || cnt < weight) {
+		ep->inactive_cycles++;
+		ep->client_notify(ep->priv, IPA_CLIENT_COMP_NAPI, 0);
+
+		if (ep->inactive_cycles > 3 || ep->sys->len == 0) {
+			ep->switch_to_intr = true;
+			delay = 0;
+		} else if (cnt < weight) {
+			delay = 0;
+		}
+		queue_delayed_work(ep->sys->wq,
+			&ep->sys->switch_to_intr_work, msecs_to_jiffies(delay));
+	} else
+		ep->inactive_cycles = 0;
+
 	return cnt;
 }
 

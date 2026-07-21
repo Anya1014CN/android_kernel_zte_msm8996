@@ -233,7 +233,7 @@ data_err=ignore(*)	Just print an error message if an error occurs
 data_err=abort		Abort the journal if an error occurs in a file
 			data buffer in ordered mode.
 
-grpid			Give objects the same group ID as their creator.
+grpid			New objects have the group ID of their parent.
 bsdgroups
 
 nogrpid		(*)	New objects have the group ID of their creator.
@@ -385,6 +385,10 @@ max_dir_size_kb=n	This limits the size of directories so that any
 
 i_version		Enable 64-bit inode version support. This option is
 			off by default.
+
+dax			Use direct access (no page cache).  See
+			Documentation/filesystems/dax.txt.  Note that
+			this option is incompatible with data=journal.
 
 Data Mode
 =========

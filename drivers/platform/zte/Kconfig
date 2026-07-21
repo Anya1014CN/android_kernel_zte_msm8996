@@ -1,0 +1,7 @@
+# ZTE board selection
+
+config MACH_ZTE_FUJISAN
+	bool "ZTE Axon M (fujisan)"
+	depends on ARCH_MSM8996
+	help
+	  Build the Fujisan device trees for the ZTE Axon M.

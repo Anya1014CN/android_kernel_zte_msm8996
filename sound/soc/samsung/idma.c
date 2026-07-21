@@ -370,6 +370,8 @@ static int preallocate_idma_buffer(struct snd_pcm *pcm, int stream)
 	buf->addr = idma.lp_tx_addr;
 	buf->bytes = idma_hardware.buffer_bytes_max;
 	buf->area = (unsigned char * __force)ioremap(buf->addr, buf->bytes);
+	if (!buf->area)
+		return -ENOMEM;
 
 	return 0;
 }
@@ -418,7 +420,6 @@ static int asoc_idma_platform_probe(struct platform_device *pdev)
 static struct platform_driver asoc_idma_driver = {
 	.driver = {
 		.name = "samsung-idma",
-		.owner = THIS_MODULE,
 	},
 
 	.probe = asoc_idma_platform_probe,

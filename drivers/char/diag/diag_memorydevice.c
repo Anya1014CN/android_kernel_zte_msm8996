@@ -1,5 +1,4 @@
-/* Copyright (c) 2014-2015, 2016, 2018 The Linux Foundation.
- * All rights reserved.
+/* Copyright (c) 2014-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -30,6 +29,7 @@
 #include "diagmem.h"
 #include "diagfwd.h"
 #include "diagfwd_peripheral.h"
+#include "diag_ipc_logging.h"
 
 struct diag_md_info diag_md[NUM_DIAG_MD_DEV] = {
 	{
@@ -37,6 +37,7 @@ struct diag_md_info diag_md[NUM_DIAG_MD_DEV] = {
 		.ctx = 0,
 		.mempool = POOL_TYPE_MUX_APPS,
 		.num_tbl_entries = 0,
+		.md_info_inited = 0,
 		.tbl = NULL,
 		.ops = NULL,
 	},
@@ -46,6 +47,7 @@ struct diag_md_info diag_md[NUM_DIAG_MD_DEV] = {
 		.ctx = 0,
 		.mempool = POOL_TYPE_MDM_MUX,
 		.num_tbl_entries = 0,
+		.md_info_inited = 0,
 		.tbl = NULL,
 		.ops = NULL,
 	},
@@ -54,6 +56,7 @@ struct diag_md_info diag_md[NUM_DIAG_MD_DEV] = {
 		.ctx = 0,
 		.mempool = POOL_TYPE_MDM2_MUX,
 		.num_tbl_entries = 0,
+		.md_info_inited = 0,
 		.tbl = NULL,
 		.ops = NULL,
 	},
@@ -62,6 +65,7 @@ struct diag_md_info diag_md[NUM_DIAG_MD_DEV] = {
 		.ctx = 0,
 		.mempool = POOL_TYPE_QSC_MUX,
 		.num_tbl_entries = 0,
+		.md_info_inited = 0,
 		.tbl = NULL,
 		.ops = NULL,
 	}
@@ -85,6 +89,8 @@ void diag_md_open_all()
 
 	for (i = 0; i < NUM_DIAG_MD_DEV; i++) {
 		ch = &diag_md[i];
+		if (!ch->md_info_inited)
+			continue;
 		if (ch->ops && ch->ops->open)
 			ch->ops->open(ch->ctx, DIAG_MEMORY_DEVICE_MODE);
 	}
@@ -101,6 +107,8 @@ void diag_md_close_all()
 
 	for (i = 0; i < NUM_DIAG_MD_DEV; i++) {
 		ch = &diag_md[i];
+		if (!ch->md_info_inited)
+			continue;
 
 		if (ch->ops && ch->ops->close)
 			ch->ops->close(ch->ctx, DIAG_MEMORY_DEVICE_MODE);
@@ -144,8 +152,9 @@ int diag_md_write(int id, unsigned char *buf, int len, int ctx)
 	if (!buf || len < 0)
 		return -EINVAL;
 
-	peripheral = GET_BUF_PERIPHERAL(ctx);
-	if (peripheral > NUM_PERIPHERALS)
+	peripheral =
+		diag_md_get_peripheral(ctx);
+	if (peripheral < 0)
 		return -EINVAL;
 
 	mutex_lock(&driver->md_session_lock);
@@ -155,23 +164,31 @@ int diag_md_write(int id, unsigned char *buf, int len, int ctx)
 		return -EIO;
 	}
 	pid = session_info->pid;
-	mutex_unlock(&driver->md_session_lock);
 
 	ch = &diag_md[id];
+	if (!ch || !ch->md_info_inited) {
+		mutex_unlock(&driver->md_session_lock);
+		return -EINVAL;
+	}
 
 	spin_lock_irqsave(&ch->lock, flags);
 	for (i = 0; i < ch->num_tbl_entries && !found; i++) {
 		if (ch->tbl[i].buf != buf)
 			continue;
 		found = 1;
-		pr_err_ratelimited("diag: trying to write the same buffer buf: %pK, ctxt: %d len: %d at i: %d back to the table, proc: %d, mode: %d\n",
-				   buf, ctx, ch->tbl[i].len,
-				   i, id, driver->logging_mode);
+		pr_err_ratelimited("diag: trying to write the same buffer buf: %pK, len: %d, back to the table for p: %d, t: %d, buf_num: %d, proc: %d, i: %d\n",
+				   buf, ch->tbl[i].len, GET_BUF_PERIPHERAL(ctx),
+				   GET_BUF_TYPE(ctx), GET_BUF_NUM(ctx), id, i);
+		ch->tbl[i].buf = NULL;
+		ch->tbl[i].len = 0;
+		ch->tbl[i].ctx = 0;
 	}
 	spin_unlock_irqrestore(&ch->lock, flags);
 
-	if (found)
+	if (found) {
+		mutex_unlock(&driver->md_session_lock);
 		return -ENOMEM;
+	}
 
 	spin_lock_irqsave(&ch->lock, flags);
 	for (i = 0; i < ch->num_tbl_entries && !found; i++) {
@@ -184,6 +201,7 @@ int diag_md_write(int id, unsigned char *buf, int len, int ctx)
 		}
 	}
 	spin_unlock_irqrestore(&ch->lock, flags);
+	mutex_unlock(&driver->md_session_lock);
 
 	if (!found) {
 		pr_err_ratelimited("diag: Unable to find an empty space in table, please reduce logging rate, proc: %d\n",
@@ -192,16 +210,21 @@ int diag_md_write(int id, unsigned char *buf, int len, int ctx)
 	}
 
 	found = 0;
+	mutex_lock(&driver->diagchar_mutex);
 	for (i = 0; i < driver->num_clients && !found; i++) {
 		if ((driver->client_map[i].pid != pid) ||
 		    (driver->client_map[i].pid == 0))
 			continue;
 
 		found = 1;
-		driver->data_ready[i] |= USER_SPACE_DATA_TYPE;
+		if (!(driver->data_ready[i] & USER_SPACE_DATA_TYPE)) {
+			driver->data_ready[i] |= USER_SPACE_DATA_TYPE;
+			atomic_inc(&driver->data_ready_notif[i]);
+		}
 		pr_debug("diag: wake up logging process\n");
 		wake_up_interruptible(&driver->wait_q);
 	}
+	mutex_unlock(&driver->diagchar_mutex);
 
 	if (!found)
 		return -EINVAL;
@@ -223,25 +246,41 @@ int diag_md_copy_to_user(char __user *buf, int *pret, size_t buf_size,
 	uint8_t drain_again = 0;
 	uint8_t peripheral = 0;
 	struct diag_md_session_t *session_info = NULL;
+	struct pid *pid_struct = NULL;
 
 	for (i = 0; i < NUM_DIAG_MD_DEV && !err; i++) {
 		ch = &diag_md[i];
+		if (!ch->md_info_inited)
+			continue;
 		for (j = 0; j < ch->num_tbl_entries && !err; j++) {
 			entry = &ch->tbl[j];
-			if (entry->len <= 0)
+			if (entry->len <= 0 || entry->buf == NULL)
 				continue;
-			peripheral = GET_BUF_PERIPHERAL(entry->ctx);
-			/* Account for Apps data as well */
-			if (peripheral > NUM_PERIPHERALS)
+
+			peripheral = diag_md_get_peripheral(entry->ctx);
+			if (peripheral < 0)
 				goto drop_data;
+
 			session_info =
 			diag_md_session_get_peripheral(peripheral);
+			if (!session_info) {
+				goto drop_data;
+			}
+
 			if (session_info && info &&
 				(session_info->pid != info->pid))
 				continue;
 			if ((info && (info->peripheral_mask &
 			    MD_PERIPHERAL_MASK(peripheral)) == 0))
 				goto drop_data;
+			pid_struct = find_get_pid(session_info->pid);
+			if (!pid_struct) {
+				err = -ESRCH;
+				DIAG_LOG(DIAG_DEBUG_PERIPHERALS,
+					"diag: No such md_session_map[%d] with pid = %d err=%d exists..\n",
+					peripheral, session_info->pid, err);
+				goto drop_data;
+			}
 			/*
 			 * If the data is from remote processor, copy the remote
 			 * token first
@@ -261,27 +300,35 @@ int diag_md_copy_to_user(char __user *buf, int *pret, size_t buf_size,
 			}
 			if (i > 0) {
 				remote_token = diag_get_remote(i);
-				err = copy_to_user(buf + ret, &remote_token,
-						   sizeof(int));
+				if (get_pid_task(pid_struct, PIDTYPE_PID)) {
+					err = copy_to_user(buf + ret,
+							&remote_token,
+							sizeof(int));
+					if (err)
+						goto drop_data;
+					ret += sizeof(int);
+				}
+			}
+
+			/* Copy the length of data being passed */
+			if (get_pid_task(pid_struct, PIDTYPE_PID)) {
+				err = copy_to_user(buf + ret,
+						(void *)&(entry->len),
+						sizeof(int));
 				if (err)
 					goto drop_data;
 				ret += sizeof(int);
 			}
 
-			/* Copy the length of data being passed */
-			err = copy_to_user(buf + ret, (void *)&(entry->len),
-					   sizeof(int));
-			if (err)
-				goto drop_data;
-			ret += sizeof(int);
-
 			/* Copy the actual data being passed */
-			err = copy_to_user(buf + ret, (void *)entry->buf,
-					   entry->len);
-			if (err)
-				goto drop_data;
-			ret += entry->len;
-
+			if (get_pid_task(pid_struct, PIDTYPE_PID)) {
+				err = copy_to_user(buf + ret,
+						(void *)entry->buf,
+						entry->len);
+				if (err)
+					goto drop_data;
+				ret += entry->len;
+			}
 			/*
 			 * The data is now copied to the user space client,
 			 * Notify that the write is complete and delete its
@@ -303,7 +350,11 @@ drop_data:
 	}
 
 	*pret = ret;
-	err = copy_to_user(buf + sizeof(int), (void *)&num_data, sizeof(int));
+	if (pid_struct && get_pid_task(pid_struct, PIDTYPE_PID)) {
+		err = copy_to_user(buf + sizeof(int),
+				(void *)&num_data,
+				sizeof(int));
+	}
 	diag_ws_on_copy_complete(DIAG_WS_MUX);
 	if (drain_again)
 		chk_logging_wakeup();
@@ -323,12 +374,21 @@ int diag_md_close_peripheral(int id, uint8_t peripheral)
 		return -EINVAL;
 
 	ch = &diag_md[id];
+	if (!ch || !ch->md_info_inited)
+		return -EINVAL;
 
 	spin_lock_irqsave(&ch->lock, flags);
 	for (i = 0; i < ch->num_tbl_entries && !found; i++) {
 		entry = &ch->tbl[i];
-		if (GET_BUF_PERIPHERAL(entry->ctx) != peripheral)
-			continue;
+
+		if (peripheral > NUM_PERIPHERALS) {
+			if (GET_PD_CTXT(entry->ctx) != peripheral)
+				continue;
+		} else {
+			if (GET_BUF_PERIPHERAL(entry->ctx) !=
+					peripheral)
+				continue;
+		}
 		found = 1;
 		if (ch->ops && ch->ops->write_done) {
 			ch->ops->write_done(entry->buf, entry->len,
@@ -343,12 +403,12 @@ int diag_md_close_peripheral(int id, uint8_t peripheral)
 	return 0;
 }
 
-int diag_md_init()
+int diag_md_init(void)
 {
 	int i, j;
 	struct diag_md_info *ch = NULL;
 
-	for (i = 0; i < NUM_DIAG_MD_DEV; i++) {
+	for (i = 0; i < DIAG_MD_LOCAL_LAST; i++) {
 		ch = &diag_md[i];
 		ch->num_tbl_entries = diag_mempools[ch->mempool].poolsize;
 		ch->tbl = kzalloc(ch->num_tbl_entries *
@@ -363,6 +423,7 @@ int diag_md_init()
 			ch->tbl[j].ctx = 0;
 		}
 		spin_lock_init(&(ch->lock));
+		ch->md_info_inited = 1;
 	}
 
 	return 0;
@@ -372,12 +433,54 @@ fail:
 	return -ENOMEM;
 }
 
-void diag_md_exit()
+int diag_md_mdm_init(void)
+{
+	int i, j;
+	struct diag_md_info *ch = NULL;
+
+	for (i = DIAG_MD_BRIDGE_BASE; i < NUM_DIAG_MD_DEV; i++) {
+		ch = &diag_md[i];
+		ch->num_tbl_entries = diag_mempools[ch->mempool].poolsize;
+		ch->tbl = kcalloc(ch->num_tbl_entries, sizeof(*ch->tbl),
+				GFP_KERNEL);
+		if (!ch->tbl)
+			goto fail;
+
+		for (j = 0; j < ch->num_tbl_entries; j++) {
+			ch->tbl[j].buf = NULL;
+			ch->tbl[j].len = 0;
+			ch->tbl[j].ctx = 0;
+		}
+		spin_lock_init(&(ch->lock));
+		ch->md_info_inited = 1;
+	}
+
+	return 0;
+
+fail:
+	diag_md_mdm_exit();
+	return -ENOMEM;
+}
+
+void diag_md_exit(void)
 {
 	int i;
 	struct diag_md_info *ch = NULL;
 
-	for (i = 0; i < NUM_DIAG_MD_DEV; i++) {
+	for (i = 0; i < DIAG_MD_LOCAL_LAST; i++) {
+		ch = &diag_md[i];
+		kfree(ch->tbl);
+		ch->num_tbl_entries = 0;
+		ch->ops = NULL;
+	}
+}
+
+void diag_md_mdm_exit(void)
+{
+	int i;
+	struct diag_md_info *ch = NULL;
+
+	for (i = DIAG_MD_BRIDGE_BASE; i < NUM_DIAG_MD_DEV; i++) {
 		ch = &diag_md[i];
 		kfree(ch->tbl);
 		ch->num_tbl_entries = 0;

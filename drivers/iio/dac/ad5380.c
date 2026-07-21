@@ -221,7 +221,7 @@ static int ad5380_read_raw(struct iio_dev *indio_dev,
 		if (ret)
 			return ret;
 		*val >>= chan->scan_type.shift;
-		val -= (1 << chan->scan_type.realbits) / 2;
+		*val -= (1 << chan->scan_type.realbits) / 2;
 		return IIO_VAL_INT;
 	case IIO_CHAN_INFO_SCALE:
 		*val = 2 * st->vref;
@@ -519,7 +519,6 @@ MODULE_DEVICE_TABLE(spi, ad5380_spi_ids);
 static struct spi_driver ad5380_spi_driver = {
 	.driver = {
 		   .name = "ad5380",
-		   .owner = THIS_MODULE,
 	},
 	.probe = ad5380_spi_probe,
 	.remove = ad5380_spi_remove,
@@ -593,7 +592,6 @@ MODULE_DEVICE_TABLE(i2c, ad5380_i2c_ids);
 static struct i2c_driver ad5380_i2c_driver = {
 	.driver = {
 		   .name = "ad5380",
-		   .owner = THIS_MODULE,
 	},
 	.probe = ad5380_i2c_probe,
 	.remove = ad5380_i2c_remove,

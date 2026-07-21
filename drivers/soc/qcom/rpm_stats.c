@@ -1,5 +1,4 @@
-/* Copyright (c) 2011-2015, 2017-2018, The Linux Foundation.
- * All rights reserved.
+/* Copyright (c) 2011-2017, 2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -106,11 +105,11 @@ static inline int msm_rpmstats_append_data_to_buf(char *buf,
 
 	time_in_last_mode = data->last_exited_at - data->last_entered_at;
 	time_in_last_mode = get_time_in_msec(time_in_last_mode);
-	time_since_last_mode = arch_counter_get_cntpct() - data->last_exited_at;
+	time_since_last_mode = arch_counter_get_cntvct() - data->last_exited_at;
 	time_since_last_mode = get_time_in_sec(time_since_last_mode);
 	actual_last_sleep = get_time_in_msec(data->accumulated);
 
-	return  snprintf(buf , buflength,
+	return snprintf(buf, buflength,
 		"RPM Mode:%s\n\t count:%d\ntime in last mode(msec):%llu\n"
 		"time since last mode(sec):%llu\nactual last sleep(msec):%llu\n"
 		"client votes: %#010x\n\n",
@@ -130,6 +129,7 @@ static inline u64 msm_rpmstats_read_quad_register_v2(void __iomem *regbase,
 		int index, int offset)
 {
 	u64 dst;
+
 	memcpy_fromio(&dst,
 		regbase + offset + index * sizeof(struct msm_rpm_stats_data_v2),
 		8);
@@ -187,6 +187,7 @@ static void msm_rpmstats_strcpy(char *dest, char  *src)
 
 	do  {
 		int i;
+
 		string.word = readl_relaxed(src + 4 * index);
 		for (i = 0; i < 4; i++) {
 			*dest++ = string.ch[i];
@@ -269,16 +270,14 @@ static ssize_t msm_rpmstats_file_read(struct file *file, char __user *bufu,
 			prvdata->num_records = readl_relaxed(prvdata->reg_base);
 	}
 
-	if ((*ppos >= prvdata->len)
-		&& (prvdata->read_idx < prvdata->num_records)) {
-			if (prvdata->platform_data->version == 1)
-				prvdata->len = msm_rpmstats_copy_stats(prvdata);
-			else if (prvdata->platform_data->version == 2)
-				prvdata->len = msm_rpmstats_copy_stats_v2(
-						prvdata);
+	if ((*ppos >= prvdata->len) &&
+		(prvdata->read_idx < prvdata->num_records)) {
+		if (prvdata->platform_data->version == 1)
+			prvdata->len = msm_rpmstats_copy_stats(prvdata);
+		else if (prvdata->platform_data->version == 2)
+			prvdata->len = msm_rpmstats_copy_stats_v2(prvdata);
 			*ppos = 0;
 	}
-
 	ret = simple_read_from_buffer(bufu, count, ppos,
 			prvdata->buf, prvdata->len);
 exit:
@@ -390,7 +389,7 @@ static ssize_t rpmstats_show(struct kobject *kobj,
 {
 	struct msm_rpmstats_private_data *prvdata = NULL;
 	struct msm_rpmstats_platform_data *pdata = NULL;
-	ssize_t ret;
+	ssize_t ret = 0;
 
 	mutex_lock(&rpm_stats_mutex);
 	pdata = GET_PDATA_OF_ATTR(attr);
@@ -429,9 +428,12 @@ static ssize_t rpmstats_show(struct kobject *kobj,
 		else if (prvdata->platform_data->version == 2)
 			prvdata->len = msm_rpmstats_copy_stats_v2(
 					prvdata);
+		else
+			goto exit;
 	}
 
 	ret = snprintf(buf, prvdata->len, "%s", prvdata->buf);
+exit:
 	iounmap(prvdata->reg_base);
 ioremap_fail:
 	kfree(prvdata);
@@ -455,8 +457,6 @@ static int msm_rpmstats_create_sysfs(struct msm_rpmstats_platform_data *pd)
 
 	rpms_ka = kzalloc(sizeof(*rpms_ka), GFP_KERNEL);
 	if (!rpms_ka) {
-		pr_err("%s: Cannot allocate mem for rpmstats kobj attr\n",
-			__func__);
 		kobject_put(rpmstats_kobj);
 		ret = -ENOMEM;
 		goto fail;
@@ -576,7 +576,7 @@ static int msm_rpmstats_remove(struct platform_device *pdev)
 	return 0;
 }
 
-static struct of_device_id rpm_stats_table[] = {
+static const struct of_device_id rpm_stats_table[] = {
 	       {.compatible = "qcom,rpm-stats"},
 	       {},
 };
@@ -603,5 +603,4 @@ module_exit(msm_rpmstats_exit);
 
 MODULE_LICENSE("GPL v2");
 MODULE_DESCRIPTION("MSM RPM Statistics driver");
-MODULE_VERSION("1.0");
 MODULE_ALIAS("platform:msm_stat_log");

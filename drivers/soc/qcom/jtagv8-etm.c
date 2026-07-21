@@ -1,4 +1,4 @@
-/* Copyright (c) 2014-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -38,8 +38,6 @@
 #include <soc/qcom/socinfo.h>
 
 #define CORESIGHT_LAR		(0xFB0)
-
-#define CORESIGHT_UNLOCK	(0xC5ACCE55)
 
 #define TIMEOUT_US		(100)
 
@@ -195,14 +193,14 @@
 
 #define ETM_LOCK(base)							\
 do {									\
-	mb();								\
+	mb(); /* ensure configuration take effect before we lock it */	\
 	etm_writel(base, 0x0, CORESIGHT_LAR);				\
 } while (0)
 
 #define ETM_UNLOCK(base)						\
 do {									\
 	etm_writel(base, CORESIGHT_UNLOCK, CORESIGHT_LAR);		\
-	mb();								\
+	mb(); /* ensure unlock take effect before we configure */	\
 } while (0)
 
 struct etm_ctx {
@@ -289,7 +287,7 @@ static inline void etm_mm_save_state(struct etm_ctx *etmdata)
 	int i, j, count;
 
 	i = 0;
-	mb();
+	mb(); /* ensure all register writes complete before saving them */
 	isb();
 	ETM_UNLOCK(etmdata);
 
@@ -1505,6 +1503,7 @@ static int jtag_mm_etm_callback(struct notifier_block *nfb,
 				void *hcpu)
 {
 	unsigned int cpu = (unsigned long)hcpu;
+	u64 version = 0;
 
 	if (!etm[cpu])
 		goto out;
@@ -1526,8 +1525,8 @@ static int jtag_mm_etm_callback(struct notifier_block *nfb,
 			goto out;
 		}
 		if (etm_arch_supported(etm[cpu]->arch)) {
-			if (scm_get_feat_version(TZ_DBG_ETM_FEAT_ID) <
-			    TZ_DBG_ETM_VER)
+			if (!scm_get_feat_version(TZ_DBG_ETM_FEAT_ID, &version)
+				&& version <  TZ_DBG_ETM_VER)
 				etm[cpu]->save_restore_enabled = true;
 			else
 				pr_info("etm save-restore supported by TZ\n");
@@ -1555,8 +1554,8 @@ static bool skip_etm_save_restore(void)
 	id = socinfo_get_id();
 	version = socinfo_get_version();
 
-	if (HW_SOC_ID_M8953 == id && 1 == SOCINFO_VERSION_MAJOR(version) &&
-		0 == SOCINFO_VERSION_MINOR(version))
+	if (id == HW_SOC_ID_M8953 && SOCINFO_VERSION_MAJOR(version) == 1 &&
+	    SOCINFO_VERSION_MINOR(version) == 0)
 		return true;
 
 	return false;
@@ -1617,8 +1616,10 @@ static int jtag_mm_etm_probe(struct platform_device *pdev, uint32_t cpu)
 	mutex_lock(&etmdata->mutex);
 	if (etmdata->init && !etmdata->enable) {
 		if (etm_arch_supported(etmdata->arch)) {
-			if (scm_get_feat_version(TZ_DBG_ETM_FEAT_ID) <
-			    TZ_DBG_ETM_VER)
+			u64 version = 0;
+
+			if (!scm_get_feat_version(TZ_DBG_ETM_FEAT_ID, &version)
+				&& (version < TZ_DBG_ETM_VER))
 				etmdata->save_restore_enabled = true;
 			else
 				pr_info("etm save-restore supported by TZ\n");
@@ -1693,7 +1694,7 @@ static int jtag_mm_remove(struct platform_device *pdev)
 	return 0;
 }
 
-static struct of_device_id msm_qdss_mm_match[] = {
+static const struct of_device_id msm_qdss_mm_match[] = {
 	{ .compatible = "qcom,jtagv8-mm"},
 	{}
 };

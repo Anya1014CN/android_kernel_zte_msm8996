@@ -1,4 +1,4 @@
-/* Copyright (c) 2014-2018, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014-2018,2020 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -28,7 +28,7 @@
 #include <sound/cpe_err.h>
 #include <soc/qcom/pm.h>
 #include <linux/mfd/wcd9xxx/core.h>
-#include <linux/mfd/wcd9xxx/core-resource.h>
+#include <linux/mfd/wcd9xxx/wcd9xxx-irq.h>
 #include <sound/audio_cal_utils.h>
 #include "wcd_cpe_core.h"
 #include "wcd_cpe_services.h"
@@ -1987,8 +1987,8 @@ struct wcd_cpe_core *wcd_cpe_init(const char *img_fname,
 	}
 
 	card = codec->component.card->snd_card;
-	snprintf(proc_name, (sizeof("cpe") + sizeof("_state") +
-		 sizeof(id) - 2), "%s%d%s", cpe_name, id, state_name);
+	snprintf(proc_name, sizeof(proc_name), "%s%d%s", cpe_name, id,
+		state_name);
 	entry = snd_info_create_card_entry(card, proc_name,
 					   card->proc_root);
 	if (entry) {
@@ -2052,6 +2052,7 @@ struct wcd_cpe_core *wcd_cpe_init(const char *img_fname,
 		goto schedule_dload_work;
 	}
 
+	arch_setup_dma_ops(core->dev, 0, 0, NULL, 0);
 	core->cpe_dump_v_addr = dma_alloc_coherent(core->dev,
 						   core->hw_info.dram_size,
 						   &core->cpe_dump_addr,
@@ -3037,7 +3038,7 @@ err_ret:
 
 static int wcd_cpe_set_one_param(void *core_handle,
 	struct cpe_lsm_session *session, struct lsm_params_info *p_info,
-	void *data, enum LSM_PARAM_TYPE param_type)
+	void *data, uint32_t param_type)
 {
 	struct wcd_cpe_core *core = core_handle;
 	int rc = 0;
@@ -3073,13 +3074,13 @@ static int wcd_cpe_set_one_param(void *core_handle,
 		break;
 	default:
 		pr_err("%s: wrong param_type 0x%x\n",
-			__func__, p_info->param_type);
+			__func__, param_type);
 	}
 
 	if (rc)
 		dev_err(core->dev,
 			"%s: send_param(%d) failed, err %d\n",
-			 __func__, p_info->param_type, rc);
+			 __func__, param_type, rc);
 	return rc;
 }
 
@@ -3569,6 +3570,8 @@ static int wcd_cpe_lsm_lab_control(
 
 	pr_debug("%s: enter payload_size = %d Enable %d\n",
 		 __func__, pld_size, enable);
+
+	memset(&cpe_lab_enable, 0, sizeof(cpe_lab_enable));
 
 	if (fill_lsm_cmd_header_v0_inband(&cpe_lab_enable.hdr, session->id,
 		(u8) pld_size, CPE_LSM_SESSION_CMD_SET_PARAMS_V2)) {

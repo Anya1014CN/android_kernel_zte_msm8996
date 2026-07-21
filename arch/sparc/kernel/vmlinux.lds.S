@@ -52,6 +52,7 @@ SECTIONS
 		LOCK_TEXT
 		KPROBES_TEXT
 		IRQENTRY_TEXT
+		SOFTIRQENTRY_TEXT
 		*(.gnu.warning)
 	} = 0
 	_etext = .;
@@ -141,6 +142,11 @@ SECTIONS
 		__pause_3insn_patch = .;
 		*(.pause_3insn_patch)
 		__pause_3insn_patch_end = .;
+	}
+	.sun_m7_2insn_patch : {
+		__sun_m7_2insn_patch = .;
+		*(.sun_m7_2insn_patch)
+		__sun_m7_2insn_patch_end = .;
 	}
 	PERCPU_SECTION(SMP_CACHE_BYTES)
 

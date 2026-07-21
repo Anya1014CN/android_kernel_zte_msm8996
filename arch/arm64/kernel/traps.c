@@ -17,7 +17,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <linux/kernel.h>
+#include <linux/bug.h>
 #include <linux/signal.h>
 #include <linux/personality.h>
 #include <linux/kallsyms.h>
@@ -34,9 +34,12 @@
 
 #include <asm/atomic.h>
 #include <asm/barrier.h>
+#include <asm/bug.h>
 #include <asm/debug-monitors.h>
 #include <asm/esr.h>
+#include <asm/insn.h>
 #include <asm/traps.h>
+#include <asm/stack_pointer.h>
 #include <asm/stacktrace.h>
 #include <asm/exception.h>
 #include <asm/system_misc.h>
@@ -52,17 +55,18 @@ static const char *handler[]= {
 	"Error"
 };
 
-int show_unhandled_signals = 1;
+int show_unhandled_signals = 0;
 
 /*
  * Dump out the contents of some memory nicely...
  */
 static void dump_mem(const char *lvl, const char *str, unsigned long bottom,
-		     unsigned long top)
+		     unsigned long top, bool compat)
 {
 	unsigned long first;
 	mm_segment_t fs;
 	int i;
+	unsigned int width = compat ? 4 : 8;
 
 	/*
 	 * We need to switch to kernel mode so that we can use __get_user
@@ -80,13 +84,22 @@ static void dump_mem(const char *lvl, const char *str, unsigned long bottom,
 		memset(str, ' ', sizeof(str));
 		str[sizeof(str) - 1] = '\0';
 
-		for (p = first, i = 0; i < 8 && p < top; i++, p += 4) {
+		for (p = first, i = 0; i < (32 / width)
+					&& p < top; i++, p += width) {
 			if (p >= bottom && p < top) {
-				unsigned int val;
-				if (__get_user(val, (unsigned int *)p) == 0)
-					scnprintf(str + i * 9, 10, " %08x", val);
-				else
-					scnprintf(str + i * 9, 10, " ????????");
+				unsigned long val;
+
+				if (width == 8) {
+					if (__get_user(val, (unsigned long *)p) == 0)
+						sprintf(str + i * 17, " %016lx", val);
+					else
+						sprintf(str + i * 17, " ????????????????");
+				} else {
+					if (__get_user(val, (unsigned int *)p) == 0)
+						sprintf(str + i * 9, " %08lx", val);
+					else
+						sprintf(str + i * 9, " ????????");
+				}
 			}
 		}
 		printk("%s%04lx:%s\n", lvl, first & 0xffff, str);
@@ -95,12 +108,12 @@ static void dump_mem(const char *lvl, const char *str, unsigned long bottom,
 	set_fs(fs);
 }
 
-static void dump_backtrace_entry(unsigned long where, unsigned long stack)
+static void dump_backtrace_entry(unsigned long where)
 {
+	/*
+	 * Note that 'where' can have a physical address, but it's not handled.
+	 */
 	print_ip_sym(where);
-	if (in_exception_text(where))
-		dump_mem("", "Exception stack", stack,
-			 stack + sizeof(struct pt_regs));
 }
 
 static void __dump_instr(const char *lvl, struct pt_regs *regs)
@@ -112,14 +125,12 @@ static void __dump_instr(const char *lvl, struct pt_regs *regs)
 	for (i = -4; i < 1; i++) {
 		unsigned int val, bad;
 
-		bad = __get_user(val, &((u32 *)addr)[i]);
+		bad = get_user(val, &((u32 *)addr)[i]);
 
 		if (!bad)
-			p += scnprintf(p, (str + sizeof(str)) - p,
-				       i == 0 ? "(%08x) " : "%08x ", val);
+			p += sprintf(p, i == 0 ? "(%08x) " : "%08x ", val);
 		else {
-			p += scnprintf(p, (str + sizeof(str)) - p,
-				       "bad PC value");
+			p += sprintf(p, "bad PC value");
 			break;
 		}
 	}
@@ -141,17 +152,32 @@ static void dump_instr(const char *lvl, struct pt_regs *regs)
 static void dump_backtrace(struct pt_regs *regs, struct task_struct *tsk)
 {
 	struct stackframe frame;
+	unsigned long irq_stack_ptr;
+	int skip;
+
+	pr_debug("%s(regs = %pK tsk = %pK)\n", __func__, regs, tsk);
+
+	if (!tsk)
+		tsk = current;
+
+	if (!try_get_task_stack(tsk))
+		return;
+
+	/*
+	 * Switching between stacks is valid when tracing current and in
+	 * non-preemptible context.
+	 */
+	if (tsk == current && !preemptible())
+		irq_stack_ptr = IRQ_STACK_PTR(smp_processor_id());
+	else
+		irq_stack_ptr = 0;
 
 	pr_debug("%s(regs = %p tsk = %p)\n", __func__, regs, tsk);
 
 	if (!tsk)
 		tsk = current;
 
-	if (regs) {
-		frame.fp = regs->regs[29];
-		frame.sp = regs->sp;
-		frame.pc = regs->pc;
-	} else if (tsk == current) {
+	if (tsk == current) {
 		frame.fp = (unsigned long)__builtin_frame_address(0);
 		frame.sp = current_stack_pointer;
 		frame.pc = (unsigned long)dump_backtrace;
@@ -163,17 +189,52 @@ static void dump_backtrace(struct pt_regs *regs, struct task_struct *tsk)
 		frame.sp = thread_saved_sp(tsk);
 		frame.pc = thread_saved_pc(tsk);
 	}
+#ifdef CONFIG_FUNCTION_GRAPH_TRACER
+	frame.graph = tsk->curr_ret_stack;
+#endif
 
-	pr_emerg("Call trace:\n");
+	skip = !!regs;
+	printk("Call trace:\n");
 	while (1) {
 		unsigned long where = frame.pc;
+		unsigned long stack;
 		int ret;
 
-		ret = unwind_frame(&frame);
+		/* skip until specified stack frame */
+		if (!skip) {
+			dump_backtrace_entry(where);
+		} else if (frame.fp == regs->regs[29]) {
+			skip = 0;
+			/*
+			 * Mostly, this is the case where this function is
+			 * called in panic/abort. As exception handler's
+			 * stack frame does not contain the corresponding pc
+			 * at which an exception has taken place, use regs->pc
+			 * instead.
+			 */
+			dump_backtrace_entry(regs->pc);
+		}
+		ret = unwind_frame(tsk, &frame);
 		if (ret < 0)
 			break;
-		dump_backtrace_entry(where, frame.sp);
+		stack = frame.sp;
+		if (in_exception_text(where)) {
+			/*
+			 * If we switched to the irq_stack before calling this
+			 * exception handler, then the pt_regs will be on the
+			 * task stack. The easiest way to tell is if the large
+			 * pt_regs would overlap with the end of the irq_stack.
+			 */
+			if (stack < irq_stack_ptr &&
+			    (stack + sizeof(struct pt_regs)) > irq_stack_ptr)
+				stack = IRQ_STACK_TO_TASK_STACK(irq_stack_ptr);
+
+			dump_mem("", "Exception stack", stack,
+				 stack + sizeof(struct pt_regs), false);
+		}
 	}
+
+	put_task_stack(tsk);
 }
 
 void show_stack(struct task_struct *tsk, unsigned long *sp)
@@ -189,10 +250,9 @@ void show_stack(struct task_struct *tsk, unsigned long *sp)
 #endif
 #define S_SMP " SMP"
 
-static int __die(const char *str, int err, struct thread_info *thread,
-		 struct pt_regs *regs)
+static int __die(const char *str, int err, struct pt_regs *regs)
 {
-	struct task_struct *tsk = thread->task;
+	struct task_struct *tsk = current;
 	static int die_counter;
 	int ret;
 
@@ -207,7 +267,8 @@ static int __die(const char *str, int err, struct thread_info *thread,
 	print_modules();
 	__show_regs(regs);
 	pr_emerg("Process %.*s (pid: %d, stack limit = 0x%p)\n",
-		 TASK_COMM_LEN, tsk->comm, task_pid_nr(tsk), thread + 1);
+		 TASK_COMM_LEN, tsk->comm, task_pid_nr(tsk),
+		 end_of_stack(tsk));
 
 	if (!user_mode(regs) || in_interrupt()) {
 		dump_backtrace(regs, tsk);
@@ -272,7 +333,6 @@ static void oops_end(unsigned long flags, struct pt_regs *regs, int notify)
  */
 void die(const char *str, struct pt_regs *regs, int err)
 {
-	struct thread_info *thread = current_thread_info();
 	enum bug_trap_type bug_type = BUG_TRAP_TYPE_NONE;
 	unsigned long flags = oops_begin();
 	int ret;
@@ -282,7 +342,7 @@ void die(const char *str, struct pt_regs *regs, int err)
 	if (bug_type != BUG_TRAP_TYPE_NONE)
 		str = "Oops - BUG";
 
-	ret = __die(str, err, thread, regs);
+	ret = __die(str, err, regs);
 
 	oops_end(flags, regs, ret);
 }
@@ -298,18 +358,6 @@ void arm64_notify_die(const char *str, struct pt_regs *regs,
 		die(str, regs, err);
 	}
 }
-
-#ifdef CONFIG_GENERIC_BUG
-int is_valid_bugaddr(unsigned long pc)
-{
-	u32 bkpt;
-
-	if (probe_kernel_address((void *)pc, bkpt))
-		return 0;
-
-	return bkpt == BUG_INSTR_VALUE;
-}
-#endif
 
 static LIST_HEAD(undef_hook);
 static DEFINE_RAW_SPINLOCK(undef_lock);
@@ -388,8 +436,7 @@ asmlinkage void __exception do_undefinstr(struct pt_regs *regs)
 
 	trace_undef_instr(regs, (void *)pc);
 
-	if (user_mode(regs) && show_unhandled_signals &&
-		unhandled_signal(current, SIGILL) && printk_ratelimit()) {
+	if (unhandled_signal(current, SIGILL) && show_unhandled_signals_ratelimited()) {
 		pr_info("%s[%d]: undefined instruction: pc=%p\n",
 			current->comm, task_pid_nr(current), pc);
 		dump_instr(KERN_INFO, regs);
@@ -447,14 +494,6 @@ asmlinkage long do_ni_syscall(struct pt_regs *regs)
 			return ret;
 	}
 #endif
-
-	if (show_unhandled_signals && printk_ratelimit()) {
-		pr_info("%s[%d]: syscall %d\n", current->comm,
-			task_pid_nr(current), (int)regs->syscallno);
-		dump_instr("", regs);
-		if (user_mode(regs))
-			__show_regs(regs);
-	}
 
 	return sys_ni_syscall();
 }
@@ -515,7 +554,12 @@ asmlinkage void bad_mode(struct pt_regs *regs, int reason, unsigned int esr)
 	pr_crit("Bad mode in %s handler detected, code 0x%08x -- %s\n",
 		handler[reason], esr, esr_get_class_string(esr));
 
-	die("Oops - bad mode", regs, 0);
+	if (esr >> ESR_ELx_EC_SHIFT == ESR_ELx_EC_SERROR) {
+		pr_crit("System error detected. ESR.ISS = %08x\n",
+			esr & 0xffffff);
+		arm64_check_cache_ecc(NULL);
+	}
+
 	local_irq_disable();
 	panic("bad mode");
 }
@@ -530,20 +574,14 @@ asmlinkage void bad_el0_sync(struct pt_regs *regs, int reason, unsigned int esr)
 	void __user *pc = (void __user *)instruction_pointer(regs);
 	console_verbose();
 
-	pr_crit("Bad mode in %s handler detected, code 0x%08x -- %s\n",
-		handler[reason], esr, esr_get_class_string(esr));
+	pr_crit("Bad EL0 synchronous exception detected on CPU%d, code 0x%08x -- %s\n",
+		smp_processor_id(), esr, esr_get_class_string(esr));
 	__show_regs(regs);
 
 	info.si_signo = SIGILL;
 	info.si_errno = 0;
 	info.si_code  = ILL_ILLOPC;
 	info.si_addr  = pc;
-
-	if (esr >> ESR_EL1_EC_SHIFT == ESR_EL1_EC_SERROR) {
-		pr_crit("System error detected. ESR.ISS = %08x\n",
-			esr & 0xffffff);
-		arm64_check_cache_ecc(NULL);
-	}
 
 	current->thread.fault_address = 0;
 	current->thread.fault_code = 0;
@@ -553,25 +591,81 @@ asmlinkage void bad_el0_sync(struct pt_regs *regs, int reason, unsigned int esr)
 
 void __pte_error(const char *file, int line, unsigned long val)
 {
-	pr_crit("%s:%d: bad pte %016lx.\n", file, line, val);
+	pr_err("%s:%d: bad pte %016lx.\n", file, line, val);
 }
 
 void __pmd_error(const char *file, int line, unsigned long val)
 {
-	pr_crit("%s:%d: bad pmd %016lx.\n", file, line, val);
+	pr_err("%s:%d: bad pmd %016lx.\n", file, line, val);
 }
 
 void __pud_error(const char *file, int line, unsigned long val)
 {
-	pr_crit("%s:%d: bad pud %016lx.\n", file, line, val);
+	pr_err("%s:%d: bad pud %016lx.\n", file, line, val);
 }
 
 void __pgd_error(const char *file, int line, unsigned long val)
 {
-	pr_crit("%s:%d: bad pgd %016lx.\n", file, line, val);
+	pr_err("%s:%d: bad pgd %016lx.\n", file, line, val);
 }
 
+/* GENERIC_BUG traps */
+
+int is_valid_bugaddr(unsigned long addr)
+{
+	/*
+	 * bug_handler() only called for BRK #BUG_BRK_IMM.
+	 * So the answer is trivial -- any spurious instances with no
+	 * bug table entry will be rejected by report_bug() and passed
+	 * back to the debug-monitors code and handled as a fatal
+	 * unexpected debug exception.
+	 */
+	return 1;
+}
+
+static int bug_handler(struct pt_regs *regs, unsigned int esr)
+{
+	if (user_mode(regs))
+		return DBG_HOOK_ERROR;
+
+	switch (report_bug(regs->pc, regs)) {
+	case BUG_TRAP_TYPE_BUG:
+		die("Oops - BUG", regs, 0);
+		break;
+
+	case BUG_TRAP_TYPE_WARN:
+		/* Ideally, report_bug() should backtrace for us... but no. */
+		dump_backtrace(regs, NULL);
+		break;
+
+	default:
+		/* unknown/unrecognised bug trap type */
+		return DBG_HOOK_ERROR;
+	}
+
+	/* If thread survives, skip over the BUG instruction and continue: */
+	regs->pc += AARCH64_INSN_SIZE;	/* skip BRK and resume */
+	return DBG_HOOK_HANDLED;
+}
+
+static struct break_hook bug_break_hook = {
+	.esr_val = 0xf2000000 | BUG_BRK_IMM,
+	.esr_mask = 0xffffffff,
+	.fn = bug_handler,
+};
+
+/*
+ * Initial handler for AArch64 BRK exceptions
+ * This handler only used until debug_traps_init().
+ */
+int __init early_brk64(unsigned long addr, unsigned int esr,
+		struct pt_regs *regs)
+{
+	return bug_handler(regs, esr) != DBG_HOOK_HANDLED;
+}
+
+/* This registration must happen early, before debug_traps_init(). */
 void __init trap_init(void)
 {
-	return;
+	register_break_hook(&bug_break_hook);
 }

@@ -1,4 +1,4 @@
-/* Copyright (c) 2014-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014-2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -24,6 +24,7 @@
 #include <linux/pfk.h>
 #include <crypto/ice.h>
 #include <soc/qcom/scm.h>
+#include <soc/qcom/qseecomi.h>
 #include "iceregs.h"
 
 #define TZ_SYSCALL_CREATE_SMC_ID(o, s, f) \
@@ -40,11 +41,20 @@
 #define TZ_OS_KS_RESTORE_KEY_ID_PARAM_ID \
 	TZ_SYSCALL_CREATE_PARAM_ID_0
 
+#define TZ_OS_KS_RESTORE_KEY_CONFIG_ID \
+	TZ_SYSCALL_CREATE_SMC_ID(TZ_OWNER_QSEE_OS, TZ_SVC_KEYSTORE, 0x06)
+
+#define TZ_OS_KS_RESTORE_KEY_CONFIG_ID_PARAM_ID \
+	TZ_SYSCALL_CREATE_PARAM_ID_1(TZ_SYSCALL_PARAM_TYPE_VAL)
+
+
 #define ICE_REV(x, y) (((x) & ICE_CORE_##y##_REV_MASK) >> ICE_CORE_##y##_REV)
 #define QCOM_UFS_ICE_DEV	"iceufs"
 #define QCOM_SDCC_ICE_DEV	"icesdcc"
 #define QCOM_ICE_TYPE_NAME_LEN 8
 #define QCOM_ICE_MAX_BIST_CHECK_COUNT 100
+#define QCOM_ICE_UFS		10
+#define QCOM_ICE_SDCC		20
 
 struct ice_clk_info {
 	struct list_head list;
@@ -114,6 +124,9 @@ static int qti_ice_setting_config(struct request *req,
 		pr_err("%s ICE disabled fuse is blown\n", __func__);
 		return -EPERM;
 	}
+
+	if (!setting)
+		return -EINVAL;
 
 	if ((short)(crypto_data->key_index) >= 0) {
 
@@ -638,7 +651,7 @@ static int qcom_ice_get_device_tree_data(struct platform_device *pdev,
 		ice_dev->irq = irq;
 		pr_info("ICE IRQ = %d\n", ice_dev->irq);
 	} else {
-		dev_info(dev, "IRQ resource not available\n");
+		dev_dbg(dev, "IRQ resource not available\n");
 	}
 
 	qcom_ice_parse_ice_instance_type(pdev, ice_dev);
@@ -830,6 +843,29 @@ static int qcom_ice_restore_config(void)
 	return ret;
 }
 
+static int qcom_ice_restore_key_config(struct ice_device *ice_dev)
+{
+	struct scm_desc desc = {0};
+	int ret = -1;
+
+	/* For ice 3, key configuration needs to be restored in case of reset */
+
+	desc.arginfo = TZ_OS_KS_RESTORE_KEY_CONFIG_ID_PARAM_ID;
+
+	if (!strcmp(ice_dev->ice_instance_type, "sdcc"))
+		desc.args[0] = QCOM_ICE_SDCC;
+
+	if (!strcmp(ice_dev->ice_instance_type, "ufs"))
+		desc.args[0] = QCOM_ICE_UFS;
+
+	ret = scm_call2(TZ_OS_KS_RESTORE_KEY_CONFIG_ID, &desc);
+
+	if (ret)
+		pr_err("%s: Error:  0x%x\n", __func__, ret);
+
+	return ret;
+}
+
 static int qcom_ice_init_clocks(struct ice_device *ice)
 {
 	int ret = -EINVAL;
@@ -939,7 +975,8 @@ static int qcom_ice_secure_ice_init(struct ice_device *ice_dev)
 
 static int qcom_ice_update_sec_cfg(struct ice_device *ice_dev)
 {
-	int ret = 0, scm_ret = 0;
+	int ret = 0;
+	u64 scm_ret = 0;
 
 	/* scm command buffer structure */
 	struct qcom_scm_cmd_buf {
@@ -965,7 +1002,7 @@ static int qcom_ice_update_sec_cfg(struct ice_device *ice_dev)
 	cbuf.device_id = ICE_TZ_DEV_ID;
 	ret = scm_restore_sec_cfg(cbuf.device_id, cbuf.spare, &scm_ret);
 	if (ret || scm_ret) {
-		pr_err("%s: failed, ret %d scm_ret %d\n",
+		pr_err("%s: failed, ret %d scm_ret %llu\n",
 						__func__, ret, scm_ret);
 		if (!ret)
 			ret = scm_ret;
@@ -1103,6 +1140,22 @@ static int qcom_ice_finish_power_collapse(struct ice_device *ice_dev)
 				err = -EFAULT;
 				goto out;
 			}
+
+		/*
+		 * ICE looses its key configuration when UFS is reset,
+		 * restore it
+		 */
+		} else if (ICE_REV(ice_dev->ice_hw_version, MAJOR) > 2) {
+			err = qcom_ice_restore_key_config(ice_dev);
+			if (err)
+				goto out;
+
+			/*
+			 * for PFE case, clear the cached ICE key table,
+			 * this will force keys to be reconfigured
+			 * per each next transaction
+			 */
+			pfk_clear_on_reset();
 		}
 	}
 
@@ -1236,6 +1289,13 @@ static void qcom_ice_debug(struct platform_device *pdev)
 		ice_dev->ice_instance_type,
 		qcom_ice_readl(ice_dev, QCOM_ICE_REGS_NON_SEC_IRQ_MASK),
 		qcom_ice_readl(ice_dev, QCOM_ICE_REGS_NON_SEC_IRQ_CLR));
+
+	if (ICE_REV(ice_dev->ice_hw_version, MAJOR) > 2) {
+		pr_err("%s: ICE INVALID CCFG ERR STTS: 0x%08x\n",
+			ice_dev->ice_instance_type,
+			qcom_ice_readl(ice_dev,
+				QCOM_ICE_INVALID_CCFG_ERR_STTS));
+	}
 
 	if ((ICE_REV(ice_dev->ice_hw_version, MAJOR) > 2) ||
 		((ICE_REV(ice_dev->ice_hw_version, MAJOR) == 2) &&
@@ -1373,7 +1433,7 @@ static int qcom_ice_config_start(struct platform_device *pdev,
 	int ret = 0;
 	bool is_pfe = false;
 
-	if (!pdev || !req || !setting) {
+	if (!pdev || !req) {
 		pr_err("%s: Invalid params passed\n", __func__);
 		return -EINVAL;
 	}
@@ -1534,8 +1594,10 @@ struct platform_device *qcom_ice_get_pdevice(struct device_node *node)
 			break;
 		}
 	}
-	if(ice_pdev)
-		pr_info("%s: matching platform device %pK\n", __func__, ice_pdev);
+
+	if (ice_pdev)
+		pr_info("%s: matching platform device %pK\n", __func__,
+			ice_pdev);
 out:
 	return ice_pdev;
 }
@@ -1553,7 +1615,8 @@ static struct ice_device *get_ice_device_from_storage_type
 
 	list_for_each_entry(ice_dev, &ice_devices, list) {
 		if (!strcmp(ice_dev->ice_instance_type, storage_type)) {
-			pr_info("%s: found ice device %p\n", __func__, ice_dev);
+			pr_debug("%s: found ice device %pK\n",
+				__func__, ice_dev);
 			return ice_dev;
 		}
 	}
@@ -1666,7 +1729,7 @@ int qcom_ice_setup_ice_hw(const char *storage_type, int enable)
 	if (ice_dev == ERR_PTR(-EPROBE_DEFER))
 		return -EPROBE_DEFER;
 
-	if (!ice_dev)
+	if (!ice_dev || (ice_dev->is_ice_enabled == false))
 		return ret;
 
 	if (enable)
@@ -1682,7 +1745,7 @@ struct qcom_ice_variant_ops *qcom_ice_get_variant_ops(struct device_node *node)
 EXPORT_SYMBOL(qcom_ice_get_variant_ops);
 
 /* Following struct is required to match device with driver from dts file */
-static struct of_device_id qcom_ice_match[] = {
+static const struct of_device_id qcom_ice_match[] = {
 	{ .compatible = "qcom,ice" },
 	{},
 };

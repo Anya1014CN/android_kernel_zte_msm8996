@@ -11,15 +11,18 @@
 #include <asm/unaligned.h>
 #include <net/tcp.h>
 #include <net/netns/generic.h>
+#include <linux/proc_fs.h>
 
 #include <linux/netfilter_ipv4/ip_tables.h>
 #include <linux/netfilter/x_tables.h>
 #include <linux/netfilter/xt_tcpudp.h>
 #include <linux/netfilter/xt_SYNPROXY.h>
+
 #include <net/netfilter/nf_conntrack.h>
 #include <net/netfilter/nf_conntrack_extend.h>
 #include <net/netfilter/nf_conntrack_seqadj.h>
 #include <net/netfilter/nf_conntrack_synproxy.h>
+#include <net/netfilter/nf_conntrack_zones.h>
 
 int synproxy_net_id;
 EXPORT_SYMBOL_GPL(synproxy_net_id);
@@ -30,6 +33,9 @@ synproxy_parse_options(const struct sk_buff *skb, unsigned int doff,
 {
 	int length = (th->doff * 4) - sizeof(*th);
 	u8 buf[40], *ptr;
+
+	if (unlikely(length < 0))
+		return false;
 
 	ptr = skb_header_pointer(skb, doff + sizeof(*th), length, buf);
 	if (ptr == NULL)
@@ -47,6 +53,8 @@ synproxy_parse_options(const struct sk_buff *skb, unsigned int doff,
 			length--;
 			continue;
 		default:
+			if (length < 2)
+				return true;
 			opsize = *ptr++;
 			if (opsize < 2)
 				return true;
@@ -185,7 +193,7 @@ unsigned int synproxy_tstamp_adjust(struct sk_buff *skb,
 				    const struct nf_conn_synproxy *synproxy)
 {
 	unsigned int optoff, optend;
-	u32 *ptr, old;
+	__be32 *ptr, old;
 
 	if (synproxy->tsoff == 0)
 		return 1;
@@ -213,18 +221,18 @@ unsigned int synproxy_tstamp_adjust(struct sk_buff *skb,
 			if (op[0] == TCPOPT_TIMESTAMP &&
 			    op[1] == TCPOLEN_TIMESTAMP) {
 				if (CTINFO2DIR(ctinfo) == IP_CT_DIR_REPLY) {
-					ptr = (u32 *)&op[2];
+					ptr = (__be32 *)&op[2];
 					old = *ptr;
 					*ptr = htonl(ntohl(*ptr) -
 						     synproxy->tsoff);
 				} else {
-					ptr = (u32 *)&op[6];
+					ptr = (__be32 *)&op[6];
 					old = *ptr;
 					*ptr = htonl(ntohl(*ptr) +
 						     synproxy->tsoff);
 				}
 				inet_proto_csum_replace4(&th->check, skb,
-							 old, *ptr, 0);
+							 old, *ptr, false);
 				return 1;
 			}
 			optoff += op[1];
@@ -348,23 +356,20 @@ static void __net_exit synproxy_proc_exit(struct net *net)
 static int __net_init synproxy_net_init(struct net *net)
 {
 	struct synproxy_net *snet = synproxy_pernet(net);
-	struct nf_conntrack_tuple t;
 	struct nf_conn *ct;
 	int err = -ENOMEM;
 
-	memset(&t, 0, sizeof(t));
-	ct = nf_conntrack_alloc(net, 0, &t, &t, GFP_KERNEL);
-	if (IS_ERR(ct)) {
-		err = PTR_ERR(ct);
+	ct = nf_ct_tmpl_alloc(net, &nf_ct_zone_dflt, GFP_KERNEL);
+	if (!ct)
 		goto err1;
-	}
 
 	if (!nfct_seqadj_ext_add(ct))
 		goto err2;
 	if (!nfct_synproxy_ext_add(ct))
 		goto err2;
 
-	nf_conntrack_tmpl_insert(net, ct);
+	__set_bit(IPS_CONFIRMED_BIT, &ct->status);
+	nf_conntrack_get(&ct->ct_general);
 	snet->tmpl = ct;
 
 	snet->stats = alloc_percpu(struct synproxy_stats);
@@ -380,7 +385,7 @@ static int __net_init synproxy_net_init(struct net *net)
 err3:
 	free_percpu(snet->stats);
 err2:
-	nf_conntrack_free(ct);
+	nf_ct_tmpl_free(ct);
 err1:
 	return err;
 }

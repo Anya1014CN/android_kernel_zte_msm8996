@@ -1363,7 +1363,7 @@ static ssize_t show_cmd_log(struct device *d,
 	if (!priv->cmdlog)
 		return 0;
 	for (i = (priv->cmdlog_pos + 1) % priv->cmdlog_len;
-	     (i != priv->cmdlog_pos) && (PAGE_SIZE - len);
+	     (i != priv->cmdlog_pos) && (len < PAGE_SIZE);
 	     i = (i + 1) % priv->cmdlog_len) {
 		len +=
 		    snprintf(buf + len, PAGE_SIZE - len,
@@ -1964,12 +1964,13 @@ static void notify_wx_assoc_event(struct ipw_priv *priv)
 	if (priv->status & STATUS_ASSOCIATED)
 		memcpy(wrqu.ap_addr.sa_data, priv->bssid, ETH_ALEN);
 	else
-		memset(wrqu.ap_addr.sa_data, 0, ETH_ALEN);
+		eth_zero_addr(wrqu.ap_addr.sa_data);
 	wireless_send_event(priv->net_dev, SIOCGIWAP, &wrqu, NULL);
 }
 
-static void ipw_irq_tasklet(struct ipw_priv *priv)
+static void ipw_irq_tasklet(unsigned long data)
 {
+	struct ipw_priv *priv = (struct ipw_priv *)data;
 	u32 inta, inta_mask, handled = 0;
 	unsigned long flags;
 	int rc = 0;
@@ -7400,7 +7401,7 @@ static int ipw_associate_network(struct ipw_priv *priv,
 	memcpy(priv->assoc_request.bssid, network->bssid, ETH_ALEN);
 
 	if (priv->ieee->iw_mode == IW_MODE_ADHOC) {
-		memset(&priv->assoc_request.dest, 0xFF, ETH_ALEN);
+		eth_broadcast_addr(priv->assoc_request.dest);
 		priv->assoc_request.atim_window = cpu_to_le16(network->atim_window);
 	} else {
 		memcpy(priv->assoc_request.dest, network->bssid, ETH_ALEN);
@@ -8986,7 +8987,7 @@ static int ipw_wx_get_wap(struct net_device *dev,
 		wrqu->ap_addr.sa_family = ARPHRD_ETHER;
 		memcpy(wrqu->ap_addr.sa_data, priv->bssid, ETH_ALEN);
 	} else
-		memset(wrqu->ap_addr.sa_data, 0, ETH_ALEN);
+		eth_zero_addr(wrqu->ap_addr.sa_data);
 
 	IPW_DEBUG_WX("Getting WAP BSSID: %pM\n",
 		     wrqu->ap_addr.sa_data);
@@ -10470,7 +10471,6 @@ static void ipw_ethtool_get_drvinfo(struct net_device *dev,
 		 vers, date);
 	strlcpy(info->bus_info, pci_name(p->pci_dev),
 		sizeof(info->bus_info));
-	info->eedump_len = IPW_EEPROM_IMAGE_SIZE;
 }
 
 static u32 ipw_ethtool_get_link(struct net_device *dev)
@@ -10706,7 +10706,7 @@ static int ipw_setup_deferred_work(struct ipw_priv *priv)
 	INIT_WORK(&priv->qos_activate, ipw_bg_qos_activate);
 #endif				/* CONFIG_IPW2200_QOS */
 
-	tasklet_init(&priv->irq_tasklet, (void (*)(unsigned long))
+	tasklet_init(&priv->irq_tasklet,
 		     ipw_irq_tasklet, (unsigned long)priv);
 
 	return ret;
@@ -11360,7 +11360,7 @@ static int ipw_wdev_init(struct net_device *dev)
 	if (geo->bg_channels) {
 		struct ieee80211_supported_band *bg_band = &priv->ieee->bg_band;
 
-		bg_band->band = IEEE80211_BAND_2GHZ;
+		bg_band->band = NL80211_BAND_2GHZ;
 		bg_band->n_channels = geo->bg_channels;
 		bg_band->channels = kcalloc(geo->bg_channels,
 					    sizeof(struct ieee80211_channel),
@@ -11371,7 +11371,7 @@ static int ipw_wdev_init(struct net_device *dev)
 		}
 		/* translate geo->bg to bg_band.channels */
 		for (i = 0; i < geo->bg_channels; i++) {
-			bg_band->channels[i].band = IEEE80211_BAND_2GHZ;
+			bg_band->channels[i].band = NL80211_BAND_2GHZ;
 			bg_band->channels[i].center_freq = geo->bg[i].freq;
 			bg_band->channels[i].hw_value = geo->bg[i].channel;
 			bg_band->channels[i].max_power = geo->bg[i].max_power;
@@ -11392,14 +11392,14 @@ static int ipw_wdev_init(struct net_device *dev)
 		bg_band->bitrates = ipw2200_bg_rates;
 		bg_band->n_bitrates = ipw2200_num_bg_rates;
 
-		wdev->wiphy->bands[IEEE80211_BAND_2GHZ] = bg_band;
+		wdev->wiphy->bands[NL80211_BAND_2GHZ] = bg_band;
 	}
 
 	/* fill-out priv->ieee->a_band */
 	if (geo->a_channels) {
 		struct ieee80211_supported_band *a_band = &priv->ieee->a_band;
 
-		a_band->band = IEEE80211_BAND_5GHZ;
+		a_band->band = NL80211_BAND_5GHZ;
 		a_band->n_channels = geo->a_channels;
 		a_band->channels = kcalloc(geo->a_channels,
 					   sizeof(struct ieee80211_channel),
@@ -11410,7 +11410,7 @@ static int ipw_wdev_init(struct net_device *dev)
 		}
 		/* translate geo->a to a_band.channels */
 		for (i = 0; i < geo->a_channels; i++) {
-			a_band->channels[i].band = IEEE80211_BAND_5GHZ;
+			a_band->channels[i].band = NL80211_BAND_5GHZ;
 			a_band->channels[i].center_freq = geo->a[i].freq;
 			a_band->channels[i].hw_value = geo->a[i].channel;
 			a_band->channels[i].max_power = geo->a[i].max_power;
@@ -11431,7 +11431,7 @@ static int ipw_wdev_init(struct net_device *dev)
 		a_band->bitrates = ipw2200_a_rates;
 		a_band->n_bitrates = ipw2200_num_a_rates;
 
-		wdev->wiphy->bands[IEEE80211_BAND_5GHZ] = a_band;
+		wdev->wiphy->bands[NL80211_BAND_5GHZ] = a_band;
 	}
 
 	wdev->wiphy->cipher_suites = ipw_cipher_suites;

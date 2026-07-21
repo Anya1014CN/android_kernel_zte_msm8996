@@ -459,6 +459,7 @@ static int mhi_plat_probe(struct platform_device *pdev)
 			return r;
 		}
 		INIT_WORK(&bhi_ctxt->fw_load_work, bhi_firmware_download);
+		bhi_ctxt->fw_table.sequence = 1;
 	}
 
 	mhi_dev_ctxt->flags.bb_required =
@@ -509,7 +510,7 @@ static int __exit mhi_plat_remove(struct platform_device *pdev)
 
 static int __init mhi_init(void)
 {
-	int r;
+	int r = -EAGAIN;
 	struct mhi_device_driver *mhi_dev_drv;
 
 	mhi_dev_drv = kmalloc(sizeof(*mhi_dev_drv), GFP_KERNEL);

@@ -17,6 +17,7 @@
 #include "msm_camera_i2c_mux.h"
 #include <linux/regulator/rpm-smd-regulator.h>
 #include <linux/regulator/consumer.h>
+#include <linux/drv2604.h>
 
 #undef CDBG
 #define CDBG(fmt, args...) pr_debug(fmt, ##args)
@@ -88,7 +89,6 @@ int32_t msm_sensor_free_sensor_data(struct msm_sensor_ctrl_t *s_ctrl)
 	kfree(s_ctrl->sensordata->actuator_info);
 	kfree(s_ctrl->sensordata->power_info.gpio_conf->gpio_num_info);
 	kfree(s_ctrl->sensordata->power_info.gpio_conf->cam_gpio_req_tbl);
-	kfree(s_ctrl->sensordata->power_info.gpio_conf->cam_gpio_set_tbl);
 	kfree(s_ctrl->sensordata->power_info.gpio_conf);
 	kfree(s_ctrl->sensordata->power_info.cam_vreg);
 	kfree(s_ctrl->sensordata->power_info.power_setting);
@@ -110,18 +110,6 @@ int32_t msm_sensor_free_sensor_data(struct msm_sensor_ctrl_t *s_ctrl)
 
 	kfree(s_ctrl->sensordata);
 	return 0;
-}
-
-void camera_sensor_address_swap(struct msm_sensor_ctrl_t *s_ctrl)
-{
-	uint16_t temp;
-	
-	temp = s_ctrl->sensordata->slave_info->sensor_slave_addr;
-	s_ctrl->sensordata->slave_info->sensor_slave_addr =
-		s_ctrl->sensordata->slave_info->sensor_bakeup_slave_addr;
-	 s_ctrl->sensordata->slave_info->sensor_bakeup_slave_addr = temp;
-	s_ctrl->sensor_i2c_client->cci_client->sid = 
-						s_ctrl->sensordata->slave_info->sensor_slave_addr >> 1;
 }
 
 int msm_sensor_power_down(struct msm_sensor_ctrl_t *s_ctrl)
@@ -149,39 +137,13 @@ int msm_sensor_power_down(struct msm_sensor_ctrl_t *s_ctrl)
 		return -EINVAL;
 	}
 
+	drv2604_enable_haptics();
+
 	/* Power down secure session if it exist*/
 	if (s_ctrl->is_secure)
 		msm_camera_tz_i2c_power_down(sensor_i2c_client);
 
 	return msm_camera_power_down(power_info, sensor_device_type,
-		sensor_i2c_client);
-}
-
-int msm_sensor_power_reset(struct msm_sensor_ctrl_t *s_ctrl)
-{
-	struct msm_camera_power_ctrl_t *power_info;
-	enum msm_camera_device_type_t sensor_device_type;
-	struct msm_camera_i2c_client *sensor_i2c_client;
-
-	if (!s_ctrl) {
-		pr_err("%s:%d failed: s_ctrl %p\n",
-			__func__, __LINE__, s_ctrl);
-		return -EINVAL;
-	}
-
-	if (s_ctrl->is_csid_tg_mode)
-		return 0;
-
-	power_info = &s_ctrl->sensordata->power_info;
-	sensor_device_type = s_ctrl->sensor_device_type;
-	sensor_i2c_client = s_ctrl->sensor_i2c_client;
-
-	if (!power_info || !sensor_i2c_client) {
-		pr_err("%s:%d failed: power_info %p sensor_i2c_client %p\n",
-			__func__, __LINE__, power_info, sensor_i2c_client);
-		return -EINVAL;
-	}
-	return msm_camera_power_reset(power_info, sensor_device_type,
 		sensor_i2c_client);
 }
 
@@ -246,29 +208,18 @@ int msm_sensor_power_up(struct msm_sensor_ctrl_t *s_ctrl)
 			return rc;
 		rc = msm_sensor_check_id(s_ctrl);
 		if (rc < 0) {
-#if 0
 			msm_camera_power_down(power_info,
 				s_ctrl->sensor_device_type, sensor_i2c_client);
 			msleep(20);
 			continue;
-#else
-			if (s_ctrl->sensordata->slave_info->sensor_bakeup_slave_addr) {
-				camera_sensor_address_swap(s_ctrl);
-				rc = msm_sensor_check_id(s_ctrl);
-			}
-			if (rc < 0) {
-				msm_camera_power_down(power_info,
-				s_ctrl->sensor_device_type, sensor_i2c_client);
-				msleep(20);
-				continue;
-			} else {
-				break;
-			}
-#endif
 		} else {
 			break;
 		}
 	}
+
+
+	if (!rc)
+		drv2604_disable_haptics();
 
 	return rc;
 }
@@ -640,7 +591,12 @@ static int msm_sensor_config32(struct msm_sensor_ctrl_t *s_ctrl,
 			pr_err("%s:%d: i2c_read failed\n", __func__, __LINE__);
 			break;
 		}
-		read_config_ptr->data = local_data;
+		if (copy_to_user(&read_config_ptr->data,
+				&local_data, sizeof(local_data))) {
+			pr_err("%s:%d failed\n", __func__, __LINE__);
+			rc = -EFAULT;
+			break;
+		}
 		break;
 	}
 	case CFG_SLAVE_WRITE_I2C_ARRAY: {
@@ -838,32 +794,6 @@ static int msm_sensor_config32(struct msm_sensor_ctrl_t *s_ctrl,
 			rc = -EFAULT;
 		}
 		break;
-
-	case CFG_POWER_RESET:
-		if (s_ctrl->is_csid_tg_mode)
-			goto DONE;
-
-		if (s_ctrl->sensor_state != MSM_SENSOR_POWER_UP) {
-			pr_err("%s:%d failed: invalid state %d\n", __func__,
-				__LINE__, s_ctrl->sensor_state);
-			rc = -EFAULT;
-			break;
-		}
-		if (s_ctrl->func_tbl->sensor_power_reset) {
-
-			rc = s_ctrl->func_tbl->sensor_power_reset(s_ctrl);
-			if (rc < 0) {
-				pr_err("%s:%d failed rc %d\n", __func__,
-					__LINE__, rc);
-				break;
-			}
-			CDBG("%s:%d sensor state %d\n", __func__, __LINE__,
-				s_ctrl->sensor_state);
-		} else {
-			rc = -EFAULT;
-		}
-		break;
-
 	case CFG_POWER_DOWN:
 		if (s_ctrl->is_csid_tg_mode)
 			goto DONE;
@@ -1180,7 +1110,12 @@ int msm_sensor_config(struct msm_sensor_ctrl_t *s_ctrl, void __user *argp)
 			pr_err("%s:%d: i2c_read failed\n", __func__, __LINE__);
 			break;
 		}
-		read_config_ptr->data = local_data;
+		if (copy_to_user(&read_config_ptr->data,
+				&local_data, sizeof(local_data))) {
+			pr_err("%s:%d failed\n", __func__, __LINE__);
+			rc = -EFAULT;
+			break;
+		}
 		break;
 	}
 	case CFG_SLAVE_WRITE_I2C_ARRAY: {
@@ -1351,30 +1286,6 @@ int msm_sensor_config(struct msm_sensor_ctrl_t *s_ctrl, void __user *argp)
 		}
 		break;
 
-	case CFG_POWER_RESET:
-		if (s_ctrl->is_csid_tg_mode)
-			goto DONE;
-
-		if (s_ctrl->sensor_state != MSM_SENSOR_POWER_UP) {
-			pr_err("%s:%d failed: invalid state %d\n", __func__,
-				__LINE__, s_ctrl->sensor_state);
-			rc = -EFAULT;
-			break;
-		}
-		if (s_ctrl->func_tbl->sensor_power_reset) {
-			rc = s_ctrl->func_tbl->sensor_power_reset(s_ctrl);
-			if (rc < 0) {
-				pr_err("%s:%d failed rc %d\n", __func__,
-					__LINE__, rc);
-				break;
-			}
-			CDBG("%s:%d sensor state %d\n", __func__, __LINE__,
-				s_ctrl->sensor_state);
-		} else {
-			rc = -EFAULT;
-		}
-		break;
-
 	case CFG_POWER_DOWN:
 		if (s_ctrl->is_csid_tg_mode)
 			goto DONE;
@@ -1519,31 +1430,12 @@ static int msm_sensor_power(struct v4l2_subdev *sd, int on)
 	mutex_unlock(s_ctrl->msm_sensor_mutex);
 	return rc;
 }
-
-static int msm_sensor_v4l2_enum_fmt(struct v4l2_subdev *sd,
-	unsigned int index, enum v4l2_mbus_pixelcode *code)
-{
-	struct msm_sensor_ctrl_t *s_ctrl = get_sctrl(sd);
-
-	if ((unsigned int)index >= s_ctrl->sensor_v4l2_subdev_info_size)
-		return -EINVAL;
-
-	*code = s_ctrl->sensor_v4l2_subdev_info[index].code;
-	return 0;
-}
-
 static struct v4l2_subdev_core_ops msm_sensor_subdev_core_ops = {
 	.ioctl = msm_sensor_subdev_ioctl,
 	.s_power = msm_sensor_power,
 };
-
-static struct v4l2_subdev_video_ops msm_sensor_subdev_video_ops = {
-	.enum_mbus_fmt = msm_sensor_v4l2_enum_fmt,
-};
-
 static struct v4l2_subdev_ops msm_sensor_subdev_ops = {
 	.core = &msm_sensor_subdev_core_ops,
-	.video  = &msm_sensor_subdev_video_ops,
 };
 
 static struct msm_sensor_fn_t msm_sensor_func_tbl = {
@@ -1552,7 +1444,6 @@ static struct msm_sensor_fn_t msm_sensor_func_tbl = {
 	.sensor_config32 = msm_sensor_config32,
 #endif
 	.sensor_power_up = msm_sensor_power_up,
-	.sensor_power_reset = msm_sensor_power_reset,
 	.sensor_power_down = msm_sensor_power_down,
 	.sensor_match_id = msm_sensor_match_id,
 };

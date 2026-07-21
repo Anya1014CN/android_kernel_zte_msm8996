@@ -4999,7 +4999,7 @@ void wlc_2064_vco_cal(struct brcms_phy *pi)
 bool wlc_phy_tpc_isenabled_lcnphy(struct brcms_phy *pi)
 {
 	if (wlc_lcnphy_tempsense_based_pwr_ctrl_enabled(pi))
-		return 0;
+		return false;
 	else
 		return (LCNPHY_TX_PWR_CTRL_HW ==
 			wlc_lcnphy_get_tx_pwr_ctrl((pi)));
@@ -5090,8 +5090,10 @@ bool wlc_phy_attach_lcnphy(struct brcms_phy *pi)
 	pi->pi_fptr.radioloftget = wlc_lcnphy_get_radio_loft;
 	pi->pi_fptr.detach = wlc_phy_detach_lcnphy;
 
-	if (!wlc_phy_txpwr_srom_read_lcnphy(pi))
+	if (!wlc_phy_txpwr_srom_read_lcnphy(pi)) {
+		kfree(pi->u.pi_lcnphy);
 		return false;
+	}
 
 	if (LCNREV_IS(pi->pubpi.phy_rev, 1)) {
 		if (pi_lcn->lcnphy_tempsense_option == 3) {

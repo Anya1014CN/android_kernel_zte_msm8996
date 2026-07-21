@@ -50,9 +50,7 @@
  */
 
 #include "ubifs.h"
-#include <linux/aio.h>
 #include <linux/mount.h>
-#include <linux/namei.h>
 #include <linux/slab.h>
 #include <linux/migrate.h>
 
@@ -784,8 +782,9 @@ static int ubifs_do_bulk_read(struct ubifs_info *c, struct bu_info *bu,
 
 		if (page_offset > end_index)
 			break;
-		page = find_or_create_page(mapping, page_offset,
-					   GFP_NOFS | __GFP_COLD);
+		page = pagecache_get_page(mapping, page_offset,
+				 FGP_LOCK|FGP_ACCESSED|FGP_CREAT|FGP_NOWAIT,
+				 GFP_NOFS | __GFP_COLD);
 		if (!page)
 			break;
 		if (!PageUptodate(page))
@@ -1259,7 +1258,7 @@ static int do_setattr(struct ubifs_info *c, struct inode *inode,
 int ubifs_setattr(struct dentry *dentry, struct iattr *attr)
 {
 	int err;
-	struct inode *inode = dentry->d_inode;
+	struct inode *inode = d_inode(dentry);
 	struct ubifs_info *c = inode->i_sb->s_fs_info;
 
 	dbg_gen("ino %lu, mode %#x, ia_valid %#x",
@@ -1300,14 +1299,6 @@ static void ubifs_invalidatepage(struct page *page, unsigned int offset,
 	atomic_long_dec(&c->dirty_pg_cnt);
 	ClearPagePrivate(page);
 	ClearPageChecked(page);
-}
-
-static void *ubifs_follow_link(struct dentry *dentry, struct nameidata *nd)
-{
-	struct ubifs_inode *ui = ubifs_inode(dentry->d_inode);
-
-	nd_set_link(nd, ui->data);
-	return NULL;
 }
 
 int ubifs_fsync(struct file *file, loff_t start, loff_t end, int datasync)
@@ -1599,7 +1590,6 @@ static const struct vm_operations_struct ubifs_file_vm_ops = {
 	.fault        = filemap_fault,
 	.map_pages = filemap_map_pages,
 	.page_mkwrite = ubifs_vm_page_mkwrite,
-	.remap_pages = generic_file_remap_pages,
 };
 
 static int ubifs_file_mmap(struct file *file, struct vm_area_struct *vma)
@@ -1643,7 +1633,7 @@ const struct inode_operations ubifs_file_inode_operations = {
 
 const struct inode_operations ubifs_symlink_inode_operations = {
 	.readlink    = generic_readlink,
-	.follow_link = ubifs_follow_link,
+	.follow_link = simple_follow_link,
 	.setattr     = ubifs_setattr,
 	.getattr     = ubifs_getattr,
 	.setxattr    = ubifs_setxattr,
@@ -1657,8 +1647,6 @@ const struct inode_operations ubifs_symlink_inode_operations = {
 
 const struct file_operations ubifs_file_operations = {
 	.llseek         = generic_file_llseek,
-	.read           = new_sync_read,
-	.write          = new_sync_write,
 	.read_iter      = generic_file_read_iter,
 	.write_iter     = ubifs_write_iter,
 	.mmap           = ubifs_file_mmap,

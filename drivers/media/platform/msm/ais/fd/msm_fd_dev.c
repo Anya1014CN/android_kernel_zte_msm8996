@@ -150,7 +150,7 @@ static int msm_fd_fill_format_from_index(struct v4l2_format *f, int index)
  */
 static int msm_fd_fill_format_from_ctx(struct v4l2_format *f, struct fd_ctx *c)
 {
-	if (NULL == c->format.size)
+	if (c->format.size == NULL)
 		return -EINVAL;
 
 	f->fmt.pix.width = c->format.size->width;
@@ -181,7 +181,7 @@ static int msm_fd_queue_setup(struct vb2_queue *q,
 
 	*num_planes = 1;
 
-	if (NULL == fmt)
+	if (fmt == NULL)
 		sizes[0] = ctx->format.sizeimage;
 	else
 		sizes[0] = fmt->fmt.pix.sizeimage;
@@ -337,7 +337,7 @@ static int msm_fd_vbif_error_handler(void *handle, uint32_t error)
 	struct msm_fd_buffer *active_buf;
 	int ret;
 
-	if (NULL == handle) {
+	if (handle == NULL) {
 		dev_err(fd->dev, "FD Ctx is null, Cannot recover\n");
 		return 0;
 	}
@@ -1417,7 +1417,7 @@ static int fd_device_remove(struct platform_device *pdev)
 	struct msm_fd_device *fd;
 
 	fd = platform_get_drvdata(pdev);
-	if (NULL == fd) {
+	if (fd == NULL) {
 		dev_err(&pdev->dev, "Can not get fd drvdata\n");
 		return 0;
 	}

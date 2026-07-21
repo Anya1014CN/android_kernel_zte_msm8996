@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2017, 2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -19,6 +19,7 @@
 #include "ipahal_reg_i.h"
 
 static const char *ipareg_name_to_str[IPA_REG_MAX] = {
+	__stringify(IPA_CLKON_CFG),
 	__stringify(IPA_ROUTE),
 	__stringify(IPA_IRQ_STTS_EE_n),
 	__stringify(IPA_IRQ_EN_EE_n),
@@ -88,7 +89,7 @@ static void ipareg_construct_dummy(enum ipahal_reg_name reg,
 {
 	IPAHAL_ERR("No construct function for %s\n",
 		ipahal_reg_name_str(reg));
-	BUG();
+	WARN_ON(1);
 }
 
 static void ipareg_parse_dummy(enum ipahal_reg_name reg,
@@ -96,7 +97,7 @@ static void ipareg_parse_dummy(enum ipahal_reg_name reg,
 {
 	IPAHAL_ERR("No parse function for %s\n",
 		ipahal_reg_name_str(reg));
-	BUG();
+	WARN_ON(1);
 }
 
 static void ipareg_construct_rx_hps_clients_depth1(
@@ -567,7 +568,7 @@ static void ipareg_construct_endp_init_cfg_n(
 	default:
 		IPAHAL_ERR("Invalid cs_offload_en value for %s\n",
 			ipahal_reg_name_str(reg));
-		BUG();
+		WARN_ON(1);
 		return;
 	}
 
@@ -858,6 +859,18 @@ static void ipareg_construct_endp_init_hdr_n(enum ipahal_reg_name reg,
 		IPA_ENDP_INIT_HDR_n_HDR_LEN_BMSK);
 }
 
+static void ipareg_construct_clkon_cfg(enum ipahal_reg_name reg,
+	const void *fields, u32 *val)
+{
+	struct ipahal_reg_clkon_cfg *clkon_cfg;
+
+	clkon_cfg = (struct ipahal_reg_clkon_cfg *)fields;
+
+	IPA_SETFIELD_IN_REG(*val, clkon_cfg->cgc_open_misc,
+		IPA_CLKON_CFG_CGC_OPEN_MISC_SHFT,
+		IPA_CLKON_CFG_CGC_OPEN_MISC_BMSK);
+}
+
 static void ipareg_construct_route(enum ipahal_reg_name reg,
 	const void *fields, u32 *val)
 {
@@ -916,26 +929,6 @@ static void ipareg_construct_qsb_max_reads(enum ipahal_reg_name reg,
 			    IPA_QSB_MAX_READS_GEN_QMB_1_MAX_READS_BMSK);
 }
 
-static void ipareg_parse_tx_cfg(enum ipahal_reg_name reg,
-	void *fields, u32 val)
-{
-	struct ipahal_reg_tx_cfg *tx_cfg;
-
-	tx_cfg = (struct ipahal_reg_tx_cfg *)fields;
-
-	tx_cfg->tx0_prefetch_disable = IPA_GETFIELD_FROM_REG(val,
-		IPA_TX_CFG_TX0_PREFETCH_DISABLE_SHFT_V3_5,
-		IPA_TX_CFG_TX0_PREFETCH_DISABLE_BMSK_V3_5);
-
-	tx_cfg->tx1_prefetch_disable = IPA_GETFIELD_FROM_REG(val,
-		IPA_TX_CFG_TX1_PREFETCH_DISABLE_SHFT_V3_5,
-		IPA_TX_CFG_TX1_PREFETCH_DISABLE_BMSK_V3_5);
-
-	tx_cfg->prefetch_almost_empty_size = IPA_GETFIELD_FROM_REG(val,
-		IPA_TX_CFG_PREFETCH_ALMOST_EMPTY_SIZE_SHFT_V3_5,
-		IPA_TX_CFG_PREFETCH_ALMOST_EMPTY_SIZE_BMSK_V3_5);
-}
-
 static void ipareg_construct_tx_cfg(enum ipahal_reg_name reg,
 	const void *fields, u32 *val)
 {
@@ -954,24 +947,6 @@ static void ipareg_construct_tx_cfg(enum ipahal_reg_name reg,
 	IPA_SETFIELD_IN_REG(*val, tx_cfg->prefetch_almost_empty_size,
 		IPA_TX_CFG_PREFETCH_ALMOST_EMPTY_SIZE_SHFT_V3_5,
 		IPA_TX_CFG_PREFETCH_ALMOST_EMPTY_SIZE_BMSK_V3_5);
-}
-
-static void ipareg_construct_idle_indication_cfg(enum ipahal_reg_name reg,
-	const void *fields, u32 *val)
-{
-	struct ipahal_reg_idle_indication_cfg *idle_indication_cfg;
-
-	idle_indication_cfg = (struct ipahal_reg_idle_indication_cfg *)fields;
-
-	IPA_SETFIELD_IN_REG(*val,
-		idle_indication_cfg->enter_idle_debounce_thresh,
-		IPA_IDLE_INDICATION_CFG_ENTER_IDLE_DEBOUNCE_THRESH_SHFT_V3_5,
-		IPA_IDLE_INDICATION_CFG_ENTER_IDLE_DEBOUNCE_THRESH_BMSK_V3_5);
-
-	IPA_SETFIELD_IN_REG(*val,
-		idle_indication_cfg->const_non_idle_enable,
-		IPA_IDLE_INDICATION_CFG_CONST_NON_IDLE_ENABLE_SHFT_V3_5,
-		IPA_IDLE_INDICATION_CFG_CONST_NON_IDLE_ENABLE_BMSK_V3_5);
 }
 
 /*
@@ -1076,7 +1051,7 @@ static struct ipahal_reg_obj ipahal_reg_objs[IPA_HW_MAX][IPA_REG_MAX] = {
 		0x00000800, 0x70},
 	[IPA_HW_v3_0][IPA_ENDP_INIT_CTRL_SCND_n] = {
 		ipareg_construct_endp_init_ctrl_scnd_n, ipareg_parse_dummy,
-		0x00000804, 0x70},
+		0x00000804, 0x70 },
 	[IPA_HW_v3_0][IPA_ENDP_INIT_HOL_BLOCK_EN_n] = {
 		ipareg_construct_endp_init_hol_block_en_n,
 		ipareg_parse_dummy,
@@ -1197,6 +1172,9 @@ static struct ipahal_reg_obj ipahal_reg_objs[IPA_HW_MAX][IPA_REG_MAX] = {
 
 
 	/* IPAv3.1 */
+	[IPA_HW_v3_1][IPA_CLKON_CFG] = {
+		ipareg_construct_clkon_cfg, ipareg_parse_dummy,
+		0x00000044, 0},
 	[IPA_HW_v3_1][IPA_IRQ_SUSPEND_INFO_EE_n] = {
 		ipareg_construct_dummy, ipareg_parse_dummy,
 		0x00003030, 0x1000},
@@ -1210,7 +1188,7 @@ static struct ipahal_reg_obj ipahal_reg_objs[IPA_HW_MAX][IPA_REG_MAX] = {
 
 	/* IPAv3.5 */
 	[IPA_HW_v3_5][IPA_TX_CFG] = {
-		ipareg_construct_tx_cfg, ipareg_parse_tx_cfg,
+		ipareg_construct_tx_cfg, ipareg_parse_dummy,
 		0x000001FC, 0},
 	[IPA_HW_v3_5][IPA_SRC_RSRC_GRP_01_RSRC_TYPE_n] = {
 		ipareg_construct_rsrg_grp_xy_v3_5, ipareg_parse_dummy,
@@ -1260,9 +1238,6 @@ static struct ipahal_reg_obj ipahal_reg_objs[IPA_HW_MAX][IPA_REG_MAX] = {
 	[IPA_HW_v3_5][IPA_SPARE_REG_2] = {
 		ipareg_construct_dummy, ipareg_parse_dummy,
 		0x00002784, 0},
-	[IPA_HW_v3_5][IPA_IDLE_INDICATION_CFG] = {
-		ipareg_construct_idle_indication_cfg, ipareg_parse_dummy,
-		0x00000220, 0},
 };
 
 /*
@@ -1346,7 +1321,7 @@ u32 ipahal_read_reg_n(enum ipahal_reg_name reg, u32 n)
 
 	if (reg >= IPA_REG_MAX) {
 		IPAHAL_ERR("Invalid register reg=%u\n", reg);
-		BUG();
+		WARN_ON(1);
 		return -EFAULT;
 	}
 
@@ -1357,9 +1332,41 @@ u32 ipahal_read_reg_n(enum ipahal_reg_name reg, u32 n)
 	if (offset == -1) {
 		IPAHAL_ERR("Read access to obsolete reg=%s\n",
 			ipahal_reg_name_str(reg));
-		BUG();
+		WARN_ON(1);
 		return -EFAULT;
 	}
+	offset += ipahal_reg_objs[ipahal_ctx->hw_type][reg].n_ofst * n;
+	return ioread32(ipahal_ctx->base + offset);
+}
+
+/*
+ * ipahal_read_reg_mn() - Get mn parameterized reg value
+ */
+u32 ipahal_read_reg_mn(enum ipahal_reg_name reg, u32 m, u32 n)
+{
+	u32 offset;
+
+	if (reg >= IPA_REG_MAX) {
+		IPAHAL_ERR("Invalid register reg=%u\n", reg);
+		return -EFAULT;
+	}
+
+	IPAHAL_DBG_LOW("read %s m=%u n=%u\n",
+		ipahal_reg_name_str(reg), m, n);
+	offset = ipahal_reg_objs[ipahal_ctx->hw_type][reg].offset;
+	if (offset == -1) {
+		IPAHAL_ERR("Read access to obsolete reg=%s\n",
+			ipahal_reg_name_str(reg));
+		WARN_ON_ONCE(1);
+		return -EFAULT;
+	}
+	/*
+	 * Currently there is one register with m and n parameters
+	 *	IPA_UC_MAILBOX_m_n. The m value of it is 0x80.
+	 * If more such registers will be added in the future,
+	 *	we can move the m parameter to the table above.
+	 */
+	offset += 0x80 * m;
 	offset += ipahal_reg_objs[ipahal_ctx->hw_type][reg].n_ofst * n;
 	return ioread32(ipahal_ctx->base + offset);
 }
@@ -1382,7 +1389,7 @@ void ipahal_write_reg_mn(enum ipahal_reg_name reg, u32 m, u32 n, u32 val)
 	if (offset == -1) {
 		IPAHAL_ERR("Write access to obsolete reg=%s\n",
 			ipahal_reg_name_str(reg));
-		BUG();
+		WARN_ON(1);
 		return;
 	}
 	/*
@@ -1406,13 +1413,13 @@ u32 ipahal_read_reg_n_fields(enum ipahal_reg_name reg, u32 n, void *fields)
 
 	if (!fields) {
 		IPAHAL_ERR("Input error fields=%p\n", fields);
-		BUG();
+		WARN_ON(1);
 		return -EFAULT;
 	}
 
 	if (reg >= IPA_REG_MAX) {
 		IPAHAL_ERR("Invalid register reg=%u\n", reg);
-		BUG();
+		WARN_ON(1);
 		return -EFAULT;
 	}
 
@@ -1422,7 +1429,7 @@ u32 ipahal_read_reg_n_fields(enum ipahal_reg_name reg, u32 n, void *fields)
 	if (offset == -1) {
 		IPAHAL_ERR("Read access to obsolete reg=%s\n",
 			ipahal_reg_name_str(reg));
-		BUG();
+		WARN_ON(1);
 		return -EFAULT;
 	}
 	offset += ipahal_reg_objs[ipahal_ctx->hw_type][reg].n_ofst * n;
@@ -1457,7 +1464,7 @@ void ipahal_write_reg_n_fields(enum ipahal_reg_name reg, u32 n,
 	if (offset == -1) {
 		IPAHAL_ERR("Write access to obsolete reg=%s\n",
 			ipahal_reg_name_str(reg));
-		BUG();
+		WARN_ON(1);
 		return;
 	}
 	offset += ipahal_reg_objs[ipahal_ctx->hw_type][reg].n_ofst * n;
@@ -1475,7 +1482,7 @@ u32 ipahal_get_reg_mn_ofst(enum ipahal_reg_name reg, u32 m, u32 n)
 
 	if (reg >= IPA_REG_MAX) {
 		IPAHAL_ERR("Invalid register reg=%u\n", reg);
-		BUG();
+		WARN_ON(1);
 		return -EFAULT;
 	}
 
@@ -1485,7 +1492,7 @@ u32 ipahal_get_reg_mn_ofst(enum ipahal_reg_name reg, u32 m, u32 n)
 	if (offset == -1) {
 		IPAHAL_ERR("Access to obsolete reg=%s\n",
 			ipahal_reg_name_str(reg));
-		BUG();
+		WARN_ON(1);
 		return -EFAULT;
 	}
 	/*
@@ -1522,16 +1529,13 @@ void ipahal_get_disable_aggr_valmask(struct ipahal_reg_valmask *valmask)
 		IPAHAL_ERR("Input error\n");
 		return;
 	}
+	valmask->val = (1 << IPA_ENDP_INIT_AGGR_n_AGGR_FORCE_CLOSE_SHFT) &
+		IPA_ENDP_INIT_AGGR_n_AGGR_FORCE_CLOSE_BMSK;
+	valmask->mask = IPA_ENDP_INIT_AGGR_n_AGGR_FORCE_CLOSE_BMSK;
 
-	valmask->val = (1 & IPA_ENDP_INIT_AGGR_n_AGGR_FORCE_CLOSE_BMSK) <<
-		IPA_ENDP_INIT_AGGR_n_AGGR_FORCE_CLOSE_SHFT;
-	valmask->mask = IPA_ENDP_INIT_AGGR_n_AGGR_FORCE_CLOSE_BMSK <<
-		IPA_ENDP_INIT_AGGR_n_AGGR_FORCE_CLOSE_SHFT;
-
-	valmask->val |= ((0 & IPA_ENDP_INIT_AGGR_n_AGGR_EN_BMSK) <<
-		IPA_ENDP_INIT_AGGR_n_AGGR_EN_SHFT);
-	valmask->mask |= ((IPA_ENDP_INIT_AGGR_n_AGGR_EN_BMSK <<
-		IPA_ENDP_INIT_AGGR_n_AGGR_EN_SHFT));
+	valmask->val |= ((0 << IPA_ENDP_INIT_AGGR_n_AGGR_EN_SHFT) &
+		IPA_ENDP_INIT_AGGR_n_AGGR_EN_BMSK);
+	valmask->mask |= IPA_ENDP_INIT_AGGR_n_AGGR_EN_BMSK;
 }
 
 u32 ipahal_aggr_get_max_byte_limit(void)
@@ -1558,6 +1562,8 @@ void ipahal_get_aggr_force_close_valmask(int ep_idx,
 		IPAHAL_ERR("Input error\n");
 		return;
 	}
+
+	memset(valmask, 0, sizeof(struct ipahal_reg_valmask));
 
 	if (ipahal_ctx->hw_type <= IPA_HW_v3_1) {
 		shft = IPA_AGGR_FORCE_CLOSE_AGGR_FORCE_CLOSE_PIPE_BITMAP_SHFT;
@@ -1604,21 +1610,4 @@ void ipahal_get_fltrt_hash_flush_valmask(
 			(1<<IPA_FILT_ROUT_HASH_FLUSH_IPv4_FILT_SHFT);
 
 	valmask->mask = valmask->val;
-}
-
-void ipahal_get_status_ep_valmask(int pipe_num,
-	struct ipahal_reg_valmask *valmask)
-{
-	if (!valmask) {
-		IPAHAL_ERR("Input error\n");
-		return;
-	}
-
-	valmask->val =
-		(pipe_num & IPA_ENDP_STATUS_n_STATUS_ENDP_BMSK) <<
-		IPA_ENDP_STATUS_n_STATUS_ENDP_SHFT;
-
-	valmask->mask =
-		IPA_ENDP_STATUS_n_STATUS_ENDP_BMSK <<
-		IPA_ENDP_STATUS_n_STATUS_ENDP_SHFT;
 }

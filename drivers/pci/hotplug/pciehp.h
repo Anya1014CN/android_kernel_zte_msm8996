@@ -101,18 +101,12 @@ struct controller {
 	unsigned int power_fault_detected;
 };
 
-#define INT_BUTTON_IGNORE		0
 #define INT_PRESENCE_ON			1
 #define INT_PRESENCE_OFF		2
-#define INT_SWITCH_CLOSE		3
-#define INT_SWITCH_OPEN			4
-#define INT_POWER_FAULT			5
-#define INT_POWER_FAULT_CLEAR		6
-#define INT_BUTTON_PRESS		7
-#define INT_BUTTON_RELEASE		8
-#define INT_BUTTON_CANCEL		9
-#define INT_LINK_UP			10
-#define INT_LINK_DOWN			11
+#define INT_POWER_FAULT			3
+#define INT_BUTTON_PRESS		4
+#define INT_LINK_UP			5
+#define INT_LINK_DOWN			6
 
 #define STATIC_STATE			0
 #define BLINKINGON_STATE		1
@@ -132,19 +126,16 @@ struct controller {
 
 int pciehp_sysfs_enable_slot(struct slot *slot);
 int pciehp_sysfs_disable_slot(struct slot *slot);
-u8 pciehp_handle_attention_button(struct slot *p_slot);
-u8 pciehp_handle_switch_change(struct slot *p_slot);
-u8 pciehp_handle_presence_change(struct slot *p_slot);
-u8 pciehp_handle_power_fault(struct slot *p_slot);
-void pciehp_handle_linkstate_change(struct slot *p_slot);
+void pciehp_queue_interrupt_event(struct slot *slot, u32 event_type);
 int pciehp_configure_device(struct slot *p_slot);
 int pciehp_unconfigure_device(struct slot *p_slot);
 void pciehp_queue_pushbutton_work(struct work_struct *work);
 struct controller *pcie_init(struct pcie_device *dev);
 int pcie_init_notification(struct controller *ctrl);
+void pcie_shutdown_notification(struct controller *ctrl);
 int pciehp_enable_slot(struct slot *p_slot);
 int pciehp_disable_slot(struct slot *p_slot);
-void pcie_enable_notification(struct controller *ctrl);
+void pcie_reenable_notification(struct controller *ctrl);
 int pciehp_power_on_slot(struct slot *slot);
 void pciehp_power_off_slot(struct slot *slot);
 void pciehp_get_power_status(struct slot *slot, u8 *status);
@@ -167,21 +158,4 @@ static inline const char *slot_name(struct slot *slot)
 	return hotplug_slot_name(slot->hotplug_slot);
 }
 
-#ifdef CONFIG_ACPI
-#include <linux/pci-acpi.h>
-
-void __init pciehp_acpi_slot_detection_init(void);
-int pciehp_acpi_slot_detection_check(struct pci_dev *dev);
-
-static inline void pciehp_firmware_init(void)
-{
-	pciehp_acpi_slot_detection_init();
-}
-#else
-#define pciehp_firmware_init()				do {} while (0)
-static inline int pciehp_acpi_slot_detection_check(struct pci_dev *dev)
-{
-	return 0;
-}
-#endif				/* CONFIG_ACPI */
 #endif				/* _PCIEHP_H */

@@ -22,6 +22,7 @@
 #include <linux/regulator/consumer.h>
 #include <linux/regulator/rpm-smd-regulator.h>
 #include <linux/clk/msm-clk.h>
+#include <trace/events/trace_msm_pil_event.h>
 
 #include "peripheral-loader.h"
 #include "pil-q6v5.h"
@@ -91,56 +92,53 @@ int pil_q6v5_make_proxy_votes(struct pil_desc *pil)
 
 	ret = of_property_read_u32(pil->dev->of_node, "vdd_cx-voltage", &uv);
 	if (ret) {
-		dev_err(pil->dev, "missing vdd_cx-voltage property\n");
+		dev_err(pil->dev, "missing vdd_cx-voltage property(rc:%d)\n",
+								ret);
 		return ret;
 	}
 
 	ret = clk_prepare_enable(drv->xo);
 	if (ret) {
-		dev_err(pil->dev, "Failed to vote for XO\n");
+		dev_err(pil->dev, "Failed to vote for XO(rc:%d)\n", ret);
 		goto out;
-	}
-
-	ret = clk_prepare_enable(drv->qpic_clk);
-	if (ret) {
-		dev_err(pil->dev, "Failed to vote for qpic clk\n");
-		goto err_qpic_vote;
 	}
 
 	ret = clk_prepare_enable(drv->pnoc_clk);
 	if (ret) {
-		dev_err(pil->dev, "Failed to vote for pnoc\n");
+		dev_err(pil->dev, "Failed to vote for pnoc(rc:%d)\n", ret);
 		goto err_pnoc_vote;
 	}
 
 	ret = clk_prepare_enable(drv->qdss_clk);
 	if (ret) {
-		dev_err(pil->dev, "Failed to vote for qdss\n");
+		dev_err(pil->dev, "Failed to vote for qdss(rc:%d)\n", ret);
 		goto err_qdss_vote;
 	}
 
 	ret = regulator_set_voltage(drv->vreg_cx, uv, INT_MAX);
 	if (ret) {
-		dev_err(pil->dev, "Failed to request vdd_cx voltage.\n");
+		dev_err(pil->dev, "Failed to request vdd_cx voltage(rc:%d)\n",
+								ret);
 		goto err_cx_voltage;
 	}
 
-	ret = regulator_set_optimum_mode(drv->vreg_cx, 100000);
+	ret = regulator_set_load(drv->vreg_cx, 100000);
 	if (ret < 0) {
-		dev_err(pil->dev, "Failed to set vdd_cx mode.\n");
+		dev_err(pil->dev, "Failed to set vdd_cx mode(rc:%d)\n", ret);
 		goto err_cx_mode;
 	}
 
 	ret = regulator_enable(drv->vreg_cx);
 	if (ret) {
-		dev_err(pil->dev, "Failed to vote for vdd_cx\n");
+		dev_err(pil->dev, "Failed to vote for vdd_cx(rc:%d)\n", ret);
 		goto err_cx_enable;
 	}
 
 	if (drv->vreg_pll) {
 		ret = regulator_enable(drv->vreg_pll);
 		if (ret) {
-			dev_err(pil->dev, "Failed to vote for vdd_pll\n");
+			dev_err(pil->dev, "Failed to vote for vdd_pll(rc:%d)\n",
+									ret);
 			goto err_vreg_pll;
 		}
 	}
@@ -150,7 +148,7 @@ int pil_q6v5_make_proxy_votes(struct pil_desc *pil)
 err_vreg_pll:
 	regulator_disable(drv->vreg_cx);
 err_cx_enable:
-	regulator_set_optimum_mode(drv->vreg_cx, 0);
+	regulator_set_load(drv->vreg_cx, 0);
 err_cx_mode:
 	regulator_set_voltage(drv->vreg_cx, RPM_REGULATOR_CORNER_NONE, INT_MAX);
 err_cx_voltage:
@@ -158,8 +156,6 @@ err_cx_voltage:
 err_qdss_vote:
 	clk_disable_unprepare(drv->pnoc_clk);
 err_pnoc_vote:
-	clk_disable_unprepare(drv->qpic_clk);
-err_qpic_vote:
 	clk_disable_unprepare(drv->xo);
 out:
 	return ret;
@@ -173,19 +169,19 @@ void pil_q6v5_remove_proxy_votes(struct pil_desc *pil)
 
 	ret = of_property_read_u32(pil->dev->of_node, "vdd_cx-voltage", &uv);
 	if (ret) {
-		dev_err(pil->dev, "missing vdd_cx-voltage property\n");
+		dev_err(pil->dev, "missing vdd_cx-voltage property(rc:%d)\n",
+									ret);
 		return;
 	}
 
 	if (drv->vreg_pll) {
 		regulator_disable(drv->vreg_pll);
-		regulator_set_optimum_mode(drv->vreg_pll, 0);
+		regulator_set_load(drv->vreg_pll, 0);
 	}
 	regulator_disable(drv->vreg_cx);
-	regulator_set_optimum_mode(drv->vreg_cx, 0);
+	regulator_set_load(drv->vreg_cx, 0);
 	regulator_set_voltage(drv->vreg_cx, RPM_REGULATOR_CORNER_NONE, INT_MAX);
 	clk_disable_unprepare(drv->xo);
-	clk_disable_unprepare(drv->qpic_clk);
 	clk_disable_unprepare(drv->pnoc_clk);
 	clk_disable_unprepare(drv->qdss_clk);
 }
@@ -365,6 +361,7 @@ static int __pil_q6v55_reset(struct pil_desc *pil)
 	u32 val;
 	int i;
 
+	trace_pil_func(__func__);
 	/* Override the ACC value if required */
 	if (drv->override_acc)
 		writel_relaxed(QDSP6SS_ACC_OVERRIDE_VAL,
@@ -393,7 +390,7 @@ static int __pil_q6v55_reset(struct pil_desc *pil)
 	mb();
 	udelay(1);
 
-	if (drv->qdsp6v62_1_2 || drv->qdsp6v62_1_5 || drv->qdsp6v62_1_4) {
+	if (drv->qdsp6v62_1_2 || drv->qdsp6v62_1_5) {
 		for (i = BHS_CHECK_MAX_LOOPS; i > 0; i--) {
 			if (readl_relaxed(drv->reg_base + QDSP6V62SS_BHS_STATUS)
 			    & QDSP6v55_BHS_EN_REST_ACK)
@@ -494,7 +491,7 @@ static int __pil_q6v55_reset(struct pil_desc *pil)
 			udelay(1);
 		}
 	} else if (drv->qdsp6v61_1_1 || drv->qdsp6v62_1_2 ||
-			drv->qdsp6v62_1_4 || drv->qdsp6v62_1_5) {
+						drv->qdsp6v62_1_5) {
 		/* Deassert QDSP6 compiler memory clamp */
 		val = readl_relaxed(drv->reg_base + QDSP6SS_PWR_CTL);
 		val &= ~QDSP6v55_CLAMP_QMC_MEM;
@@ -508,7 +505,7 @@ static int __pil_q6v55_reset(struct pil_desc *pil)
 		val = readl_relaxed(drv->reg_base +
 				QDSP6V6SS_MEM_PWR_CTL);
 
-		if (drv->qdsp6v62_1_4 || drv->qdsp6v62_1_5)
+		if (drv->qdsp6v62_1_5)
 			i = 29;
 		else
 			i = 28;
@@ -516,6 +513,8 @@ static int __pil_q6v55_reset(struct pil_desc *pil)
 		for ( ; i >= 0; i--) {
 			val |= BIT(i);
 			writel_relaxed(val, drv->reg_base +
+					QDSP6V6SS_MEM_PWR_CTL);
+			val = readl_relaxed(drv->reg_base +
 					QDSP6V6SS_MEM_PWR_CTL);
 			/*
 			 * Wait for 1us for both memory peripheral and
@@ -574,7 +573,7 @@ struct q6v5_data *pil_q6v5_init(struct platform_device *pdev)
 	struct resource *res;
 	struct pil_desc *desc;
 	struct property *prop;
-	int ret;
+	int ret, vdd_pll;
 
 	drv = devm_kzalloc(&pdev->dev, sizeof(*drv), GFP_KERNEL);
 	if (!drv)
@@ -676,9 +675,6 @@ struct q6v5_data *pil_q6v5_init(struct platform_device *pdev)
 	drv->qdsp6v62_1_2 = of_property_read_bool(pdev->dev.of_node,
 						"qcom,qdsp6v62-1-2");
 
-	drv->qdsp6v62_1_4 = of_property_read_bool(pdev->dev.of_node,
-						"qcom,qdsp6v62-1-4");
-
 	drv->qdsp6v62_1_5 = of_property_read_bool(pdev->dev.of_node,
 						"qcom,qdsp6v62-1-5");
 
@@ -696,10 +692,6 @@ struct q6v5_data *pil_q6v5_init(struct platform_device *pdev)
 	drv->xo = devm_clk_get(&pdev->dev, "xo");
 	if (IS_ERR(drv->xo))
 		return ERR_CAST(drv->xo);
-
-	drv->qpic_clk = devm_clk_get(&pdev->dev, "qpic");
-	if (IS_ERR(drv->qpic_clk))
-		drv->qpic_clk = NULL;
 
 	if (of_property_read_bool(pdev->dev.of_node, "qcom,pnoc-clk-vote")) {
 		drv->pnoc_clk = devm_clk_get(&pdev->dev, "pnoc_clk");
@@ -727,29 +719,27 @@ struct q6v5_data *pil_q6v5_init(struct platform_device *pdev)
 		return ERR_CAST(prop);
 	}
 
-	drv->vreg_pll = devm_regulator_get(&pdev->dev, "vdd_pll");
-	if (!IS_ERR_OR_NULL(drv->vreg_pll)) {
-		int voltage;
-		ret = of_property_read_u32(pdev->dev.of_node, "qcom,vdd_pll",
-					   &voltage);
-		if (ret) {
-			dev_err(&pdev->dev, "Failed to find vdd_pll voltage.\n");
-			return ERR_PTR(ret);
-		}
+	ret = of_property_read_u32(pdev->dev.of_node, "qcom,vdd_pll",
+		&vdd_pll);
+	if (!ret) {
+		drv->vreg_pll = devm_regulator_get(&pdev->dev, "vdd_pll");
+		if (!IS_ERR_OR_NULL(drv->vreg_pll)) {
+			ret = regulator_set_voltage(drv->vreg_pll, vdd_pll,
+							vdd_pll);
+			if (ret) {
+				dev_err(&pdev->dev, "Failed to set vdd_pll voltage(rc:%d)\n",
+									ret);
+				return ERR_PTR(ret);
+			}
 
-		ret = regulator_set_voltage(drv->vreg_pll, voltage, voltage);
-		if (ret) {
-			dev_err(&pdev->dev, "Failed to request vdd_pll voltage.\n");
-			return ERR_PTR(ret);
-		}
-
-		ret = regulator_set_optimum_mode(drv->vreg_pll, 10000);
-		if (ret < 0) {
-			dev_err(&pdev->dev, "Failed to set vdd_pll mode.\n");
-			return ERR_PTR(ret);
-		}
-	} else {
-		 drv->vreg_pll = NULL;
+			ret = regulator_set_load(drv->vreg_pll, 10000);
+			if (ret < 0) {
+				dev_err(&pdev->dev, "Failed to set vdd_pll mode(rc:%d)\n",
+									ret);
+				return ERR_PTR(ret);
+			}
+		} else
+			drv->vreg_pll = NULL;
 	}
 
 	return drv;

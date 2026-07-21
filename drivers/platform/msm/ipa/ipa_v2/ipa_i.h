@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2018, 2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -55,7 +55,7 @@
 #define IPA_QMAP_HEADER_LENGTH (4)
 #define IPA_DL_CHECKSUM_LENGTH (8)
 #define IPA_NUM_DESC_PER_SW_TX (2)
-#define IPA_GENERIC_RX_POOL_SZ 1000
+#define IPA_GENERIC_RX_POOL_SZ 192
 #define IPA_UC_FINISH_MAX 6
 #define IPA_UC_WAIT_MIN_SLEEP 1000
 #define IPA_UC_WAII_MAX_SLEEP 1200
@@ -201,6 +201,7 @@
 #define IPA2_ACTIVE_CLIENTS_LOG_LINE_LEN 96
 #define IPA2_ACTIVE_CLIENTS_LOG_HASHTABLE_SIZE 50
 #define IPA2_ACTIVE_CLIENTS_LOG_NAME_LEN 40
+#define IPA_RULE_CNT_MAX 512
 
 struct ipa2_active_client_htable_entry {
 	struct hlist_node list;
@@ -242,6 +243,8 @@ struct ipa_smmu_cb_ctx {
  * @tbl: filter table
  * @rt_tbl: routing table
  * @hw_len: entry's size
+ * @id: rule handle - globally unique
+ * @ipacm_installed: indicate if installed by ipacm
  */
 struct ipa_flt_entry {
 	struct list_head link;
@@ -251,6 +254,7 @@ struct ipa_flt_entry {
 	struct ipa_rt_tbl *rt_tbl;
 	u32 hw_len;
 	int id;
+	bool ipacm_installed;
 };
 
 /**
@@ -305,6 +309,7 @@ struct ipa_rt_tbl {
  * @is_eth2_ofst_valid: is eth2_ofst field valid?
  * @eth2_ofst: offset to start of Ethernet-II/802.3 header
  * @user_deleted: is the header deleted by the user?
+ * @ipacm_installed: indicate if installed by ipacm
  */
 struct ipa_hdr_entry {
 	struct list_head link;
@@ -323,6 +328,7 @@ struct ipa_hdr_entry {
 	u8 is_eth2_ofst_valid;
 	u16 eth2_ofst;
 	bool user_deleted;
+	bool ipacm_installed;
 };
 
 /**
@@ -346,11 +352,13 @@ struct ipa_hdr_tbl {
  * @link: entry's link in global processing context header offset entries list
  * @offset: the offset
  * @bin: bin
+ * @ipacm_installed: indicate if installed by ipacm
  */
 struct ipa_hdr_proc_ctx_offset_entry {
 	struct list_head link;
 	u32 offset;
 	u32 bin;
+	bool ipacm_installed;
 };
 
 /**
@@ -387,6 +395,7 @@ struct ipa_hdr_proc_ctx_add_hdr_cmd_seq {
  * @ref_cnt: reference counter of routing table
  * @id: processing context header entry id
  * @user_deleted: is the hdr processing context deleted by the user?
+ * @ipacm_installed: indicate if installed by ipacm
  */
 struct ipa_hdr_proc_ctx_entry {
 	struct list_head link;
@@ -397,6 +406,7 @@ struct ipa_hdr_proc_ctx_entry {
 	u32 ref_cnt;
 	int id;
 	bool user_deleted;
+	bool ipacm_installed;
 };
 
 /**
@@ -446,6 +456,8 @@ struct ipa_flt_tbl {
  * @hdr: header table
  * @proc_ctx: processing context table
  * @hw_len: the length of the table
+ * @id: rule handle - globaly unique
+ * @ipacm_installed: indicate if installed by ipacm
  */
 struct ipa_rt_entry {
 	struct list_head link;
@@ -456,6 +468,7 @@ struct ipa_rt_entry {
 	struct ipa_hdr_proc_ctx_entry *proc_ctx;
 	u32 hw_len;
 	int id;
+	bool ipacm_installed;
 };
 
 /**
@@ -574,6 +587,7 @@ enum ipa_wakelock_ref_client {
  * @disconnect_in_progress: Indicates client disconnect in progress.
  * @qmi_request_sent: Indicates whether QMI request to enable clear data path
  *					request is sent or not.
+ * @napi_enabled: when true, IPA call client callback to start polling
  */
 struct ipa_ep_context {
 	int valid;
@@ -605,6 +619,10 @@ struct ipa_ep_context {
 	bool disconnect_in_progress;
 	u32 qmi_request_sent;
 	enum ipa_wakelock_ref_client wakelock_client;
+	bool napi_enabled;
+	bool switch_to_intr;
+	int inactive_cycles;
+	u32 eot_in_poll_err;
 	bool ep_disabled;
 
 	/* sys MUST be the last element of this struct */
@@ -643,7 +661,6 @@ struct ipa_sys_context {
 	int (*pyld_hdlr)(struct sk_buff *skb, struct ipa_sys_context *sys);
 	struct sk_buff * (*get_skb)(unsigned int len, gfp_t flags);
 	void (*free_skb)(struct sk_buff *skb);
-	void (*free_rx_wrapper)(struct ipa_rx_pkt_wrapper *rk_pkt);
 	u32 rx_buff_sz;
 	u32 rx_pool_sz;
 	struct sk_buff *prev_skb;
@@ -965,6 +982,10 @@ struct ipa_uc_wdi_ctx {
 	struct IpaHwStatsWDIInfoData_t *wdi_uc_stats_mmio;
 	void *priv;
 	ipa_uc_ready_cb uc_ready_cb;
+	/* for AP+STA stats update */
+#ifdef IPA_WAN_MSG_IPv6_ADDR_GW_LEN
+	ipa_wdi_meter_notifier_cb stats_notify;
+#endif
 };
 
 /**
@@ -1085,6 +1106,8 @@ struct ipa_context {
 	struct cdev cdev;
 	unsigned long bam_handle;
 	struct ipa_ep_context ep[IPA_MAX_NUM_PIPES];
+	void __iomem *ipa_non_ap_bam_s_desc_iova[IPA_MAX_NUM_PIPES];
+	void __iomem *ipa_non_ap_bam_p_desc_iova[IPA_MAX_NUM_PIPES];
 	bool skip_ep_cfg_shadow[IPA_MAX_NUM_PIPES];
 	bool resume_on_connect[IPA_CLIENT_MAX];
 	struct ipa_flt_tbl flt_tbl[IPA_MAX_NUM_PIPES][IPA_IP_MAX];
@@ -1143,6 +1166,8 @@ struct ipa_context {
 	struct list_head msg_list;
 	struct list_head pull_msg_list;
 	struct mutex msg_lock;
+	struct list_head msg_wlan_client_list;
+	struct mutex msg_wlan_client_lock;
 	wait_queue_head_t msg_waitq;
 	enum ipa_hw_type ipa_hw_type;
 	enum ipa_hw_mode ipa_hw_mode;
@@ -1195,9 +1220,12 @@ struct ipa_context {
 	u32 ipa_rx_min_timeout_usec;
 	u32 ipa_rx_max_timeout_usec;
 	u32 ipa_polling_iteration;
+	bool ipa_uc_monitor_holb;
 	struct ipa_cne_evt ipa_cne_evt_req_cache[IPA_MAX_NUM_REQ_CACHE];
 	int num_ipa_cne_evt_req;
 	struct mutex ipa_cne_evt_lock;
+	int (*q6_cleanup_cb)(void);
+	bool is_apps_shutdown_support;
 };
 
 /**
@@ -1253,6 +1281,8 @@ struct ipa_plat_drv_res {
 	bool tethered_flow_control;
 	u32 ipa_rx_polling_sleep_msec;
 	u32 ipa_polling_iteration;
+	bool ipa_uc_monitor_holb;
+	bool is_apps_shutdown_support;
 };
 
 struct ipa_mem_partition {
@@ -1378,6 +1408,8 @@ int ipa2_disconnect(u32 clnt_hdl);
  */
 int ipa2_reset_endpoint(u32 clnt_hdl);
 
+void ipa2_apps_shutdown_apps_ep_reset(void);
+
 /*
  * Remove ep delay
  */
@@ -1426,13 +1458,15 @@ int ipa2_cfg_ep_ctrl(u32 clnt_hdl, const struct ipa_ep_cfg_ctrl *ep_ctrl);
  */
 int ipa2_add_hdr(struct ipa_ioc_add_hdr *hdrs);
 
+int ipa2_add_hdr_usr(struct ipa_ioc_add_hdr *hdrs, bool by_user);
+
 int ipa2_del_hdr(struct ipa_ioc_del_hdr *hdls);
 
 int ipa2_del_hdr_by_user(struct ipa_ioc_del_hdr *hdls, bool by_user);
 
 int ipa2_commit_hdr(void);
 
-int ipa2_reset_hdr(void);
+int ipa2_reset_hdr(bool user_only);
 
 int ipa2_get_hdr(struct ipa_ioc_get_hdr *lookup);
 
@@ -1443,7 +1477,8 @@ int ipa2_copy_hdr(struct ipa_ioc_copy_hdr *copy);
 /*
  * Header Processing Context
  */
-int ipa2_add_hdr_proc_ctx(struct ipa_ioc_add_hdr_proc_ctx *proc_ctxs);
+int ipa2_add_hdr_proc_ctx(struct ipa_ioc_add_hdr_proc_ctx *proc_ctxs,
+							bool user_only);
 
 int ipa2_del_hdr_proc_ctx(struct ipa_ioc_del_hdr_proc_ctx *hdls);
 
@@ -1455,11 +1490,14 @@ int ipa2_del_hdr_proc_ctx_by_user(struct ipa_ioc_del_hdr_proc_ctx *hdls,
  */
 int ipa2_add_rt_rule(struct ipa_ioc_add_rt_rule *rules);
 
+int ipa2_add_rt_rule_usr(struct ipa_ioc_add_rt_rule *rules,
+	bool user_only);
+
 int ipa2_del_rt_rule(struct ipa_ioc_del_rt_rule *hdls);
 
 int ipa2_commit_rt(enum ipa_ip_type ip);
 
-int ipa2_reset_rt(enum ipa_ip_type ip);
+int ipa2_reset_rt(enum ipa_ip_type ip, bool user_only);
 
 int ipa2_get_rt_tbl(struct ipa_ioc_get_rt_tbl *lookup);
 
@@ -1474,13 +1512,16 @@ int ipa2_mdfy_rt_rule(struct ipa_ioc_mdfy_rt_rule *rules);
  */
 int ipa2_add_flt_rule(struct ipa_ioc_add_flt_rule *rules);
 
+int ipa2_add_flt_rule_usr(struct ipa_ioc_add_flt_rule *rules,
+	bool user_only);
+
 int ipa2_del_flt_rule(struct ipa_ioc_del_flt_rule *hdls);
 
 int ipa2_mdfy_flt_rule(struct ipa_ioc_mdfy_flt_rule *rules);
 
 int ipa2_commit_flt(enum ipa_ip_type ip);
 
-int ipa2_reset_flt(enum ipa_ip_type ip);
+int ipa2_reset_flt(enum ipa_ip_type ip, bool user_only);
 
 /*
  * NAT
@@ -1498,6 +1539,7 @@ int ipa2_nat_del_cmd(struct ipa_ioc_v4_nat_del *del);
  */
 int ipa2_send_msg(struct ipa_msg_meta *meta, void *buff,
 		  ipa_msg_free_fn callback);
+int ipa2_resend_wlan_msg(void);
 int ipa2_register_pull_msg(struct ipa_msg_meta *meta, ipa_msg_pull_fn callback);
 int ipa2_deregister_pull_msg(struct ipa_msg_meta *meta);
 
@@ -1561,6 +1603,7 @@ int ipa2_resume_wdi_pipe(u32 clnt_hdl);
 int ipa2_suspend_wdi_pipe(u32 clnt_hdl);
 int ipa2_get_wdi_stats(struct IpaHwStatsWDIInfoData_t *stats);
 u16 ipa2_get_smem_restr_bytes(void);
+int ipa2_broadcast_wdi_quota_reach_ind(uint32_t fid, uint64_t num_bytes);
 int ipa2_setup_uc_ntn_pipes(struct ipa_ntn_conn_in_params *inp,
 		ipa_notify_cb notify, void *priv, u8 hdr_len,
 		struct ipa_ntn_conn_out_params *outp);
@@ -1602,6 +1645,10 @@ void ipa2_set_client(int index, enum ipacm_client_enum client, bool uplink);
 enum ipacm_client_enum ipa2_get_client(int pipe_idx);
 
 bool ipa2_get_client_uplink(int pipe_idx);
+
+int ipa2_get_wlan_stats(struct ipa_get_wdi_sap_stats *wdi_sap_stats);
+
+int ipa2_set_wlan_quota(struct ipa_set_wifi_quota *wdi_quota);
 
 /*
  * IPADMA
@@ -1697,10 +1744,6 @@ int ipa_generate_hw_rule(enum ipa_ip_type ip,
 			 const struct ipa_rule_attrib *attrib,
 			 u8 **buf,
 			 u16 *en_rule);
-u8 *ipa_write_32(u32 w, u8 *dest);
-u8 *ipa_write_16(u16 hw, u8 *dest);
-u8 *ipa_write_8(u8 b, u8 *dest);
-u8 *ipa_pad_to_32(u8 *dest);
 int ipa_init_hw(void);
 struct ipa_rt_tbl *__ipa_find_rt_tbl(enum ipa_ip_type ip, const char *name);
 int ipa_set_single_ndp_per_mbim(bool);
@@ -1770,10 +1813,13 @@ static inline u32 ipa_read_reg_field(void *base, u32 offset,
 	return (ipa_read_reg(base, offset) & mask) >> shift;
 }
 
-static inline void ipa_write_reg(void *base, u32 offset, u32 val)
+static inline void ipa_write_reg(void __iomem *base, u32 offset, u32 val)
 {
 	iowrite32(val, base + offset);
 }
+
+int ipa_bridge_init(void);
+void ipa_bridge_cleanup(void);
 
 ssize_t ipa_read(struct file *filp, char __user *buf, size_t count,
 		 loff_t *f_pos);
@@ -1823,6 +1869,9 @@ void ipa_delete_dflt_flt_rules(u32 ipa_ep_idx);
 
 int ipa_enable_data_path(u32 clnt_hdl);
 int ipa_disable_data_path(u32 clnt_hdl);
+int ipa2_enable_force_clear(u32 request_id, bool throttle_source,
+	u32 source_pipe_bitmask);
+int ipa2_disable_force_clear(u32 request_id);
 int ipa_id_alloc(void *ptr);
 void *ipa_id_find(u32 id);
 void ipa_id_remove(u32 id);
@@ -1851,7 +1900,12 @@ int ipa_tag_process(struct ipa_desc *desc, int num_descs,
 		    unsigned long timeout);
 
 int ipa_q6_pre_shutdown_cleanup(void);
+int ipa_apps_shutdown_cleanup(void);
+int register_ipa_platform_cb(int (*cb)(void));
 int ipa_q6_post_shutdown_cleanup(void);
+int wait_for_ep_empty(enum ipa_client_type client);
+int ioremap_non_ap_bam_regs(void);
+void iounmap_non_ap_bam_regs(void);
 int ipa_init_q6_smem(void);
 int ipa_q6_monitor_holb_mitigation(bool enable);
 
@@ -1912,6 +1966,8 @@ void ipa_inc_acquire_wakelock(enum ipa_wakelock_ref_client ref_client);
 void ipa_dec_release_wakelock(enum ipa_wakelock_ref_client ref_client);
 int ipa_iommu_map(struct iommu_domain *domain, unsigned long iova,
 	phys_addr_t paddr, size_t size, int prot);
+int ipa2_rx_poll(u32 clnt_hdl, int budget);
+void ipa2_recycle_wan_skb(struct sk_buff *skb);
 int ipa_ntn_init(void);
 int ipa2_get_ntn_stats(struct IpaHwStatsNTNInfoData_t *stats);
 int ipa2_register_ipa_ready_cb(void (*ipa_ready_cb)(void *),

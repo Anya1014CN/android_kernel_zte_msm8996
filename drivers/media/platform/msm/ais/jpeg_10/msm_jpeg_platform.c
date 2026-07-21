@@ -140,7 +140,8 @@ static void set_vbif_params(struct msm_jpeg_device *pgmn_dev,
 		jpeg_vbif_base + JPEG_VBIF_ARB_CTL);
 
 	/* FE and WE QOS configuration need to be set when
-	QOS RR arbitration is enabled */
+	 *  QOS RR arbitration is enabled
+	 */
 	if (pgmn_dev->hw_version != JPEG_8974_V1)
 		msm_camera_io_w(0x00000003,
 				jpeg_vbif_base + JPEG_VBIF_ROUND_ROBIN_QOS_ARB);
@@ -169,7 +170,7 @@ static int32_t msm_jpeg_set_init_dt_parms(struct msm_jpeg_device *pgmn_dev,
 	void *base)
 {
 	struct device_node *of_node;
-	int32_t i = 0 , rc = 0;
+	int32_t i = 0, rc = 0;
 	uint32_t *dt_reg_settings = NULL;
 	uint32_t dt_count = 0;
 

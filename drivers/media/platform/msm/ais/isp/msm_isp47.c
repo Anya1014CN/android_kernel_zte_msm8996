@@ -1,4 +1,4 @@
-/* Copyright (c) 2013-2018, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -22,6 +22,7 @@
 #include "cam_hw_ops.h"
 #include "msm_isp47.h"
 #include "cam_soc_api.h"
+#include "msm_camera_diag_util.h"
 
 #undef CDBG
 #define CDBG(fmt, args...) pr_debug(fmt, ##args)
@@ -265,7 +266,7 @@ static int msm_isp47_ahb_clk_cfg(struct vfe_device *vfe_dev,
 
 	if (vote && vfe_dev->ahb_vote != vote) {
 		rc = cam_config_ahb_clk(NULL, 0,
-			(ISP_VFE0 == vfe_dev->pdev->id ?
+			(vfe_dev->pdev->id == ISP_VFE0 ?
 			CAM_AHB_CLIENT_VFE0 : CAM_AHB_CLIENT_VFE1), vote);
 		if (rc)
 			pr_err("%s: failed to set ahb vote to %x\n",
@@ -306,19 +307,12 @@ int msm_vfe47_init_hardware(struct vfe_device *vfe_dev)
 	vfe_dev->common_data->dual_vfe_res->vfe_base[vfe_dev->pdev->id] =
 		vfe_dev->vfe_base;
 
-	rc = msm_isp_update_bandwidth(ISP_VFE0 + vfe_dev->pdev->id,
-					MSM_ISP_MIN_AB, MSM_ISP_MIN_IB);
-	if (rc)
-		goto bw_enable_fail;
-
 	rc = msm_camera_enable_irq(vfe_dev->vfe_irq, 1);
 	if (rc < 0)
 		goto irq_enable_fail;
 
 	return rc;
 irq_enable_fail:
-	msm_isp_update_bandwidth(ISP_VFE0 + vfe_dev->pdev->id, 0, 0);
-bw_enable_fail:
 	vfe_dev->common_data->dual_vfe_res->vfe_base[vfe_dev->pdev->id] = NULL;
 	if (cam_config_ahb_clk(NULL, 0, id, CAM_AHB_SUSPEND_VOTE) < 0)
 		pr_err("%s: failed to remove vote for AHB\n", __func__);
@@ -346,8 +340,6 @@ void msm_vfe47_release_hardware(struct vfe_device *vfe_dev)
 	msm_isp_flush_tasklet(vfe_dev);
 
 	vfe_dev->common_data->dual_vfe_res->vfe_base[vfe_dev->pdev->id] = NULL;
-
-	msm_isp_update_bandwidth(ISP_VFE0 + vfe_dev->pdev->id, 0, 0);
 
 	if (vfe_dev->pdev->id == 0)
 		id = CAM_AHB_CLIENT_VFE0;
@@ -482,7 +474,7 @@ void msm_vfe47_process_error_status(struct vfe_device *vfe_dev)
 		/* dump camif registers on camif error */
 		msm_camera_io_dump(vfe_dev->vfe_base + 0x478, 0x3C, 1);
 		/* testgen */
-		if (TESTGEN == vfe_dev->axi_data.src_info[VFE_PIX_0].input_mux)
+		if (vfe_dev->axi_data.src_info[VFE_PIX_0].input_mux == TESTGEN)
 			msm_camera_io_dump(vfe_dev->vfe_base + 0xC58, 0x28, 1);
 	}
 	if (error_status1 & (1 << 1))
@@ -602,7 +594,6 @@ void msm_vfe47_process_reg_update(struct vfe_device *vfe_dev,
 			case VFE_RAW_1:
 			case VFE_RAW_2:
 				msm_isp_increment_frame_id(vfe_dev, i, ts);
-				msm_isp_notify(vfe_dev, ISP_EVENT_SOF, i, ts);
 				msm_isp_update_framedrop_reg(vfe_dev, i);
 				/*
 				 * Reg Update is pseudo SOF for RDI,
@@ -650,7 +641,6 @@ void msm_vfe47_process_epoch_irq(struct vfe_device *vfe_dev,
 		msm_isp_update_framedrop_reg(vfe_dev, VFE_PIX_0);
 		msm_isp_update_stats_framedrop_reg(vfe_dev);
 		msm_isp_update_error_frame_count(vfe_dev);
-		msm_isp_notify(vfe_dev, ISP_EVENT_SOF, VFE_PIX_0, ts);
 		if (vfe_dev->axi_data.src_info[VFE_PIX_0].raw_stream_count > 0
 			&& vfe_dev->axi_data.src_info[VFE_PIX_0].
 			pix_stream_count == 0) {
@@ -660,6 +650,23 @@ void msm_vfe47_process_epoch_irq(struct vfe_device *vfe_dev,
 				vfe_dev, VFE_PIX_0);
 		}
 	}
+}
+
+void msm_isp47_process_sof_irq(struct vfe_device *vfe_dev,
+	uint32_t irq_status0, uint32_t irq_status1,
+	struct msm_isp_timestamp *ts)
+{
+	if ((!(irq_status0 & 0x1)) && (!(irq_status1 & 0xE0000000)))
+		return;
+
+	if (irq_status0 & BIT(0))
+		msm_isp_notify(vfe_dev, ISP_EVENT_SOF, VFE_PIX_0, ts);
+	if (irq_status1 & BIT(29))
+		msm_isp_notify(vfe_dev, ISP_EVENT_SOF, VFE_RAW_0, ts);
+	if (irq_status1 & BIT(30))
+		msm_isp_notify(vfe_dev, ISP_EVENT_SOF, VFE_RAW_1, ts);
+	if (irq_status1 & BIT(31))
+		msm_isp_notify(vfe_dev, ISP_EVENT_SOF, VFE_RAW_2, ts);
 }
 
 void msm_isp47_process_eof_irq(struct vfe_device *vfe_dev,
@@ -1020,7 +1027,8 @@ int msm_vfe47_start_fetch_engine(struct vfe_device *vfe_dev,
 	memset(&mapped_info, 0, sizeof(struct msm_isp_buffer_mapped_info));
 
 	/* There is other option of passing buffer address from user,
-		in such case, driver needs to map the buffer and use it*/
+	 *  in such case, driver needs to map the buffer and use it
+	 */
 	vfe_dev->fetch_engine_info.session_id = fe_cfg->session_id;
 	vfe_dev->fetch_engine_info.stream_id = fe_cfg->stream_id;
 	vfe_dev->fetch_engine_info.offline_mode = fe_cfg->offline_mode;
@@ -1031,7 +1039,6 @@ int msm_vfe47_start_fetch_engine(struct vfe_device *vfe_dev,
 			vfe_dev->buf_mgr, fe_cfg->session_id,
 			fe_cfg->stream_id);
 		vfe_dev->fetch_engine_info.bufq_handle = bufq_handle;
-
 		mutex_lock(&vfe_dev->buf_mgr->lock);
 		rc = vfe_dev->buf_mgr->ops->get_buf_by_index(
 			vfe_dev->buf_mgr, bufq_handle, fe_cfg->buf_idx, &buf);
@@ -1316,8 +1323,8 @@ void msm_vfe47_cfg_camif(struct vfe_device *vfe_dev,
 	first_line = camif_cfg->first_line;
 	last_line = camif_cfg->last_line;
 
-	msm_camera_io_w((camif_cfg->lines_per_frame) << 16 |
-		(camif_cfg->pixels_per_line), vfe_dev->vfe_base + 0x484);
+	msm_camera_io_w((camif_cfg->lines_per_frame - 1) << 16 |
+		(camif_cfg->pixels_per_line - 1), vfe_dev->vfe_base + 0x484);
 	if (bus_sub_en) {
 		val = msm_camera_io_r(vfe_dev->vfe_base + 0x47C);
 		val &= 0xFFFFFFDF;
@@ -2303,7 +2310,8 @@ uint32_t msm_vfe47_stats_get_wm_mask(
 	uint32_t irq_status0, uint32_t irq_status1)
 {
 	/* TODO: define  bf early done irq in status_0 and
-		bf pingpong done in  status_1*/
+	 *  bf pingpong done in  status_1
+	 */
 	uint32_t comp_mapped_irq_mask = 0;
 	int i = 0;
 
@@ -2389,6 +2397,8 @@ int msm_vfe47_update_bandwidth(
 		ab, ib,
 		isp_bandwidth_mgr->client_info,
 		sched_clock());
+	msm_camera_diag_update_isp_state(
+		isp_bandwidth_mgr->bus_vector_active_idx, ab, ib);
 	return 0;
 }
 
@@ -2402,8 +2412,8 @@ int msm_vfe47_get_clks(struct vfe_device *vfe_dev)
 		return rc;
 
 	for (i = 0; i < vfe_dev->num_clk; i++) {
-		if (0 == strcmp(vfe_dev->vfe_clk_info[i].clk_name,
-					"vfe_clk_src"))
+		if (strcmp(vfe_dev->vfe_clk_info[i].clk_name,
+					"vfe_clk_src") == 0)
 			vfe_dev->hw_info->vfe_clk_idx = i;
 	}
 	return 0;
@@ -2419,9 +2429,30 @@ void msm_vfe47_put_clks(struct vfe_device *vfe_dev)
 
 int msm_vfe47_enable_clks(struct vfe_device *vfe_dev, int enable)
 {
-	return msm_camera_clk_enable(&vfe_dev->pdev->dev,
+	unsigned long flags;
+	int rc;
+
+	if (!enable) {
+		spin_lock_irqsave(&vfe_dev->tasklet_lock, flags);
+		vfe_dev->clk_enabled = false;
+		spin_unlock_irqrestore(&vfe_dev->tasklet_lock, flags);
+	}
+
+	rc = msm_camera_clk_enable(&vfe_dev->pdev->dev,
 			vfe_dev->vfe_clk_info,
 			vfe_dev->vfe_clk, vfe_dev->num_clk, enable);
+	if (rc < 0) {
+		pr_err("%s: clk set %d failed %d\n", __func__, enable, rc);
+		return rc;
+	}
+
+	if (enable) {
+		spin_lock_irqsave(&vfe_dev->tasklet_lock, flags);
+		vfe_dev->clk_enabled = true;
+		spin_unlock_irqrestore(&vfe_dev->tasklet_lock, flags);
+	}
+
+	return rc;
 }
 
 int msm_vfe47_set_clk_rate(struct vfe_device *vfe_dev, long *rate)
@@ -2547,8 +2578,7 @@ int msm_vfe47_get_regulators(struct vfe_device *vfe_dev)
 	int rc = 0;
 	int i;
 
-	vfe_dev->vfe_num_regulators =
-		sizeof(*vfe_dev->hw_info->regulator_names) / sizeof(char *);
+	vfe_dev->vfe_num_regulators = vfe_dev->hw_info->regulator_num;
 
 	vfe_dev->regulator_info = kzalloc(sizeof(struct msm_cam_regulator) *
 				vfe_dev->vfe_num_regulators, GFP_KERNEL);
@@ -2718,12 +2748,12 @@ struct msm_vfe_hardware_info vfe47_hw_info = {
 			.process_camif_irq = msm_vfe47_process_input_irq,
 			.process_reset_irq = msm_vfe47_process_reset_irq,
 			.process_halt_irq = msm_vfe47_process_halt_irq,
-			.process_reset_irq = msm_vfe47_process_reset_irq,
 			.process_reg_update = msm_vfe47_process_reg_update,
 			.process_axi_irq = msm_isp_process_axi_irq,
 			.process_stats_irq = msm_isp_process_stats_irq,
 			.process_epoch_irq = msm_vfe47_process_epoch_irq,
 			.config_irq = msm_vfe47_config_irq,
+			.process_sof_irq = msm_isp47_process_sof_irq,
 			.process_eof_irq = msm_isp47_process_eof_irq,
 		},
 		.axi_ops = {
@@ -2822,6 +2852,7 @@ struct msm_vfe_hardware_info vfe47_hw_info = {
 	.dmi_reg_offset = 0xC2C,
 	.axi_hw_info = &msm_vfe47_axi_hw_info,
 	.stats_hw_info = &msm_vfe47_stats_hw_info,
+	.regulator_num = 3,
 	.regulator_names = {"vdd", "camss-vdd", "mmagic-vdd"},
 };
 EXPORT_SYMBOL(vfe47_hw_info);

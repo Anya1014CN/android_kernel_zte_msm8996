@@ -402,7 +402,7 @@ static int ngene_command_config_free_buf(struct ngene *dev, u8 *config)
 
 	com.cmd.hdr.Opcode = CMD_CONFIGURE_FREE_BUFFER;
 	com.cmd.hdr.Length = 6;
-	memcpy(&com.cmd.ConfigureBuffers.config, config, 6);
+	memcpy(&com.cmd.ConfigureFreeBuffers.config, config, 6);
 	com.in_len = 6;
 	com.out_len = 0;
 
@@ -1526,10 +1526,12 @@ static int init_channel(struct ngene_channel *chan)
 	if (chan->fe2) {
 		if (dvb_register_frontend(adapter, chan->fe2) < 0)
 			goto err;
-		chan->fe2->tuner_priv = chan->fe->tuner_priv;
-		memcpy(&chan->fe2->ops.tuner_ops,
-		       &chan->fe->ops.tuner_ops,
-		       sizeof(struct dvb_tuner_ops));
+		if (chan->fe) {
+			chan->fe2->tuner_priv = chan->fe->tuner_priv;
+			memcpy(&chan->fe2->ops.tuner_ops,
+			       &chan->fe->ops.tuner_ops,
+			       sizeof(struct dvb_tuner_ops));
+		}
 	}
 
 	if (chan->has_demux) {

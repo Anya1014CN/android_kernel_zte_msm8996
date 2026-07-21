@@ -121,7 +121,6 @@ extern unsigned long profile_pc(struct pt_regs *regs);
 #define MAX_REG_OFFSET (offsetof(struct pt_regs, ARM_ORIG_r0))
 
 extern int regs_query_register_offset(const char *name);
-extern const char *regs_query_register_name(unsigned int offset);
 extern bool regs_within_kernel_stack(struct pt_regs *regs, unsigned long addr);
 extern unsigned long regs_get_kernel_stack_nth(struct pt_regs *regs,
 					       unsigned int n);
@@ -154,9 +153,8 @@ static inline unsigned long user_stack_pointer(struct pt_regs *regs)
 	return regs->ARM_sp;
 }
 
-#define current_pt_regs(void) ({				\
-	register unsigned long sp asm ("sp");			\
-	(struct pt_regs *)((sp | (THREAD_SIZE - 1)) - 7) - 1;	\
+#define current_pt_regs(void) ({ (struct pt_regs *)			\
+		((current_stack_pointer | (THREAD_SIZE - 1)) - 7) - 1;	\
 })
 
 #endif /* __ASSEMBLY__ */

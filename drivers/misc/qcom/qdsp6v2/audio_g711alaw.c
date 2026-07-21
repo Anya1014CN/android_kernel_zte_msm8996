@@ -53,7 +53,7 @@ static long audio_ioctl_shared(struct file *file, unsigned int cmd,
 					__func__, audio->pcm_cfg.channel_count);
 		}
 
-		pr_debug("%s[%p]: AUDIO_START session_id[%d]\n", __func__,
+		pr_debug("%s[%pK]: AUDIO_START session_id[%d]\n", __func__,
 						audio, audio->ac->session);
 		if (audio->feedback == NON_TUNNEL_MODE) {
 			/* Configure PCM output block */
@@ -63,8 +63,8 @@ static long audio_ioctl_shared(struct file *file, unsigned int cmd,
 					16, /*bits per sample*/
 					false, false, channel_mapping);
 			if (rc < 0) {
-				pr_err("%s: pcm output block config failed\n",
-						 __func__);
+				pr_err("%s: pcm output block config failed rc=%d\n",
+						 __func__, rc);
 				break;
 			}
 		}
@@ -75,7 +75,8 @@ static long audio_ioctl_shared(struct file *file, unsigned int cmd,
 		rc = q6asm_media_format_block_g711(audio->ac, &g711_dec_cfg,
 							audio->ac->stream_id);
 		if (rc < 0) {
-			pr_err("%s: cmd media format block failed\n", __func__);
+			pr_err("%s: cmd media format block failed rc=%d\n",
+				__func__, rc);
 			break;
 		}
 		rc = audio_aio_enable(audio);
@@ -133,7 +134,7 @@ static long audio_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	default: {
 		rc = audio->codec_ioctl(file, cmd, arg);
 		if (rc)
-			pr_err("%s: Failed in utils_ioctl: %d cmd=%d\n",
+			pr_err("%s: Failed in audio_aio_ioctl: %d cmd=%d\n",
 				__func__, rc, cmd);
 		break;
 	}
@@ -179,7 +180,6 @@ static long audio_compat_ioctl(struct file *file, unsigned int cmd,
 			pr_err("%s: copy_to_user for AUDIO_GET_G711_DEC_CONFIG_32 failed\n",
 				 __func__);
 			rc = -EFAULT;
-			break;
 		}
 		break;
 	}
@@ -191,8 +191,8 @@ static long audio_compat_ioctl(struct file *file, unsigned int cmd,
 
 		if (copy_from_user(&g711_dec_config_32, (void *)arg,
 			sizeof(g711_dec_config_32))) {
-			pr_err("%s: copy_from_user for AUDIO_SET_G711_DEC_CONFIG_32 failed\n"
-				, __func__);
+			pr_err("%s: copy_from_user for AUDIO_SET_G711_DEC_CONFIG_32 failed\n",
+				__func__);
 			rc = -EFAULT;
 			break;
 		}
@@ -206,7 +206,7 @@ static long audio_compat_ioctl(struct file *file, unsigned int cmd,
 	default: {
 		rc = audio->codec_compat_ioctl(file, cmd, arg);
 		if (rc)
-			pr_err("%s: Failed in utils_ioctl: %d cmd=%d\n",
+			pr_err("%s: Failed in audio_aio_compat_ioctl: %d cmd=%d\n",
 				__func__, rc, cmd);
 		break;
 	}
@@ -388,14 +388,8 @@ static int __init audio_g711alaw_init(void)
 }
 static void __exit audio_g711alaw_exit(void)
 {
-	int ret = misc_deregister(&audio_g711alaw_misc);
-
+	misc_deregister(&audio_g711alaw_misc);
 	mutex_destroy(&audio_g711_ws_mgr.ws_lock);
-
-	if (ret == 0)
-		pr_debug("device deregistered successfully:\n");
-	else
-		pr_debug("device deregistration fail:\n ");
 }
 
 device_initcall(audio_g711alaw_init);

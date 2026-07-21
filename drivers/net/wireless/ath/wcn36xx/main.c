@@ -26,14 +26,14 @@ module_param_named(debug_mask, wcn36xx_dbg_mask, uint, 0644);
 MODULE_PARM_DESC(debug_mask, "Debugging mask");
 
 #define CHAN2G(_freq, _idx) { \
-	.band = IEEE80211_BAND_2GHZ, \
+	.band = NL80211_BAND_2GHZ, \
 	.center_freq = (_freq), \
 	.hw_value = (_idx), \
 	.max_power = 25, \
 }
 
 #define CHAN5G(_freq, _idx) { \
-	.band = IEEE80211_BAND_5GHZ, \
+	.band = NL80211_BAND_5GHZ, \
 	.center_freq = (_freq), \
 	.hw_value = (_idx), \
 	.max_power = 25, \
@@ -127,7 +127,9 @@ static struct ieee80211_supported_band wcn_band_2ghz = {
 		.cap =	IEEE80211_HT_CAP_GRN_FLD |
 			IEEE80211_HT_CAP_SGI_20 |
 			IEEE80211_HT_CAP_DSSSCCK40 |
-			IEEE80211_HT_CAP_LSIG_TXOP_PROT,
+			IEEE80211_HT_CAP_LSIG_TXOP_PROT |
+			IEEE80211_HT_CAP_SGI_40 |
+			IEEE80211_HT_CAP_SUP_WIDTH_20_40,
 		.ht_supported = true,
 		.ampdu_factor = IEEE80211_HT_MAX_AMPDU_64K,
 		.ampdu_density = IEEE80211_HT_MPDU_DENSITY_16,
@@ -156,7 +158,7 @@ static struct ieee80211_supported_band wcn_band_5ghz = {
 		.ampdu_density = IEEE80211_HT_MPDU_DENSITY_16,
 		.mcs = {
 			.rx_mask = { 0xff, 0, 0, 0, 0, 0, 0, 0, 0, 0, },
-			.rx_highest = cpu_to_le16(72),
+			.rx_highest = cpu_to_le16(150),
 			.tx_params = IEEE80211_HT_MCS_TX_DEFINED,
 		}
 	}
@@ -298,6 +300,8 @@ static int wcn36xx_start(struct ieee80211_hw *hw)
 	wcn36xx_debugfs_init(wcn);
 
 	INIT_LIST_HEAD(&wcn->vif_list);
+	spin_lock_init(&wcn->dxe_lock);
+
 	return 0;
 
 out_smd_stop:
@@ -494,7 +498,9 @@ out:
 	return ret;
 }
 
-static void wcn36xx_sw_scan_start(struct ieee80211_hw *hw)
+static void wcn36xx_sw_scan_start(struct ieee80211_hw *hw,
+				  struct ieee80211_vif *vif,
+				  const u8 *mac_addr)
 {
 	struct wcn36xx *wcn = hw->priv;
 
@@ -502,7 +508,8 @@ static void wcn36xx_sw_scan_start(struct ieee80211_hw *hw)
 	wcn36xx_smd_start_scan(wcn);
 }
 
-static void wcn36xx_sw_scan_complete(struct ieee80211_hw *hw)
+static void wcn36xx_sw_scan_complete(struct ieee80211_hw *hw,
+				     struct ieee80211_vif *vif)
 {
 	struct wcn36xx *wcn = hw->priv;
 
@@ -511,7 +518,7 @@ static void wcn36xx_sw_scan_complete(struct ieee80211_hw *hw)
 }
 
 static void wcn36xx_update_allowed_rates(struct ieee80211_sta *sta,
-					 enum ieee80211_band band)
+					 enum nl80211_band band)
 {
 	int i, size;
 	u16 *rates_table;
@@ -524,7 +531,7 @@ static void wcn36xx_update_allowed_rates(struct ieee80211_sta *sta,
 
 	size = ARRAY_SIZE(sta_priv->supported_rates.dsss_rates);
 	rates_table = sta_priv->supported_rates.dsss_rates;
-	if (band == IEEE80211_BAND_2GHZ) {
+	if (band == NL80211_BAND_2GHZ) {
 		for (i = 0; i < size; i++) {
 			if (rates & 0x01) {
 				rates_table[i] = wcn_2ghz_rates[i].hw_value;
@@ -792,6 +799,7 @@ static int wcn36xx_sta_add(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 	wcn36xx_dbg(WCN36XX_DBG_MAC, "mac sta add vif %p sta %pM\n",
 		    vif, sta->addr);
 
+	spin_lock_init(&sta_priv->ampdu_lock);
 	vif_priv->sta = sta_priv;
 	sta_priv->vif = vif_priv;
 	/*
@@ -851,12 +859,14 @@ static int wcn36xx_resume(struct ieee80211_hw *hw)
 
 static int wcn36xx_ampdu_action(struct ieee80211_hw *hw,
 		    struct ieee80211_vif *vif,
-		    enum ieee80211_ampdu_mlme_action action,
-		    struct ieee80211_sta *sta, u16 tid, u16 *ssn,
-		    u8 buf_size)
+		    struct ieee80211_ampdu_params *params)
 {
 	struct wcn36xx *wcn = hw->priv;
 	struct wcn36xx_sta *sta_priv = NULL;
+	struct ieee80211_sta *sta = params->sta;
+	enum ieee80211_ampdu_mlme_action action = params->action;
+	u16 tid = params->tid;
+	u16 *ssn = &params->ssn;
 
 	wcn36xx_dbg(WCN36XX_DBG_MAC, "mac ampdu action action %d tid %d\n",
 		    action, tid);
@@ -870,21 +880,32 @@ static int wcn36xx_ampdu_action(struct ieee80211_hw *hw,
 			get_sta_index(vif, sta_priv));
 		wcn36xx_smd_add_ba(wcn);
 		wcn36xx_smd_trigger_ba(wcn, get_sta_index(vif, sta_priv));
-		ieee80211_start_tx_ba_session(sta, tid, 0);
 		break;
 	case IEEE80211_AMPDU_RX_STOP:
 		wcn36xx_smd_del_ba(wcn, tid, get_sta_index(vif, sta_priv));
 		break;
 	case IEEE80211_AMPDU_TX_START:
+		spin_lock_bh(&sta_priv->ampdu_lock);
+		sta_priv->ampdu_state[tid] = WCN36XX_AMPDU_START;
+		spin_unlock_bh(&sta_priv->ampdu_lock);
+
 		ieee80211_start_tx_ba_cb_irqsafe(vif, sta->addr, tid);
 		break;
 	case IEEE80211_AMPDU_TX_OPERATIONAL:
+		spin_lock_bh(&sta_priv->ampdu_lock);
+		sta_priv->ampdu_state[tid] = WCN36XX_AMPDU_OPERATIONAL;
+		spin_unlock_bh(&sta_priv->ampdu_lock);
+
 		wcn36xx_smd_add_ba_session(wcn, sta, tid, ssn, 1,
 			get_sta_index(vif, sta_priv));
 		break;
 	case IEEE80211_AMPDU_TX_STOP_FLUSH:
 	case IEEE80211_AMPDU_TX_STOP_FLUSH_CONT:
 	case IEEE80211_AMPDU_TX_STOP_CONT:
+		spin_lock_bh(&sta_priv->ampdu_lock);
+		sta_priv->ampdu_state[tid] = WCN36XX_AMPDU_NONE;
+		spin_unlock_bh(&sta_priv->ampdu_lock);
+
 		ieee80211_stop_tx_ba_cb_irqsafe(vif, sta->addr, tid);
 		break;
 	default:
@@ -927,20 +948,20 @@ static int wcn36xx_init_ieee80211(struct wcn36xx *wcn)
 		WLAN_CIPHER_SUITE_CCMP,
 	};
 
-	wcn->hw->flags = IEEE80211_HW_SIGNAL_DBM |
-		IEEE80211_HW_HAS_RATE_CONTROL |
-		IEEE80211_HW_SUPPORTS_PS |
-		IEEE80211_HW_CONNECTION_MONITOR |
-		IEEE80211_HW_AMPDU_AGGREGATION |
-		IEEE80211_HW_TIMING_BEACON_ONLY;
+	ieee80211_hw_set(wcn->hw, TIMING_BEACON_ONLY);
+	ieee80211_hw_set(wcn->hw, AMPDU_AGGREGATION);
+	ieee80211_hw_set(wcn->hw, CONNECTION_MONITOR);
+	ieee80211_hw_set(wcn->hw, SUPPORTS_PS);
+	ieee80211_hw_set(wcn->hw, SIGNAL_DBM);
+	ieee80211_hw_set(wcn->hw, HAS_RATE_CONTROL);
 
 	wcn->hw->wiphy->interface_modes = BIT(NL80211_IFTYPE_STATION) |
 		BIT(NL80211_IFTYPE_AP) |
 		BIT(NL80211_IFTYPE_ADHOC) |
 		BIT(NL80211_IFTYPE_MESH_POINT);
 
-	wcn->hw->wiphy->bands[IEEE80211_BAND_2GHZ] = &wcn_band_2ghz;
-	wcn->hw->wiphy->bands[IEEE80211_BAND_5GHZ] = &wcn_band_5ghz;
+	wcn->hw->wiphy->bands[NL80211_BAND_2GHZ] = &wcn_band_2ghz;
+	wcn->hw->wiphy->bands[NL80211_BAND_5GHZ] = &wcn_band_5ghz;
 
 	wcn->hw->wiphy->cipher_suites = cipher_suites;
 	wcn->hw->wiphy->n_cipher_suites = ARRAY_SIZE(cipher_suites);
@@ -1075,7 +1096,6 @@ static struct platform_driver wcn36xx_driver = {
 	.remove     = wcn36xx_remove,
 	.driver         = {
 		.name   = "wcn36xx",
-		.owner  = THIS_MODULE,
 	},
 	.id_table    = wcn36xx_platform_id_table,
 };

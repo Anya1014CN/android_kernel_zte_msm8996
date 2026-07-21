@@ -35,11 +35,11 @@ bool use_app_setting = true;
 module_param(use_app_setting, bool, 0644);
 MODULE_PARM_DESC(use_app_setting, "control use of app specific settings");
 
-bool use_32bit_app_setting = false;
+bool use_32bit_app_setting = true;
 module_param(use_32bit_app_setting, bool, 0644);
 MODULE_PARM_DESC(use_32bit_app_setting, "control use of 32 bit app specific settings");
 
-bool use_32bit_app_setting_pro = false;
+bool use_32bit_app_setting_pro;
 module_param(use_32bit_app_setting_pro, bool, 0644);
 MODULE_PARM_DESC(use_32bit_app_setting_pro, "control use of 32 bit app specific settings");
 

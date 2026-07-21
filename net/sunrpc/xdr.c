@@ -512,7 +512,7 @@ EXPORT_SYMBOL_GPL(xdr_commit_encode);
 static __be32 *xdr_get_next_encode_buffer(struct xdr_stream *xdr,
 		size_t nbytes)
 {
-	static __be32 *p;
+	__be32 *p;
 	int space_left;
 	int frag1bytes, frag2bytes;
 
@@ -617,9 +617,10 @@ void xdr_truncate_encode(struct xdr_stream *xdr, size_t len)
 	fraglen = min_t(int, buf->len - len, tail->iov_len);
 	tail->iov_len -= fraglen;
 	buf->len -= fraglen;
-	if (tail->iov_len && buf->len == len) {
+	if (tail->iov_len) {
 		xdr->p = tail->iov_base + tail->iov_len;
-		/* xdr->end, xdr->iov should be set already */
+		WARN_ON_ONCE(!xdr->end);
+		WARN_ON_ONCE(!xdr->iov);
 		return;
 	}
 	WARN_ON_ONCE(fraglen);
@@ -631,18 +632,17 @@ void xdr_truncate_encode(struct xdr_stream *xdr, size_t len)
 
 	xdr->page_ptr = buf->pages + (new >> PAGE_SHIFT);
 
-	if (buf->page_len && buf->len == len) {
+	if (buf->page_len) {
 		xdr->p = page_address(*xdr->page_ptr);
 		xdr->end = (void *)xdr->p + PAGE_SIZE;
 		xdr->p = (void *)xdr->p + (new % PAGE_SIZE);
-		/* xdr->iov should already be NULL */
+		WARN_ON_ONCE(xdr->iov);
 		return;
 	}
-	if (fraglen) {
+	if (fraglen)
 		xdr->end = head->iov_base + head->iov_len;
-		xdr->page_ptr--;
-	}
 	/* (otherwise assume xdr->end is already set) */
+	xdr->page_ptr--;
 	head->iov_len = len;
 	buf->len = len;
 	xdr->p = head->iov_base + head->iov_len;
@@ -1031,6 +1031,7 @@ xdr_buf_subsegment(struct xdr_buf *buf, struct xdr_buf *subbuf,
 		base = 0;
 	} else {
 		base -= buf->head[0].iov_len;
+		subbuf->head[0].iov_base = buf->head[0].iov_base;
 		subbuf->head[0].iov_len = 0;
 	}
 
@@ -1043,6 +1044,8 @@ xdr_buf_subsegment(struct xdr_buf *buf, struct xdr_buf *subbuf,
 		base = 0;
 	} else {
 		base -= buf->page_len;
+		subbuf->pages = buf->pages;
+		subbuf->page_base = 0;
 		subbuf->page_len = 0;
 	}
 
@@ -1054,6 +1057,7 @@ xdr_buf_subsegment(struct xdr_buf *buf, struct xdr_buf *subbuf,
 		base = 0;
 	} else {
 		base -= buf->tail[0].iov_len;
+		subbuf->tail[0].iov_base = buf->tail[0].iov_base;
 		subbuf->tail[0].iov_len = 0;
 	}
 

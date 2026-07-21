@@ -314,8 +314,7 @@ int lirc_register_driver(struct lirc_driver *d)
 	/* some safety check 8-) */
 	d->name[sizeof(d->name)-1] = '\0';
 
-	bytes_in_key = BITS_TO_LONGS(d->code_length) +
-			(d->code_length % 8 ? 1 : 0);
+	bytes_in_key = (d->code_length + 7) / 8;
 	buffer_size = d->buffer_size ? d->buffer_size : BUFLEN / bytes_in_key;
 	chunk_size  = d->chunk_size  ? d->chunk_size  : bytes_in_key;
 
@@ -518,8 +517,7 @@ int lirc_dev_fop_close(struct inode *inode, struct file *file)
 
 	WARN_ON(mutex_lock_killable(&lirc_dev_lock));
 
-	if (ir->d.rdev)
-		rc_close(ir->d.rdev);
+	rc_close(ir->d.rdev);
 
 	ir->open--;
 	if (ir->attached) {
@@ -554,14 +552,14 @@ unsigned int lirc_dev_fop_poll(struct file *file, poll_table *wait)
 	if (!ir->attached)
 		return POLLERR;
 
-	poll_wait(file, &ir->buf->wait_poll, wait);
+	if (ir->buf) {
+		poll_wait(file, &ir->buf->wait_poll, wait);
 
-	if (ir->buf)
 		if (lirc_buffer_empty(ir->buf))
 			ret = 0;
 		else
 			ret = POLLIN | POLLRDNORM;
-	else
+	} else
 		ret = POLLERR;
 
 	dev_dbg(ir->d.dev, LOGHEAD "poll result = %d\n",

@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -106,6 +106,7 @@ enum msm_ba_ip_type {
 	BA_INPUT_MHL,
 	BA_INPUT_DVI,
 	BA_INPUT_TTL,
+	BA_INPUT_TV_TUNER,
 	BA_INPUT_MAX = 0xffffffff
 };
 
@@ -143,7 +144,6 @@ struct msm_ba_input {
 	int signal_status;
 	int in_use;
 	int ba_out_in_use;
-	enum v4l2_priority prio;
 	enum msm_ba_input_usr_type input_user_type;
 };
 
@@ -180,8 +180,6 @@ struct msm_ba_inst {
 	struct msm_ba_dev *dev_ctxt;
 
 	struct v4l2_input sd_input;
-	/* current input priority */
-	enum v4l2_priority input_prio;
 	struct v4l2_output sd_output;
 	struct v4l2_subdev *sd;
 	int state;

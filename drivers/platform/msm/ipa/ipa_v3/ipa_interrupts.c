@@ -264,8 +264,10 @@ static void ipa3_process_interrupts(bool isr_context)
 			if (en & reg & bmsk) {
 				uc_irq = is_uc_irq(i);
 
-				/* Clear uC interrupt before processing to avoid
-						clearing unhandled interrupts */
+				/*
+				 * Clear uC interrupt before processing to avoid
+				 * clearing unhandled interrupts
+				 */
 				if (uc_irq)
 					ipa3_uc_rg10_write_reg(IPA_IRQ_CLR_EE_n,
 							ipa_ee, bmsk);
@@ -281,8 +283,10 @@ static void ipa3_process_interrupts(bool isr_context)
 				ipa3_handle_interrupt(i, isr_context);
 				spin_lock_irqsave(&suspend_wa_lock, flags);
 
-				/* Clear non uC interrupt after processing
-				   to avoid clearing interrupt data */
+				/*
+				 * Clear non uC interrupt after processing
+				 * to avoid clearing interrupt data
+				 */
 				if (!uc_irq)
 					ipa3_uc_rg10_write_reg(IPA_IRQ_CLR_EE_n,
 							ipa_ee, bmsk);
@@ -436,6 +440,12 @@ int ipa3_remove_interrupt_handler(enum ipa_irq_type interrupt)
 		return -EFAULT;
 	}
 
+	kfree(ipa_interrupt_to_cb[irq_num].private_data);
+	ipa_interrupt_to_cb[irq_num].deferred_flag = false;
+	ipa_interrupt_to_cb[irq_num].handler = NULL;
+	ipa_interrupt_to_cb[irq_num].private_data = NULL;
+	ipa_interrupt_to_cb[irq_num].interrupt = -1;
+
 	/* clean SUSPEND_IRQ_EN_EE_n_ADDR for L2 interrupt */
 	if ((interrupt == IPA_TX_SUSPEND_IRQ) &&
 		(ipa3_ctx->ipa_hw_type >= IPA_HW_v3_1)) {
@@ -447,13 +457,6 @@ int ipa3_remove_interrupt_handler(enum ipa_irq_type interrupt)
 	bmsk = 1 << irq_num;
 	val &= ~bmsk;
 	ipa3_uc_rg10_write_reg(IPA_IRQ_EN_EE_n, ipa_ee, val);
-
-	/* delete the handlers after clean-up interrupts */
-	kfree(ipa_interrupt_to_cb[irq_num].private_data);
-	ipa_interrupt_to_cb[irq_num].deferred_flag = false;
-	ipa_interrupt_to_cb[irq_num].handler = NULL;
-	ipa_interrupt_to_cb[irq_num].private_data = NULL;
-	ipa_interrupt_to_cb[irq_num].interrupt = -1;
 
 	return 0;
 }

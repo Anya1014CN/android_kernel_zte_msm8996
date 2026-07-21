@@ -19,11 +19,12 @@
 #include <asm/cpu.h>
 #include <asm/cputype.h>
 #include <asm/cpufeature.h>
-#include <asm/system_misc.h>
+#include <asm/elf.h>
 
 #include <linux/bitops.h>
 #include <linux/bug.h>
-#include <linux/delay.h>
+#include <linux/compat.h>
+#include <linux/elf.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/personality.h>
@@ -32,6 +33,11 @@
 #include <linux/seq_file.h>
 #include <linux/sched.h>
 #include <linux/smp.h>
+#include <linux/delay.h>
+#include <linux/of_fdt.h>
+
+char* (*arch_read_hardware_id)(void);
+EXPORT_SYMBOL(arch_read_hardware_id);
 
 /*
  * In case the boot CPU is hotpluggable, we record its initial state and
@@ -50,7 +56,7 @@ static char *icache_policy_str[] = {
 
 unsigned long __icache_flags;
 
-static const char *hwcap_str[] = {
+static const char *const hwcap_str[] = {
 	"fp",
 	"asimd",
 	"evtstrm",
@@ -64,7 +70,7 @@ static const char *hwcap_str[] = {
 };
 
 #ifdef CONFIG_COMPAT
-static const char *compat_hwcap_str[] = {
+static const char *const compat_hwcap_str[] = {
 	"swp",
 	"half",
 	"thumb",
@@ -90,7 +96,7 @@ static const char *compat_hwcap_str[] = {
 	NULL
 };
 
-static const char *compat_hwcap2_str[] = {
+static const char *const compat_hwcap2_str[] = {
 	"aes",
 	"pmull",
 	"sha1",
@@ -103,8 +109,11 @@ static const char *compat_hwcap2_str[] = {
 static int c_show(struct seq_file *m, void *v)
 {
 	int i, j;
+	bool compat = personality(current->personality) == PER_LINUX32;
 
-	for_each_online_cpu(i) {
+	seq_printf(m, "Processor\t: AArch64 Processor rev %d (%s)\n",
+		read_cpuid_id() & 15, ELF_PLATFORM);
+	for_each_present_cpu(i) {
 		struct cpuinfo_arm64 *cpuinfo = &per_cpu(cpu_data, i);
 		u32 midr = cpuinfo->reg_midr;
 
@@ -113,9 +122,10 @@ static int c_show(struct seq_file *m, void *v)
 		 * online processors, looking for lines beginning with
 		 * "processor".  Give glibc what it expects.
 		 */
-#ifdef CONFIG_SMP
 		seq_printf(m, "processor\t: %d\n", i);
-#endif
+		if (compat)
+			seq_printf(m, "model name\t: ARMv8 Processor rev %d (%s)\n",
+				   MIDR_REVISION(midr), COMPAT_ELF_PLATFORM);
 
 		seq_printf(m, "BogoMIPS\t: %lu.%02lu\n",
 			   loops_per_jiffy / (500000UL/HZ),
@@ -128,7 +138,7 @@ static int c_show(struct seq_file *m, void *v)
 		 * software which does already (at least for 32-bit).
 		 */
 		seq_puts(m, "Features\t:");
-		if (personality(current->personality) == PER_LINUX32) {
+		if (compat) {
 #ifdef CONFIG_COMPAT
 			for (j = 0; compat_hwcap_str[j]; j++)
 				if (compat_elf_hwcap & (1 << j))
@@ -203,7 +213,7 @@ static void cpuinfo_detect_icache_policy(struct cpuinfo_arm64 *info)
 	if (l1ip == ICACHE_POLICY_AIVIVT)
 		set_bit(ICACHEF_AIVIVT, &__icache_flags);
 
-	pr_info("Detected %s I-cache on CPU%d\n", icache_policy_str[l1ip], cpu);
+	pr_debug("Detected %s I-cache on CPU%d\n", icache_policy_str[l1ip], cpu);
 }
 
 static void __cpuinfo_store_cpu(struct cpuinfo_arm64 *info)
@@ -217,7 +227,12 @@ static void __cpuinfo_store_cpu(struct cpuinfo_arm64 *info)
 	info->reg_id_aa64dfr1 = read_cpuid(SYS_ID_AA64DFR1_EL1);
 	info->reg_id_aa64isar0 = read_cpuid(SYS_ID_AA64ISAR0_EL1);
 	info->reg_id_aa64isar1 = read_cpuid(SYS_ID_AA64ISAR1_EL1);
-	info->reg_id_aa64mmfr0 = read_cpuid(SYS_ID_AA64MMFR0_EL1);
+	/*
+	 * Explicitly mask out 16KB granule since we donot
+	 * want to support it
+	 */
+	info->reg_id_aa64mmfr0 = read_cpuid(SYS_ID_AA64MMFR0_EL1) &
+					(~MMFR0_EL1_16KGRAN_MASK);
 	info->reg_id_aa64mmfr1 = read_cpuid(SYS_ID_AA64MMFR1_EL1);
 	info->reg_id_aa64mmfr2 = read_cpuid(SYS_ID_AA64MMFR2_EL1);
 	info->reg_id_aa64pfr0 = read_cpuid(SYS_ID_AA64PFR0_EL1);
@@ -260,16 +275,4 @@ void __init cpuinfo_store_boot_cpu(void)
 
 	boot_cpu_data = *info;
 	init_cpu_features(&boot_cpu_data);
-}
-
-u64 __attribute_const__ icache_get_ccsidr(void)
-{
-	u64 ccsidr;
-
-	WARN_ON(preemptible());
-
-	/* Select L1 I-cache and read its size ID register */
-	asm("msr csselr_el1, %1; isb; mrs %0, ccsidr_el1"
-	    : "=r"(ccsidr) : "r"(1L));
-	return ccsidr;
 }

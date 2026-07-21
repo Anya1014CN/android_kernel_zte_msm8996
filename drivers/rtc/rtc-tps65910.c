@@ -326,13 +326,12 @@ static struct platform_driver tps65910_rtc_driver = {
 	.probe		= tps65910_rtc_probe,
 	.remove		= tps65910_rtc_remove,
 	.driver		= {
-		.owner	= THIS_MODULE,
 		.name	= "tps65910-rtc",
 		.pm	= &tps65910_rtc_pm_ops,
 	},
 };
 
 module_platform_driver(tps65910_rtc_driver);
-MODULE_ALIAS("platform:rtc-tps65910");
+MODULE_ALIAS("platform:tps65910-rtc");
 MODULE_AUTHOR("Venu Byravarasu <vbyravarasu@nvidia.com>");
 MODULE_LICENSE("GPL");

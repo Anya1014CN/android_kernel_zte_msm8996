@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2017,2019 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -66,6 +66,9 @@
 
 /* 16 encoder and 16 decoder sessions */
 #define VIDC_MAX_SESSIONS               32
+#define VIDC_MAX_DECODE_SESSIONS        16
+#define VIDC_MAX_ENCODE_SESSIONS        16
+
 
 enum vidc_status {
 	VIDC_ERR_NONE = 0x0,
@@ -124,9 +127,9 @@ enum hal_extradata_id {
 	HAL_EXTRADATA_OUTPUT_CROP,
 	HAL_EXTRADATA_MASTERING_DISPLAY_COLOUR_SEI,
 	HAL_EXTRADATA_CONTENT_LIGHT_LEVEL_SEI,
+	HAL_EXTRADATA_PQ_INFO,
 	HAL_EXTRADATA_VUI_DISPLAY_INFO,
 	HAL_EXTRADATA_VPX_COLORSPACE,
-	HAL_EXTRADATA_PQ_INFO,
 };
 
 enum hal_property {
@@ -239,10 +242,11 @@ enum hal_property {
 	HAL_PARAM_VENC_LOW_LATENCY,
 	HAL_PARAM_VENC_CONSTRAINED_INTRA_PRED,
 	HAL_CONFIG_VENC_BLUR_RESOLUTION,
-	HAL_PARAM_VENC_VIDEO_SIGNAL_INFO,
 	HAL_PARAM_VENC_SESSION_QP_RANGE_PACKED,
 	HAL_PARAM_VENC_H264_TRANSFORM_8x8,
+	HAL_PARAM_VENC_VIDEO_SIGNAL_INFO,
 	HAL_PARAM_VENC_IFRAMESIZE_TYPE,
+	HAL_PARAM_VENC_SEND_OUTPUT_FOR_SKIPPED_FRAME
 };
 
 enum hal_domain {
@@ -1520,6 +1524,7 @@ struct hfi_device {
 	int (*session_clean)(void *sess);
 	int (*get_core_capabilities)(void *dev);
 	int (*suspend)(void *dev);
+	int (*flush_debug_queue)(void *dev);
 	unsigned long (*get_core_clock_rate)(void *dev, bool actual_rate);
 	enum hal_default_properties (*get_default_properties)(void *dev);
 };

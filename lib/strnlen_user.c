@@ -27,7 +27,7 @@
 static inline long do_strnlen_user(const char __user *src, unsigned long count, unsigned long max)
 {
 	const struct word_at_a_time constants = WORD_AT_A_TIME_CONSTANTS;
-	long align, res = 0;
+	unsigned long align, res = 0;
 	unsigned long c;
 
 	/*
@@ -41,7 +41,7 @@ static inline long do_strnlen_user(const char __user *src, unsigned long count, 
 	 * Do everything aligned. But that means that we
 	 * need to also expand the maximum..
 	 */
-	align = (sizeof(long) - 1) & (unsigned long)src;
+	align = (sizeof(unsigned long) - 1) & (unsigned long)src;
 	src -= align;
 	max += align;
 
@@ -84,13 +84,21 @@ efault:
  * @str: The string to measure.
  * @count: Maximum count (including NUL character)
  *
- * Context: User context only.  This function may sleep.
+ * Context: User context only. This function may sleep if pagefaults are
+ *          enabled.
  *
  * Get the size of a NUL-terminated string in user space.
  *
  * Returns the size of the string INCLUDING the terminating NUL.
- * If the string is too long, returns 'count+1'.
+ * If the string is too long, returns a number larger than @count. User
+ * has to check the return value against "> count".
  * On exception (or invalid count), returns 0.
+ *
+ * NOTE! You should basically never use this function. There is
+ * almost never any valid case for using the length of a user space
+ * string, since the string can be changed at any time by other
+ * threads. Use "strncpy_from_user()" instead to get a stable copy
+ * of the string.
  */
 long strnlen_user(const char __user *str, long count)
 {
@@ -118,7 +126,8 @@ EXPORT_SYMBOL(strnlen_user);
  * strlen_user: - Get the size of a user string INCLUDING final NUL.
  * @str: The string to measure.
  *
- * Context: User context only.  This function may sleep.
+ * Context: User context only. This function may sleep if pagefaults are
+ *          enabled.
  *
  * Get the size of a NUL-terminated string in user space.
  *

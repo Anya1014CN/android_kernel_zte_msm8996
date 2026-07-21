@@ -25,6 +25,7 @@
 #include <linux/ioport.h>
 #include <linux/device.h>
 #include <linux/irqdomain.h>
+#include <linux/irqchip.h>
 #include <linux/irqchip/chained_irq.h>
 #include <linux/of.h>
 #include <linux/of_irq.h>
@@ -39,8 +40,6 @@
 #include <plat/cpu.h>
 #include <plat/regs-irqtype.h>
 #include <plat/pm.h>
-
-#include "irqchip.h"
 
 #define S3C_IRQTYPE_NONE	0
 #define S3C_IRQTYPE_EINT	1
@@ -299,22 +298,20 @@ static struct irq_chip s3c_irq_eint0t4 = {
 	.irq_set_type	= s3c_irqext0_type,
 };
 
-static void s3c_irq_demux(unsigned int irq, struct irq_desc *desc)
+static void s3c_irq_demux(struct irq_desc *desc)
 {
 	struct irq_chip *chip = irq_desc_get_chip(desc);
 	struct s3c_irq_data *irq_data = irq_desc_get_chip_data(desc);
 	struct s3c_irq_intc *intc = irq_data->intc;
 	struct s3c_irq_intc *sub_intc = irq_data->sub_intc;
-	unsigned long src;
-	unsigned long msk;
-	unsigned int n;
-	unsigned int offset;
+	unsigned int n, offset, irq;
+	unsigned long src, msk;
 
 	/* we're using individual domains for the non-dt case
 	 * and one big domain for the dt case where the subintc
 	 * starts at hwirq number 32.
 	 */
-	offset = (intc->domain->of_node) ? 32 : 0;
+	offset = irq_domain_get_of_node(intc->domain) ? 32 : 0;
 
 	chained_irq_enter(chip, desc);
 
@@ -345,7 +342,7 @@ static inline int s3c24xx_handle_intc(struct s3c_irq_intc *intc,
 		return false;
 
 	/* non-dt machines use individual domains */
-	if (!intc->domain->of_node)
+	if (!irq_domain_get_of_node(intc->domain))
 		intc_offset = 0;
 
 	/* We have a problem that the INTOFFSET register does not always
@@ -371,11 +368,25 @@ static inline int s3c24xx_handle_intc(struct s3c_irq_intc *intc,
 asmlinkage void __exception_irq_entry s3c24xx_handle_irq(struct pt_regs *regs)
 {
 	do {
-		if (likely(s3c_intc[0]))
-			if (s3c24xx_handle_intc(s3c_intc[0], regs, 0))
-				continue;
+		/*
+		 * For platform based machines, neither ERR nor NULL can happen here.
+		 * The s3c24xx_handle_irq() will be set as IRQ handler iff this succeeds:
+		 *
+		 *    s3c_intc[0] = s3c24xx_init_intc()
+		 *
+		 * If this fails, the next calls to s3c24xx_init_intc() won't be executed.
+		 *
+		 * For DT machine, s3c_init_intc_of() could set the IRQ handler without
+		 * setting s3c_intc[0] only if it was called with num_ctrl=0. There is no
+		 * such code path, so again the s3c_intc[0] will have a valid pointer if
+		 * set_handle_irq() is called.
+		 *
+		 * Therefore in s3c24xx_handle_irq(), the s3c_intc[0] is always something.
+		 */
+		if (s3c24xx_handle_intc(s3c_intc[0], regs, 0))
+			continue;
 
-		if (s3c_intc[2])
+		if (!IS_ERR_OR_NULL(s3c_intc[2]))
 			if (s3c24xx_handle_intc(s3c_intc[2], regs, 64))
 				continue;
 
@@ -469,13 +480,11 @@ static int s3c24xx_irq_map(struct irq_domain *h, unsigned int virq,
 
 	irq_set_chip_data(virq, irq_data);
 
-	set_irq_flags(virq, IRQF_VALID);
-
 	if (parent_intc && irq_data->type != S3C_IRQTYPE_NONE) {
 		if (irq_data->parent_irq > 31) {
 			pr_err("irq-s3c24xx: parent irq %lu is out of range\n",
 			       irq_data->parent_irq);
-			goto err;
+			return -EINVAL;
 		}
 
 		parent_irq_data = &parent_intc->irqs[irq_data->parent_irq];
@@ -488,21 +497,15 @@ static int s3c24xx_irq_map(struct irq_domain *h, unsigned int virq,
 		if (!irqno) {
 			pr_err("irq-s3c24xx: could not find mapping for parent irq %lu\n",
 			       irq_data->parent_irq);
-			goto err;
+			return -EINVAL;
 		}
 		irq_set_chained_handler(irqno, s3c_irq_demux);
 	}
 
 	return 0;
-
-err:
-	set_irq_flags(virq, 0);
-
-	/* the only error can result from bad mapping data*/
-	return -EINVAL;
 }
 
-static struct irq_domain_ops s3c24xx_irq_ops = {
+static const struct irq_domain_ops s3c24xx_irq_ops = {
 	.map = s3c24xx_irq_map,
 	.xlate = irq_domain_xlate_twocell,
 };
@@ -1177,8 +1180,6 @@ static int s3c24xx_irq_map_of(struct irq_domain *h, unsigned int virq,
 
 	irq_set_chip_data(virq, irq_data);
 
-	set_irq_flags(virq, IRQF_VALID);
-
 	return 0;
 }
 
@@ -1228,7 +1229,7 @@ static int s3c24xx_irq_xlate_of(struct irq_domain *d, struct device_node *n,
 	return 0;
 }
 
-static struct irq_domain_ops s3c24xx_irq_ops_of = {
+static const struct irq_domain_ops s3c24xx_irq_ops_of = {
 	.map = s3c24xx_irq_map_of,
 	.xlate = s3c24xx_irq_xlate_of,
 };

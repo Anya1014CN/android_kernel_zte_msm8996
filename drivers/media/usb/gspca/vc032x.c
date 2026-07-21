@@ -68,12 +68,12 @@ enum sensors {
 
 static const struct v4l2_pix_format vc0321_mode[] = {
 	{320, 240, V4L2_PIX_FMT_YVYU, V4L2_FIELD_NONE,
-		.bytesperline = 320,
+		.bytesperline = 320 * 2,
 		.sizeimage = 320 * 240 * 2,
 		.colorspace = V4L2_COLORSPACE_SRGB,
 		.priv = 1},
 	{640, 480, V4L2_PIX_FMT_YVYU, V4L2_FIELD_NONE,
-		.bytesperline = 640,
+		.bytesperline = 640 * 2,
 		.sizeimage = 640 * 480 * 2,
 		.colorspace = V4L2_COLORSPACE_SRGB,
 		.priv = 0},
@@ -97,17 +97,17 @@ static const struct v4l2_pix_format vc0323_mode[] = {
 };
 static const struct v4l2_pix_format bi_mode[] = {
 	{320, 240, V4L2_PIX_FMT_YUYV, V4L2_FIELD_NONE,
-		.bytesperline = 320,
+		.bytesperline = 320 * 2,
 		.sizeimage = 320 * 240 * 2,
 		.colorspace = V4L2_COLORSPACE_SRGB,
 		.priv = 2},
 	{640, 480, V4L2_PIX_FMT_YUYV, V4L2_FIELD_NONE,
-		.bytesperline = 640,
+		.bytesperline = 640 * 2,
 		.sizeimage = 640 * 480 * 2,
 		.colorspace = V4L2_COLORSPACE_SRGB,
 		.priv = 1},
 	{1280, 1024, V4L2_PIX_FMT_YUYV, V4L2_FIELD_NONE,
-		.bytesperline = 1280,
+		.bytesperline = 1280 * 2,
 		.sizeimage = 1280 * 1024 * 2,
 		.colorspace = V4L2_COLORSPACE_SRGB,
 		.priv = 0},
@@ -2919,6 +2919,11 @@ static void reg_r_i(struct gspca_dev *gspca_dev,
 	if (ret < 0) {
 		pr_err("reg_r err %d\n", ret);
 		gspca_dev->usb_err = ret;
+		/*
+		 * Make sure the buffer is zeroed to avoid uninitialized
+		 * values.
+		 */
+		memset(gspca_dev->usb_buf, 0, USB_BUF_SZ);
 	}
 }
 static void reg_r(struct gspca_dev *gspca_dev,

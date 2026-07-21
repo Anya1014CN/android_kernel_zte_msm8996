@@ -134,6 +134,8 @@ void blk_rq_timed_out_timer(unsigned long data)
 	struct request *rq, *tmp;
 	int next_set = 0;
 
+	if (blk_queue_enter(q, GFP_NOWAIT))
+		return;
 	spin_lock_irqsave(q->queue_lock, flags);
 
 	list_for_each_entry_safe(rq, tmp, &q->timeout_list, timeout_list)
@@ -143,6 +145,7 @@ void blk_rq_timed_out_timer(unsigned long data)
 		mod_timer(&q->timeout, round_jiffies_up(next));
 
 	spin_unlock_irqrestore(q->queue_lock, flags);
+	blk_queue_exit(q);
 }
 
 /**
@@ -158,11 +161,13 @@ void blk_abort_request(struct request *req)
 {
 	if (blk_mark_rq_complete(req))
 		return;
-	blk_delete_timer(req);
-	if (req->q->mq_ops)
+
+	if (req->q->mq_ops) {
 		blk_mq_rq_timed_out(req, false);
-	else
+	} else {
+		blk_delete_timer(req);
 		blk_rq_timed_out(req);
+	}
 }
 EXPORT_SYMBOL_GPL(blk_abort_request);
 
@@ -189,6 +194,9 @@ void blk_add_timer(struct request *req)
 {
 	struct request_queue *q = req->q;
 	unsigned long expiry;
+
+	if (req->cmd_flags & REQ_NO_TIMEOUT)
+		return;
 
 	/* blk-mq has its own handler, so we don't need ->rq_timed_out_fn */
 	if (!q->mq_ops && !q->rq_timed_out_fn)

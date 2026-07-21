@@ -246,7 +246,7 @@ int mhi_runtime_resume(struct device *dev)
 
 	mutex_lock(&mhi_dev_ctxt->pm_lock);
 	read_lock_bh(&mhi_dev_ctxt->pm_xfer_lock);
-	BUG_ON(mhi_dev_ctxt->mhi_pm_state != MHI_PM_M3);
+	WARN_ON(mhi_dev_ctxt->mhi_pm_state != MHI_PM_M3);
 	read_unlock_bh(&mhi_dev_ctxt->pm_xfer_lock);
 
 	/* turn on link */

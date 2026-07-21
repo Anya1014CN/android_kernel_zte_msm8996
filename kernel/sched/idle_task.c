@@ -9,7 +9,8 @@
 
 #ifdef CONFIG_SMP
 static int
-select_task_rq_idle(struct task_struct *p, int cpu, int sd_flag, int flags)
+select_task_rq_idle(struct task_struct *p, int cpu, int sd_flag, int flags,
+		    int sibling_count_hint)
 {
 	return task_cpu(p); /* IDLE tasks as never migrated */
 }
@@ -91,19 +92,11 @@ dec_hmp_sched_stats_idle(struct rq *rq, struct task_struct *p)
 {
 }
 
-#ifdef CONFIG_SCHED_QHMP
-static void
-fixup_hmp_sched_stats_idle(struct rq *rq, struct task_struct *p,
-			   u32 new_task_load)
-{
-}
-#else
 static void
 fixup_hmp_sched_stats_idle(struct rq *rq, struct task_struct *p,
 			   u32 new_task_load, u32 new_pred_demand)
 {
 }
-#endif
 
 #endif
 
@@ -124,6 +117,7 @@ const struct sched_class idle_sched_class = {
 
 #ifdef CONFIG_SMP
 	.select_task_rq		= select_task_rq_idle,
+	.set_cpus_allowed	= set_cpus_allowed_common,
 #endif
 
 	.set_curr_task          = set_curr_task_idle,

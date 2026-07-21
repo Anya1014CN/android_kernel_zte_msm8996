@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2013, 2017 The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2013, 2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -14,6 +14,9 @@
 #define __LINUX_USB_QDSS_H
 
 #include <linux/kernel.h>
+
+#define USB_QDSS_CH_MDM	"qdss_mdm"
+#define USB_QDSS_CH_MSM	"qdss"
 
 struct qdss_request {
 	char *buf;
@@ -41,7 +44,7 @@ enum qdss_state {
 	USB_QDSS_CTRL_WRITE_DONE,
 };
 
-#ifdef CONFIG_USB_G_ANDROID
+#if IS_ENABLED(CONFIG_USB_F_QDSS)
 struct usb_qdss_ch *usb_qdss_open(const char *name, void *priv,
 	void (*notify)(void *, unsigned, struct qdss_request *,
 		struct usb_qdss_ch *));
@@ -49,7 +52,7 @@ void usb_qdss_close(struct usb_qdss_ch *ch);
 int usb_qdss_alloc_req(struct usb_qdss_ch *ch, int n_write, int n_read);
 void usb_qdss_free_req(struct usb_qdss_ch *ch);
 int usb_qdss_read(struct usb_qdss_ch *ch, struct qdss_request *d_req);
-int usb_qdss_data_write(struct usb_qdss_ch *ch, struct qdss_request *d_req);
+int usb_qdss_write(struct usb_qdss_ch *ch, struct qdss_request *d_req);
 int usb_qdss_ctrl_write(struct usb_qdss_ch *ch, struct qdss_request *d_req);
 int usb_qdss_ctrl_read(struct usb_qdss_ch *ch, struct qdss_request *d_req);
 #else
@@ -89,6 +92,6 @@ static inline int usb_qdss_alloc_req(struct usb_qdss_ch *c, int n_wr, int n_rd)
 static inline void usb_qdss_close(struct usb_qdss_ch *ch) { }
 
 static inline void usb_qdss_free_req(struct usb_qdss_ch *ch) { }
-#endif
+#endif /* CONFIG_USB_F_QDSS */
 
 #endif

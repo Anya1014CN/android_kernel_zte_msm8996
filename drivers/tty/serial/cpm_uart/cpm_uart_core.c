@@ -80,7 +80,8 @@ static void cpm_uart_initbd(struct uart_cpm_port *pinfo);
 */
 static unsigned int cpm_uart_tx_empty(struct uart_port *port)
 {
-	struct uart_cpm_port *pinfo = (struct uart_cpm_port *)port;
+	struct uart_cpm_port *pinfo =
+		container_of(port, struct uart_cpm_port, port);
 	cbd_t __iomem *bdp = pinfo->tx_bd_base;
 	int ret = 0;
 
@@ -102,7 +103,8 @@ static unsigned int cpm_uart_tx_empty(struct uart_port *port)
 
 static void cpm_uart_set_mctrl(struct uart_port *port, unsigned int mctrl)
 {
-	struct uart_cpm_port *pinfo = (struct uart_cpm_port *)port;
+	struct uart_cpm_port *pinfo =
+		container_of(port, struct uart_cpm_port, port);
 
 	if (pinfo->gpios[GPIO_RTS] >= 0)
 		gpio_set_value(pinfo->gpios[GPIO_RTS], !(mctrl & TIOCM_RTS));
@@ -113,7 +115,8 @@ static void cpm_uart_set_mctrl(struct uart_port *port, unsigned int mctrl)
 
 static unsigned int cpm_uart_get_mctrl(struct uart_port *port)
 {
-	struct uart_cpm_port *pinfo = (struct uart_cpm_port *)port;
+	struct uart_cpm_port *pinfo =
+		container_of(port, struct uart_cpm_port, port);
 	unsigned int mctrl = TIOCM_CTS | TIOCM_DSR | TIOCM_CAR;
 
 	if (pinfo->gpios[GPIO_CTS] >= 0) {
@@ -144,7 +147,8 @@ static unsigned int cpm_uart_get_mctrl(struct uart_port *port)
  */
 static void cpm_uart_stop_tx(struct uart_port *port)
 {
-	struct uart_cpm_port *pinfo = (struct uart_cpm_port *)port;
+	struct uart_cpm_port *pinfo =
+		container_of(port, struct uart_cpm_port, port);
 	smc_t __iomem *smcp = pinfo->smcp;
 	scc_t __iomem *sccp = pinfo->sccp;
 
@@ -161,7 +165,8 @@ static void cpm_uart_stop_tx(struct uart_port *port)
  */
 static void cpm_uart_start_tx(struct uart_port *port)
 {
-	struct uart_cpm_port *pinfo = (struct uart_cpm_port *)port;
+	struct uart_cpm_port *pinfo =
+		container_of(port, struct uart_cpm_port, port);
 	smc_t __iomem *smcp = pinfo->smcp;
 	scc_t __iomem *sccp = pinfo->sccp;
 
@@ -189,7 +194,8 @@ static void cpm_uart_start_tx(struct uart_port *port)
  */
 static void cpm_uart_stop_rx(struct uart_port *port)
 {
-	struct uart_cpm_port *pinfo = (struct uart_cpm_port *)port;
+	struct uart_cpm_port *pinfo =
+		container_of(port, struct uart_cpm_port, port);
 	smc_t __iomem *smcp = pinfo->smcp;
 	scc_t __iomem *sccp = pinfo->sccp;
 
@@ -206,7 +212,8 @@ static void cpm_uart_stop_rx(struct uart_port *port)
  */
 static void cpm_uart_break_ctl(struct uart_port *port, int break_state)
 {
-	struct uart_cpm_port *pinfo = (struct uart_cpm_port *)port;
+	struct uart_cpm_port *pinfo =
+		container_of(port, struct uart_cpm_port, port);
 
 	pr_debug("CPM uart[%d]:break ctrl, break_state: %d\n", port->line,
 		break_state);
@@ -240,7 +247,8 @@ static void cpm_uart_int_rx(struct uart_port *port)
 	unsigned char ch;
 	u8 *cp;
 	struct tty_port *tport = &port->state->port;
-	struct uart_cpm_port *pinfo = (struct uart_cpm_port *)port;
+	struct uart_cpm_port *pinfo =
+		container_of(port, struct uart_cpm_port, port);
 	cbd_t __iomem *bdp;
 	u16 status;
 	unsigned int flg;
@@ -397,7 +405,8 @@ static irqreturn_t cpm_uart_int(int irq, void *data)
 static int cpm_uart_startup(struct uart_port *port)
 {
 	int retval;
-	struct uart_cpm_port *pinfo = (struct uart_cpm_port *)port;
+	struct uart_cpm_port *pinfo =
+		container_of(port, struct uart_cpm_port, port);
 
 	pr_debug("CPM uart[%d]:startup\n", port->line);
 
@@ -412,7 +421,16 @@ static int cpm_uart_startup(struct uart_port *port)
 			clrbits16(&pinfo->sccp->scc_sccm, UART_SCCM_RX);
 		}
 		cpm_uart_initbd(pinfo);
-		cpm_line_cr_cmd(pinfo, CPM_CR_INIT_TRX);
+		if (IS_SMC(pinfo)) {
+			out_be32(&pinfo->smcup->smc_rstate, 0);
+			out_be32(&pinfo->smcup->smc_tstate, 0);
+			out_be16(&pinfo->smcup->smc_rbptr,
+				 in_be16(&pinfo->smcup->smc_rbase));
+			out_be16(&pinfo->smcup->smc_tbptr,
+				 in_be16(&pinfo->smcup->smc_tbase));
+		} else {
+			cpm_line_cr_cmd(pinfo, CPM_CR_INIT_TRX);
+		}
 	}
 	/* Install interrupt handler. */
 	retval = request_irq(port->irq, cpm_uart_int, 0, "cpm_uart", port);
@@ -442,7 +460,8 @@ inline void cpm_uart_wait_until_send(struct uart_cpm_port *pinfo)
  */
 static void cpm_uart_shutdown(struct uart_port *port)
 {
-	struct uart_cpm_port *pinfo = (struct uart_cpm_port *)port;
+	struct uart_cpm_port *pinfo =
+		container_of(port, struct uart_cpm_port, port);
 
 	pr_debug("CPM uart[%d]:shutdown\n", port->line);
 
@@ -492,7 +511,8 @@ static void cpm_uart_set_termios(struct uart_port *port,
 	unsigned long flags;
 	u16 cval, scval, prev_mode;
 	int bits, sbits;
-	struct uart_cpm_port *pinfo = (struct uart_cpm_port *)port;
+	struct uart_cpm_port *pinfo =
+		container_of(port, struct uart_cpm_port, port);
 	smc_t __iomem *smcp = pinfo->smcp;
 	scc_t __iomem *sccp = pinfo->sccp;
 	int maxidl;
@@ -675,7 +695,8 @@ static int cpm_uart_tx_pump(struct uart_port *port)
 	cbd_t __iomem *bdp;
 	u8 *p;
 	int count;
-	struct uart_cpm_port *pinfo = (struct uart_cpm_port *)port;
+	struct uart_cpm_port *pinfo =
+		container_of(port, struct uart_cpm_port, port);
 	struct circ_buf *xmit = &port->state->xmit;
 
 	/* Handle xon/xoff */
@@ -863,16 +884,14 @@ static void cpm_uart_init_smc(struct uart_cpm_port *pinfo)
 	         (u8 __iomem *)pinfo->tx_bd_base - DPRAM_BASE);
 
 /*
- *  In case SMC1 is being relocated...
+ *  In case SMC is being relocated...
  */
-#if defined (CONFIG_I2C_SPI_SMC1_UCODE_PATCH)
 	out_be16(&up->smc_rbptr, in_be16(&pinfo->smcup->smc_rbase));
 	out_be16(&up->smc_tbptr, in_be16(&pinfo->smcup->smc_tbase));
 	out_be32(&up->smc_rstate, 0);
 	out_be32(&up->smc_tstate, 0);
 	out_be16(&up->smc_brkcr, 1);              /* number of break chars */
 	out_be16(&up->smc_brkec, 0);
-#endif
 
 	/* Set up the uart parameters in the
 	 * parameter ram.
@@ -885,8 +904,6 @@ static void cpm_uart_init_smc(struct uart_cpm_port *pinfo)
 	out_be16(&up->smc_brklen, 0);
 	out_be16(&up->smc_brkec, 0);
 	out_be16(&up->smc_brkcr, 1);
-
-	cpm_line_cr_cmd(pinfo, CPM_CR_INIT_TRX);
 
 	/* Set UART mode, 8 bit, no parity, one stop.
 	 * Enable receive and transmit.
@@ -906,7 +923,8 @@ static void cpm_uart_init_smc(struct uart_cpm_port *pinfo)
  */
 static int cpm_uart_request_port(struct uart_port *port)
 {
-	struct uart_cpm_port *pinfo = (struct uart_cpm_port *)port;
+	struct uart_cpm_port *pinfo =
+		container_of(port, struct uart_cpm_port, port);
 	int ret;
 
 	pr_debug("CPM uart[%d]:request port\n", port->line);
@@ -938,7 +956,8 @@ static int cpm_uart_request_port(struct uart_port *port)
 
 static void cpm_uart_release_port(struct uart_port *port)
 {
-	struct uart_cpm_port *pinfo = (struct uart_cpm_port *)port;
+	struct uart_cpm_port *pinfo =
+		container_of(port, struct uart_cpm_port, port);
 
 	if (!(pinfo->flags & FLAG_CONSOLE))
 		cpm_uart_freebuf(pinfo);
@@ -1054,8 +1073,8 @@ static int poll_wait_key(char *obuf, struct uart_cpm_port *pinfo)
 	/* Get the address of the host memory buffer.
 	 */
 	bdp = pinfo->rx_cur;
-	while (bdp->cbd_sc & BD_SC_EMPTY)
-		;
+	if (bdp->cbd_sc & BD_SC_EMPTY)
+		return NO_POLL_CHAR;
 
 	/* If the buffer address is in the CPM DPRAM, don't
 	 * convert it.
@@ -1082,14 +1101,19 @@ static int poll_wait_key(char *obuf, struct uart_cpm_port *pinfo)
 
 static int cpm_get_poll_char(struct uart_port *port)
 {
-	struct uart_cpm_port *pinfo = (struct uart_cpm_port *)port;
+	struct uart_cpm_port *pinfo =
+		container_of(port, struct uart_cpm_port, port);
 
 	if (!serial_polled) {
 		serial_polled = 1;
 		poll_chars = 0;
 	}
 	if (poll_chars <= 0) {
-		poll_chars = poll_wait_key(poll_buf, pinfo);
+		int ret = poll_wait_key(poll_buf, pinfo);
+
+		if (ret == NO_POLL_CHAR)
+			return ret;
+		poll_chars = ret;
 		pollp = poll_buf;
 	}
 	poll_chars--;
@@ -1099,7 +1123,8 @@ static int cpm_get_poll_char(struct uart_port *port)
 static void cpm_put_poll_char(struct uart_port *port,
 			 unsigned char c)
 {
-	struct uart_cpm_port *pinfo = (struct uart_cpm_port *)port;
+	struct uart_cpm_port *pinfo =
+		container_of(port, struct uart_cpm_port, port);
 	static char ch[2];
 
 	ch[0] = (char)c;
@@ -1419,7 +1444,7 @@ static int cpm_uart_remove(struct platform_device *ofdev)
 	return uart_remove_one_port(&cpm_reg, &pinfo->port);
 }
 
-static struct of_device_id cpm_uart_match[] = {
+static const struct of_device_id cpm_uart_match[] = {
 	{
 		.compatible = "fsl,cpm1-smc-uart",
 	},
@@ -1434,11 +1459,11 @@ static struct of_device_id cpm_uart_match[] = {
 	},
 	{}
 };
+MODULE_DEVICE_TABLE(of, cpm_uart_match);
 
 static struct platform_driver cpm_uart_driver = {
 	.driver = {
 		.name = "cpm_uart",
-		.owner = THIS_MODULE,
 		.of_match_table = cpm_uart_match,
 	},
 	.probe = cpm_uart_probe,

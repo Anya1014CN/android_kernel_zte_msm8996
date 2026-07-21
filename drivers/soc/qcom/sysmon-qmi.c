@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2014-2015, 2017, 2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -153,10 +153,12 @@ static void sysmon_clnt_svc_arrive(struct work_struct *work)
 	struct sysmon_qmi_data *data = container_of(work,
 					struct sysmon_qmi_data, svc_arrive);
 
+	mutex_lock(&sysmon_lock);
 	/* Create a Local client port for QMI communication */
 	data->clnt_handle = qmi_handle_create(sysmon_clnt_notify, work);
 	if (!data->clnt_handle) {
 		pr_err("QMI client handle alloc failed for %s\n", data->name);
+		mutex_unlock(&sysmon_lock);
 		return;
 	}
 
@@ -167,6 +169,7 @@ static void sysmon_clnt_svc_arrive(struct work_struct *work)
 								data->name);
 		qmi_handle_destroy(data->clnt_handle);
 		data->clnt_handle = NULL;
+		mutex_unlock(&sysmon_lock);
 		return;
 	}
 	pr_info("Connection established between QMI handle and %s's SSCTL service\n"
@@ -177,6 +180,7 @@ static void sysmon_clnt_svc_arrive(struct work_struct *work)
 	if (rc < 0)
 		pr_warn("%s: Could not register the indication callback\n",
 								data->name);
+	mutex_unlock(&sysmon_lock);
 }
 
 static void sysmon_clnt_svc_exit(struct work_struct *work)
@@ -184,8 +188,10 @@ static void sysmon_clnt_svc_exit(struct work_struct *work)
 	struct sysmon_qmi_data *data = container_of(work,
 					struct sysmon_qmi_data, svc_exit);
 
+	mutex_lock(&sysmon_lock);
 	qmi_handle_destroy(data->clnt_handle);
 	data->clnt_handle = NULL;
+	mutex_unlock(&sysmon_lock);
 }
 
 static void sysmon_clnt_recv_msg(struct work_struct *work)
@@ -468,7 +474,7 @@ int sysmon_send_shutdown(struct subsys_desc *dest_desc)
 	shutdown_ack_ret = wait_for_shutdown_ack(dest_desc);
 	if (shutdown_ack_ret < 0) {
 		pr_err("shutdown_ack SMP2P bit for %s not set\n", data->name);
-		if (!&data->ind_recv.done) {
+		if (!completion_done(&data->ind_recv)) {
 			pr_err("QMI shutdown indication not received\n");
 			ret = shutdown_ack_ret;
 		}

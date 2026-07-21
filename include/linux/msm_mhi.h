@@ -181,7 +181,7 @@ enum mhi_rddm_segment {
  *
  * @Return true if ready
  */
-bool mhi_is_device_ready(const struct device *dev,
+bool mhi_is_device_ready(const struct device * const dev,
 			 const char *node_name);
 
 /**

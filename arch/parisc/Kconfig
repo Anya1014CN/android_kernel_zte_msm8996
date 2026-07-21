@@ -11,6 +11,7 @@ config PARISC
 	select RTC_DRV_GENERIC
 	select INIT_ALL_POSSIBLE
 	select BUG
+	select BUILDTIME_EXTABLE_SORT
 	select HAVE_PERF_EVENTS
 	select GENERIC_ATOMIC64 if !64BIT
 	select ARCH_HAS_ATOMIC64_DEC_IF_POSITIVE
@@ -103,6 +104,14 @@ config ARCH_MAY_HAVE_PC_FDC
 	depends on BROKEN
 	default y
 
+config PGTABLE_LEVELS
+	int
+	default 3 if 64BIT && PARISC_PAGE_SIZE_4KB
+	default 2
+
+config SYS_SUPPORTS_HUGETLBFS
+	def_bool y if PA20
+
 source "init/Kconfig"
 
 source "kernel/Kconfig.freezer"
@@ -169,7 +178,7 @@ config PREFETCH
 
 config MLONGCALLS
 	bool "Enable the -mlong-calls compiler option for big kernels"
-	def_bool y if (!MODULES)
+	default y
 	depends on PA8X00
 	help
 	  If you configure the kernel to include many drivers built-in instead
@@ -290,10 +299,6 @@ config SYSVIPC_COMPAT
 
 config AUDIT_ARCH
 	def_bool y
-
-config HPUX
-	bool "Support for HP-UX binaries"
-	depends on !64BIT
 
 config NR_CPUS
 	int "Maximum number of CPUs (2-32)"

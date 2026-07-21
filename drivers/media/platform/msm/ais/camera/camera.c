@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -27,6 +27,7 @@
 #include <linux/iommu.h>
 #include <linux/platform_device.h>
 #include <media/v4l2-fh.h>
+#include <media/videobuf2-v4l2.h>
 
 #include "camera.h"
 #include "msm.h"
@@ -369,8 +370,12 @@ static int camera_v4l2_s_fmt_vid_cap_mplane(struct file *filep, void *fh,
 
 	if (pfmt->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
 
-		if (WARN_ON(!sp->vb2_q.drv_priv))
-			return -ENOMEM;
+		mutex_lock(sp->vb2_q.lock);
+		if (WARN_ON(!sp->vb2_q.drv_priv)) {
+			rc = -ENOMEM;
+			mutex_unlock(sp->vb2_q.lock);
+			goto done;
+		}
 
 		memcpy(sp->vb2_q.drv_priv, pfmt->fmt.raw_data,
 			sizeof(struct msm_v4l2_format_data));
@@ -378,29 +383,33 @@ static int camera_v4l2_s_fmt_vid_cap_mplane(struct file *filep, void *fh,
 
 		pr_debug("%s: num planes :%c\n", __func__,
 					user_fmt->num_planes);
-		/*num_planes need to bound checked, otherwise for loop
-		can execute forever */
-		if (WARN_ON(user_fmt->num_planes > VIDEO_MAX_PLANES))
-			return -EINVAL;
+		/* num_planes need to bound checked, otherwise for loop
+		 * can execute forever
+		 */
+		if (WARN_ON(user_fmt->num_planes > VIDEO_MAX_PLANES)) {
+			rc = -EINVAL;
+			mutex_unlock(sp->vb2_q.lock);
+			goto done;
+		}
 		for (i = 0; i < user_fmt->num_planes; i++)
 			pr_debug("%s: plane size[%d]\n", __func__,
 					user_fmt->plane_sizes[i]);
-
+		mutex_unlock(sp->vb2_q.lock);
 		if (msm_is_daemon_present() != false) {
 			camera_pack_event(filep, MSM_CAMERA_SET_PARM,
 				MSM_CAMERA_PRIV_S_FMT, -1, &event);
 
 			rc = msm_post_event(&event, MSM_POST_EVT_TIMEOUT);
 			if (rc < 0)
-				return rc;
+				goto done;
 
 			rc = camera_check_event_status(&event);
 			if (rc < 0)
-				return rc;
+				goto done;
 		}
 		sp->is_vb2_valid = 1;
 	}
-
+done:
 	return rc;
 }
 
@@ -502,7 +511,7 @@ static long camera_v4l2_vidioc_private_ioctl(struct file *filep, void *fh,
 
 		MSM_CAM_GET_IOCTL_ARG_PTR(&tmp, &k_ioctl->ioctl_ptr,
 			sizeof(tmp));
-		if (copy_from_user(&ptr, tmp,
+		if (copy_from_user(&ptr, (void __user *)tmp,
 			sizeof(struct msm_camera_return_buf))) {
 			return -EFAULT;
 		}
@@ -548,7 +557,7 @@ static int camera_v4l2_fh_open(struct file *filep)
 {
 	struct msm_video_device *pvdev = video_drvdata(filep);
 	struct camera_v4l2_private *sp;
-	unsigned int stream_id;
+	unsigned long stream_id;
 
 	sp = kzalloc(sizeof(*sp), GFP_KERNEL);
 	if (!sp)
@@ -598,6 +607,12 @@ static int camera_v4l2_vb2_q_init(struct file *filep)
 		pr_err("%s : memory not available\n", __func__);
 		return -ENOMEM;
 	}
+	q->lock = kzalloc(sizeof(struct mutex), GFP_KERNEL);
+	if (!q->lock) {
+		kzfree(q->drv_priv);
+		return -ENOMEM;
+	}
+	mutex_init(q->lock);
 
 	q->mem_ops = msm_vb2_get_q_mem_ops();
 	q->ops = msm_vb2_get_q_ops();
@@ -605,7 +620,6 @@ static int camera_v4l2_vb2_q_init(struct file *filep)
 	/* default queue type */
 	q->type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
 	q->io_modes = VB2_USERPTR;
-	q->io_flags = 0;
 	q->buf_struct_size = sizeof(struct msm_vb2_buffer);
 	q->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC;
 	return vb2_queue_init(q);
@@ -618,6 +632,8 @@ static void camera_v4l2_vb2_q_release(struct file *filep)
 	kzfree(sp->vb2_q.drv_priv);
 	mutex_lock(&sp->lock);
 	vb2_queue_release(&sp->vb2_q);
+	mutex_destroy(sp->vb2_q.lock);
+	kzfree(sp->vb2_q.lock);
 	mutex_unlock(&sp->lock);
 }
 
@@ -626,7 +642,7 @@ static int camera_v4l2_open(struct file *filep)
 	int rc = 0;
 	struct v4l2_event event;
 	struct msm_video_device *pvdev = video_drvdata(filep);
-	unsigned int opn_idx, idx;
+	unsigned long opn_idx, idx;
 
 	if (WARN_ON(!pvdev))
 		return -EIO;
@@ -779,7 +795,8 @@ static int camera_v4l2_close(struct file *filep)
 		msm_delete_stream(pvdev->vdev->num, sp->stream_id);
 		mutex_unlock(&session->close_lock);
 		/* This should take care of both normal close
-		 * and application crashes */
+		 * and application crashes
+		 */
 		camera_v4l2_vb2_q_release(filep);
 		msm_destroy_session(pvdev->vdev->num);
 
@@ -805,7 +822,7 @@ static long camera_handle_internal_compat_ioctl(struct file *file,
 {
 	long rc = 0;
 	struct msm_camera_private_ioctl_arg k_ioctl;
-	void __user *tmp_compat_ioctl_ptr = NULL;
+	void *tmp_compat_ioctl_ptr = NULL;
 
 	rc = msm_copy_camera_private_ioctl_args(arg,
 		&k_ioctl, &tmp_compat_ioctl_ptr);
@@ -820,11 +837,13 @@ static long camera_handle_internal_compat_ioctl(struct file *file,
 				k_ioctl.id, k_ioctl.size);
 			return -EINVAL;
 		}
-		k_ioctl.ioctl_ptr = (__u64)tmp_compat_ioctl_ptr;
-		if (!k_ioctl.ioctl_ptr) {
+
+		if (tmp_compat_ioctl_ptr == NULL) {
 			pr_debug("Invalid ptr for id %d", k_ioctl.id);
 			return -EINVAL;
 		}
+		k_ioctl.ioctl_ptr = (__u64)(uintptr_t)tmp_compat_ioctl_ptr;
+
 		rc = camera_v4l2_vidioc_private_ioctl(file, file->private_data,
 			0, cmd, (void *)&k_ioctl);
 		}
@@ -836,7 +855,7 @@ static long camera_handle_internal_compat_ioctl(struct file *file,
 	return rc;
 }
 
-long camera_v4l2_compat_ioctl(struct file *file, unsigned int cmd,
+static long camera_v4l2_compat_ioctl(struct file *file, unsigned int cmd,
 	unsigned long arg)
 {
 	long ret = 0;
@@ -863,7 +882,7 @@ static struct v4l2_file_operations camera_v4l2_fops = {
 	.open	= camera_v4l2_open,
 	.poll	= camera_v4l2_poll,
 	.release = camera_v4l2_close,
-	.ioctl   = video_ioctl2,
+	.unlocked_ioctl   = video_ioctl2,
 #ifdef CONFIG_COMPAT
 	.compat_ioctl32 = camera_v4l2_compat_ioctl,
 #endif

@@ -1,4 +1,4 @@
-/* Copyright (c) 2016-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2016-2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -10,13 +10,14 @@
  * GNU General Public License for more details.
  *
  */
-#include <linux/module.h>
 #include "hab.h"
+#include <linux/module.h>
 
 int32_t habmm_socket_open(int32_t *handle, uint32_t mm_ip_id,
 		uint32_t timeout, uint32_t flags)
 {
-	return hab_vchan_open(hab_driver.kctx, mm_ip_id, handle, flags);
+	return hab_vchan_open(hab_driver.kctx, mm_ip_id, handle,
+				timeout, flags);
 }
 EXPORT_SYMBOL(habmm_socket_open);
 
@@ -46,27 +47,22 @@ int32_t habmm_socket_recv(int32_t handle, void *dst_buff, uint32_t *size_bytes,
 		uint32_t timeout, uint32_t flags)
 {
 	int ret = 0;
-	struct hab_message *msg;
+	struct hab_message *msg = NULL;
 
 	if (!size_bytes || !dst_buff)
 		return -EINVAL;
 
-	msg = hab_vchan_recv(hab_driver.kctx, handle, flags);
+	ret = hab_vchan_recv(hab_driver.kctx, &msg, handle, size_bytes, flags);
 
-	if (IS_ERR(msg)) {
-		*size_bytes = 0;
-		return PTR_ERR(msg);
-	}
-
-	if (*size_bytes < msg->sizebytes) {
-		*size_bytes = 0;
-		ret = -EINVAL;
-	} else {
+	if (ret == 0 && msg)
 		memcpy(dst_buff, msg->data, msg->sizebytes);
-		*size_bytes = msg->sizebytes;
-	}
+	else if (ret && msg)
+		pr_warn("vcid %X recv failed %d but msg is still received %zd bytes\n",
+				handle, ret, msg->sizebytes);
 
-	hab_msg_free(msg);
+	if (msg)
+		hab_msg_free(msg);
+
 	return ret;
 }
 EXPORT_SYMBOL(habmm_socket_recv);
@@ -117,7 +113,7 @@ int32_t habmm_import(int32_t handle, void **buff_shared, uint32_t size_bytes,
 	param.flags = flags;
 
 	ret = hab_mem_import(hab_driver.kctx, &param, 1);
-	if (!IS_ERR(ret))
+	if (!ret)
 		*buff_shared = (void *)(uintptr_t)param.kva;
 
 	return ret;
@@ -138,3 +134,24 @@ int32_t habmm_unimport(int32_t handle,
 	return hab_mem_unimport(hab_driver.kctx, &param, 1);
 }
 EXPORT_SYMBOL(habmm_unimport);
+
+int32_t habmm_socket_query(int32_t handle,
+		struct hab_socket_info *info,
+		uint32_t flags)
+{
+	int ret;
+	uint64_t ids;
+	char nm[sizeof(info->vmname_remote) + sizeof(info->vmname_local)];
+
+	ret = hab_vchan_query(hab_driver.kctx, handle, &ids, nm, sizeof(nm), 1);
+	if (!ret) {
+		info->vmid_local = ids & 0xFFFFFFFF;
+		info->vmid_remote = (ids & 0xFFFFFFFF00000000UL) > 32;
+
+		strlcpy(info->vmname_local, nm, sizeof(info->vmname_local));
+		strlcpy(info->vmname_remote, &nm[sizeof(info->vmname_local)],
+			sizeof(info->vmname_remote));
+	}
+	return ret;
+}
+EXPORT_SYMBOL(habmm_socket_query);

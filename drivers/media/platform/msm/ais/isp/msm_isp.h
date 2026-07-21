@@ -1,4 +1,4 @@
-/* Copyright (c) 2013-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -83,7 +83,8 @@ enum msm_isp_irq_operation {
 };
 
 /* This struct is used to save/track SOF info for some INTF.
- * e.g. used in Master-Slave mode */
+ * e.g. used in Master-Slave mode
+ */
 struct msm_vfe_sof_info {
 	uint32_t timestamp_ms;
 	uint32_t mono_timestamp_ms;
@@ -95,7 +96,8 @@ struct msm_vfe_dual_hw_ms_info {
 	/* type is Master/Slave */
 	enum msm_vfe_dual_hw_ms_type dual_hw_ms_type;
 	/* sof_info is resource from common_data. If NULL, then this INTF
-	 * sof does not need to be saved */
+	 * sof does not need to be saved
+	 */
 	struct msm_vfe_sof_info *sof_info;
 	/* slave_id is index in common_data sof_info array for slaves */
 	uint8_t slave_id;
@@ -162,6 +164,9 @@ struct msm_vfe_irq_ops {
 	void (*config_irq)(struct vfe_device *vfe_dev,
 		uint32_t irq_status0, uint32_t irq_status1,
 		enum msm_isp_irq_operation);
+	void (*process_sof_irq)(struct vfe_device *vfe_dev,
+		uint32_t irq_status0, uint32_t irq_status1,
+		struct msm_isp_timestamp *ts);
 	void (*process_eof_irq)(struct vfe_device *vfe_dev,
 		uint32_t irq_status0);
 };
@@ -353,6 +358,7 @@ struct msm_vfe_hardware_info {
 	uint32_t dmi_reg_offset;
 	uint32_t min_ab;
 	uint32_t min_ib;
+	uint32_t regulator_num;
 	const char *regulator_names[];
 };
 
@@ -685,6 +691,15 @@ struct master_slave_resource_info {
 	struct msm_vfe_sof_info slave_sof_info[MS_NUM_SLAVE_MAX];
 };
 
+struct msm_vfe_irq_debug_info {
+	uint32_t vfe_id;
+	struct msm_isp_timestamp ts;
+	uint32_t core_id;
+	uint32_t irq_status0[MAX_VFE];
+	uint32_t irq_status1[MAX_VFE];
+	uint32_t ping_pong_status[MAX_VFE];
+};
+
 struct msm_vfe_common_dev_data {
 	spinlock_t common_dev_data_lock;
 	struct dual_vfe_resource *dual_vfe_res;
@@ -767,6 +782,7 @@ struct vfe_device {
 	uint32_t is_split;
 	uint32_t dual_vfe_enable;
 	unsigned long page_fault_addr;
+	bool clk_enabled;
 
 	/* Debug variables */
 	int dump_reg;

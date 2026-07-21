@@ -276,7 +276,7 @@ static ssize_t keychord_write(struct file *file, const char __user *buffer,
 	size_t resid = count;
 	size_t key_bytes;
 
-	if (count < sizeof(struct input_keychord))
+	if (count < sizeof(struct input_keychord) || count > PAGE_SIZE)
 		return -EINVAL;
 	keychords = kzalloc(count, GFP_KERNEL);
 	if (!keychords)
@@ -370,10 +370,8 @@ static ssize_t keychord_write(struct file *file, const char __user *buffer,
 
 	ret = input_register_handler(&kdev->input_handler);
 	if (ret) {
-		spin_lock_irqsave(&kdev->lock, flags);
-		kfree(kdev->keychords);
+		kfree(keychords);
 		kdev->keychords = 0;
-		spin_unlock_irqrestore(&kdev->lock, flags);
 		keychord_write_unlock(kdev);
 		return ret;
 	}

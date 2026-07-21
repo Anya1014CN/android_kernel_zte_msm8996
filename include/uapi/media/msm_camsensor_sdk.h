@@ -50,6 +50,8 @@
 
 #define MSM_SENSOR_BYPASS_VIDEO_NODE    1
 
+#define FRONT_AUX_SENSOR_SUPPORT
+
 enum msm_sensor_camera_id_t {
 	CAMERA_0,
 	CAMERA_1,
@@ -70,6 +72,7 @@ enum camb_position_t {
 	BACK_CAMERA_B,
 	FRONT_CAMERA_B,
 	AUX_CAMERA_B = 0x100,
+	FRONT_AUX_CAMERA_B,
 	INVALID_CAMERA_B,
 };
 
@@ -77,7 +80,6 @@ enum msm_sensor_power_seq_type_t {
 	SENSOR_CLK,
 	SENSOR_GPIO,
 	SENSOR_VREG,
-	SENSOR_PMIC,
 	SENSOR_I2C_MUX,
 	SENSOR_I2C,
 };
@@ -115,8 +117,10 @@ enum msm_sensor_power_seq_gpio_t {
 	SENSOR_GPIO_FL_RESET,
 	SENSOR_GPIO_CUSTOM1,
 	SENSOR_GPIO_CUSTOM2,
+	SENSOR_GPIO_CUSTOM3,
 	SENSOR_GPIO_MAX,
 };
+#define SENSOR_GPIO_CUSTOM3 SENSOR_GPIO_CUSTOM3
 
 enum msm_ir_cut_filter_gpio_t {
 	IR_CUT_FILTER_GPIO_P = 0,
@@ -127,13 +131,6 @@ enum msm_ir_cut_filter_gpio_t {
 #define IR_CUT_FILTER_GPIO_M IR_CUT_FILTER_GPIO_M
 #define R_CUT_FILTER_GPIO_MAX IR_CUT_FILTER_GPIO_MAX
 
-enum msm_sensor_power_seq_gpio_pmic_t {
-	SENSOR_PMIC_GPIO_OIS,
-	SENSOR_PMIC_GPIO_CUSTOM1,
-	SENSOR_PMIC_GPIO_CUSTOM2,
-	SENSOR_PMIC_GPIO_MAX,
-};
-
 enum msm_camera_vreg_name_t {
 	CAM_VDIG,
 	CAM_VIO,
@@ -141,6 +138,7 @@ enum msm_camera_vreg_name_t {
 	CAM_VAF,
 	CAM_V_CUSTOM1,
 	CAM_V_CUSTOM2,
+	CAM_VMIPI,
 	CAM_VREG_MAX,
 };
 
@@ -212,6 +210,13 @@ enum msm_ir_led_cfg_type_t {
 #define CFG_IR_LED_RELEASE CFG_IR_LED_RELEASE
 #define CFG_IR_LED_OFF CFG_IR_LED_OFF
 #define CFG_IR_LED_ON CFG_IR_LED_ON
+
+enum msm_laser_led_cfg_type_t {
+	CFG_LASER_LED_INIT,
+	CFG_LASER_LED_CONTROL,
+};
+#define CFG_LASER_LED_INIT CFG_LASER_LED_INIT
+#define CFG_LASER_LED_CONTROL CFG_LASER_LED_CONTROL
 
 enum msm_ir_cut_cfg_type_t {
 	CFG_IR_CUT_INIT = 0,
@@ -310,7 +315,6 @@ struct msm_camera_sensor_slave_info {
 	struct msm_sensor_power_setting_array power_setting_array;
 	unsigned char  is_init_params_valid;
 	struct msm_sensor_init_params sensor_init_params;
-	uint16_t bakeup_slave_addr;
 	enum msm_sensor_output_format_t output_format;
 	uint8_t bypass_video_node_creation;
 };
@@ -366,6 +370,7 @@ struct msm_camera_csiphy_params {
 	unsigned char csid_core;
 	unsigned int csiphy_clk;
 	unsigned char csi_3phase;
+	uint64_t data_rate;
 };
 
 struct msm_camera_i2c_seq_reg_array {

@@ -1,4 +1,4 @@
-/* Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2015-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -23,7 +23,8 @@ int pfk_load_key_start(const struct bio *bio,
 		struct ice_crypto_setting *ice_setting, bool *is_pfe, bool);
 int pfk_load_key_end(const struct bio *bio, bool *is_pfe);
 int pfk_remove_key(const unsigned char *key, size_t key_size);
-bool pfk_allow_merge_bio(struct bio *bio1, struct bio *bio2);
+bool pfk_allow_merge_bio(const struct bio *bio1, const struct bio *bio2);
+void pfk_clear_on_reset(void);
 
 #else
 static inline int pfk_load_key_start(const struct bio *bio,
@@ -48,9 +49,8 @@ static inline bool pfk_allow_merge_bio(const struct bio *bio1,
 	return true;
 }
 
-static inline void pfk_remove_all_keys(void)
-{
-}
+static inline void pfk_clear_on_reset(void)
+{}
 
 #endif /* CONFIG_PFK */
 

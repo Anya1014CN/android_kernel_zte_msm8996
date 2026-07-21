@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2014 B.A.T.M.A.N. contributors:
+/* Copyright (C) 2007-2015 B.A.T.M.A.N. contributors:
  *
  * Marek Lindner, Simon Wunderlich
  *
@@ -15,30 +15,47 @@
  * along with this program; if not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "main.h"
-#include "distributed-arp-table.h"
 #include "hard-interface.h"
-#include "soft-interface.h"
-#include "send.h"
-#include "translation-table.h"
-#include "routing.h"
-#include "sysfs.h"
-#include "debugfs.h"
-#include "originator.h"
-#include "hash.h"
-#include "bridge_loop_avoidance.h"
-#include "gateway_client.h"
+#include "main.h"
 
+#include <linux/byteorder/generic.h>
+#include <linux/errno.h>
+#include <linux/fs.h>
 #include <linux/if_arp.h>
 #include <linux/if_ether.h>
+#include <linux/if.h>
+#include <linux/kernel.h>
+#include <linux/list.h>
+#include <linux/mutex.h>
+#include <linux/netdevice.h>
+#include <linux/printk.h>
+#include <linux/rculist.h>
+#include <linux/rtnetlink.h>
+#include <linux/slab.h>
+#include <linux/workqueue.h>
+#include <net/net_namespace.h>
 
-void batadv_hardif_free_rcu(struct rcu_head *rcu)
+#include "bridge_loop_avoidance.h"
+#include "debugfs.h"
+#include "distributed-arp-table.h"
+#include "gateway_client.h"
+#include "originator.h"
+#include "packet.h"
+#include "send.h"
+#include "soft-interface.h"
+#include "sysfs.h"
+#include "translation-table.h"
+
+/**
+ * batadv_hardif_release - release hard interface from lists and queue for
+ *  free after rcu grace period
+ * @hard_iface: the hard interface to free
+ */
+void batadv_hardif_release(struct batadv_hard_iface *hard_iface)
 {
-	struct batadv_hard_iface *hard_iface;
-
-	hard_iface = container_of(rcu, struct batadv_hard_iface, rcu);
 	dev_put(hard_iface->net_dev);
-	kfree(hard_iface);
+
+	kfree_rcu(hard_iface, rcu);
 }
 
 struct batadv_hard_iface *
@@ -58,6 +75,28 @@ batadv_hardif_get_by_netdev(const struct net_device *net_dev)
 out:
 	rcu_read_unlock();
 	return hard_iface;
+}
+
+/**
+ * batadv_mutual_parents - check if two devices are each others parent
+ * @dev1: 1st net_device
+ * @dev2: 2nd net_device
+ *
+ * veth devices come in pairs and each is the parent of the other!
+ *
+ * Return: true if the devices are each others parent, otherwise false
+ */
+static bool batadv_mutual_parents(const struct net_device *dev1,
+				  const struct net_device *dev2)
+{
+	int dev1_parent_iflink = dev_get_iflink(dev1);
+	int dev2_parent_iflink = dev_get_iflink(dev2);
+
+	if (!dev1_parent_iflink || !dev2_parent_iflink)
+		return false;
+
+	return (dev1_parent_iflink == dev2->ifindex) &&
+	       (dev2_parent_iflink == dev1->ifindex);
 }
 
 /**
@@ -83,13 +122,19 @@ static bool batadv_is_on_batman_iface(const struct net_device *net_dev)
 		return true;
 
 	/* no more parents..stop recursion */
-	if (net_dev->iflink == 0 || net_dev->iflink == net_dev->ifindex)
+	if (dev_get_iflink(net_dev) == 0 ||
+	    dev_get_iflink(net_dev) == net_dev->ifindex)
 		return false;
 
 	/* recurse over the parent device */
-	parent_dev = __dev_get_by_index(&init_net, net_dev->iflink);
+	parent_dev = __dev_get_by_index(&init_net, dev_get_iflink(net_dev));
 	/* if we got a NULL parent_dev there is something broken.. */
-	if (WARN(!parent_dev, "Cannot find parent device"))
+	if (!parent_dev) {
+		pr_err("Cannot find parent device\n");
+		return false;
+	}
+
+	if (batadv_mutual_parents(net_dev, parent_dev))
 		return false;
 
 	ret = batadv_is_on_batman_iface(parent_dev);
@@ -235,6 +280,47 @@ static void batadv_check_known_mac_addr(const struct net_device *net_dev)
 		pr_warn("It is strongly recommended to keep mac addresses unique to avoid problems!\n");
 	}
 	rcu_read_unlock();
+}
+
+/**
+ * batadv_hardif_recalc_extra_skbroom() - Recalculate skbuff extra head/tailroom
+ * @soft_iface: netdev struct of the mesh interface
+ */
+static void batadv_hardif_recalc_extra_skbroom(struct net_device *soft_iface)
+{
+	const struct batadv_hard_iface *hard_iface;
+	unsigned short lower_header_len = ETH_HLEN;
+	unsigned short lower_headroom = 0;
+	unsigned short lower_tailroom = 0;
+	unsigned short needed_headroom;
+
+	rcu_read_lock();
+	list_for_each_entry_rcu(hard_iface, &batadv_hardif_list, list) {
+		if (hard_iface->if_status == BATADV_IF_NOT_IN_USE)
+			continue;
+
+		if (hard_iface->soft_iface != soft_iface)
+			continue;
+
+		lower_header_len = max_t(unsigned short, lower_header_len,
+					 hard_iface->net_dev->hard_header_len);
+
+		lower_headroom = max_t(unsigned short, lower_headroom,
+				       hard_iface->net_dev->needed_headroom);
+
+		lower_tailroom = max_t(unsigned short, lower_tailroom,
+				       hard_iface->net_dev->needed_tailroom);
+	}
+	rcu_read_unlock();
+
+	needed_headroom = lower_headroom + (lower_header_len - ETH_HLEN);
+	needed_headroom += batadv_max_header_len();
+
+	/* fragmentation headers don't strip the unicast/... header */
+	needed_headroom += sizeof(struct batadv_frag_packet);
+
+	soft_iface->needed_headroom = needed_headroom;
+	soft_iface->needed_tailroom = lower_tailroom;
 }
 
 int batadv_hardif_min_mtu(struct net_device *soft_iface)
@@ -411,6 +497,11 @@ int batadv_hardif_enable_interface(struct batadv_hard_iface *hard_iface,
 	hard_iface->soft_iface = soft_iface;
 	bat_priv = netdev_priv(hard_iface->soft_iface);
 
+	if (bat_priv->num_ifaces >= UINT_MAX) {
+		ret = -ENOSPC;
+		goto err_dev;
+	}
+
 	ret = netdev_master_upper_dev_link(hard_iface->net_dev, soft_iface);
 	if (ret)
 		goto err_dev;
@@ -459,6 +550,8 @@ int batadv_hardif_enable_interface(struct batadv_hard_iface *hard_iface,
 			   "Not using interface %s (retrying later): interface not active\n",
 			   hard_iface->net_dev->name);
 
+	batadv_hardif_recalc_extra_skbroom(soft_iface);
+
 	/* begin scheduling originator messages on that interface */
 	batadv_schedule_bat_ogm(hard_iface);
 
@@ -481,8 +574,7 @@ void batadv_hardif_disable_interface(struct batadv_hard_iface *hard_iface,
 	struct batadv_priv *bat_priv = netdev_priv(hard_iface->soft_iface);
 	struct batadv_hard_iface *primary_if = NULL;
 
-	if (hard_iface->if_status == BATADV_IF_ACTIVE)
-		batadv_hardif_deactivate_interface(hard_iface);
+	batadv_hardif_deactivate_interface(hard_iface);
 
 	if (hard_iface->if_status != BATADV_IF_INACTIVE)
 		goto out;
@@ -513,15 +605,17 @@ void batadv_hardif_disable_interface(struct batadv_hard_iface *hard_iface,
 	batadv_purge_outstanding_packets(bat_priv, hard_iface);
 	dev_put(hard_iface->soft_iface);
 
+	netdev_upper_dev_unlink(hard_iface->net_dev, hard_iface->soft_iface);
+	batadv_hardif_recalc_extra_skbroom(hard_iface->soft_iface);
+
 	/* nobody uses this interface anymore */
-	if (!bat_priv->num_ifaces) {
+	if (bat_priv->num_ifaces == 0) {
 		batadv_gw_check_client_stop(bat_priv);
 
 		if (autodel == BATADV_IF_CLEANUP_AUTO)
 			batadv_softif_destroy_sysfs(hard_iface->soft_iface);
 	}
 
-	netdev_upper_dev_unlink(hard_iface->net_dev, hard_iface->soft_iface);
 	hard_iface->soft_iface = NULL;
 	batadv_hardif_free_ref(hard_iface);
 
@@ -571,7 +665,7 @@ batadv_hardif_add_interface(struct net_device *net_dev)
 	if (ret)
 		goto free_if;
 
-	hard_iface->if_num = -1;
+	hard_iface->if_num = 0;
 	hard_iface->net_dev = net_dev;
 	hard_iface->soft_iface = NULL;
 	hard_iface->if_status = BATADV_IF_NOT_IN_USE;
@@ -581,6 +675,7 @@ batadv_hardif_add_interface(struct net_device *net_dev)
 		goto free_sysfs;
 
 	INIT_LIST_HEAD(&hard_iface->list);
+	mutex_init(&hard_iface->bat_iv.ogm_buff_mutex);
 	INIT_WORK(&hard_iface->cleanup_work,
 		  batadv_hardif_remove_interface_finish);
 
@@ -635,6 +730,32 @@ void batadv_hardif_remove_interfaces(void)
 	rtnl_unlock();
 }
 
+/**
+ * batadv_hard_if_event_softif() - Handle events for soft interfaces
+ * @event: NETDEV_* event to handle
+ * @net_dev: net_device which generated an event
+ *
+ * Return: NOTIFY_* result
+ */
+static int batadv_hard_if_event_softif(unsigned long event,
+				       struct net_device *net_dev)
+{
+	struct batadv_priv *bat_priv;
+
+	switch (event) {
+	case NETDEV_REGISTER:
+		batadv_sysfs_add_meshif(net_dev);
+		bat_priv = netdev_priv(net_dev);
+		batadv_softif_create_vlan(bat_priv, BATADV_NO_FLAGS);
+		break;
+	case NETDEV_CHANGENAME:
+		batadv_debugfs_rename_meshif(net_dev);
+		break;
+	}
+
+	return NOTIFY_DONE;
+}
+
 static int batadv_hard_if_event(struct notifier_block *this,
 				unsigned long event, void *ptr)
 {
@@ -643,12 +764,8 @@ static int batadv_hard_if_event(struct notifier_block *this,
 	struct batadv_hard_iface *primary_if = NULL;
 	struct batadv_priv *bat_priv;
 
-	if (batadv_softif_is_valid(net_dev) && event == NETDEV_REGISTER) {
-		batadv_sysfs_add_meshif(net_dev);
-		bat_priv = netdev_priv(net_dev);
-		batadv_softif_create_vlan(bat_priv, BATADV_NO_FLAGS);
-		return NOTIFY_DONE;
-	}
+	if (batadv_softif_is_valid(net_dev))
+		return batadv_hard_if_event_softif(event, net_dev);
 
 	hard_iface = batadv_hardif_get_by_netdev(net_dev);
 	if (!hard_iface && event == NETDEV_REGISTER)
@@ -689,6 +806,9 @@ static int batadv_hard_if_event(struct notifier_block *this,
 
 		if (hard_iface == primary_if)
 			batadv_primary_if_update_addr(bat_priv, NULL);
+		break;
+	case NETDEV_CHANGENAME:
+		batadv_debugfs_rename_hardif(hard_iface);
 		break;
 	default:
 		break;

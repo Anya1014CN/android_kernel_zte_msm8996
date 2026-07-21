@@ -24,7 +24,8 @@ extern void gfs2_quota_unhold(struct gfs2_inode *ip);
 extern int gfs2_quota_lock(struct gfs2_inode *ip, kuid_t uid, kgid_t gid);
 extern void gfs2_quota_unlock(struct gfs2_inode *ip);
 
-extern int gfs2_quota_check(struct gfs2_inode *ip, kuid_t uid, kgid_t gid);
+extern int gfs2_quota_check(struct gfs2_inode *ip, kuid_t uid, kgid_t gid,
+			    struct gfs2_alloc_parms *ap);
 extern void gfs2_quota_change(struct gfs2_inode *ip, s64 change,
 			      kuid_t uid, kgid_t gid);
 
@@ -37,10 +38,13 @@ extern int gfs2_quotad(void *data);
 
 extern void gfs2_wake_up_statfs(struct gfs2_sbd *sdp);
 
-static inline int gfs2_quota_lock_check(struct gfs2_inode *ip)
+static inline int gfs2_quota_lock_check(struct gfs2_inode *ip,
+					struct gfs2_alloc_parms *ap)
 {
 	struct gfs2_sbd *sdp = GFS2_SB(&ip->i_inode);
 	int ret;
+
+	ap->allowed = UINT_MAX; /* Assume we are permitted a whole lot */
 	if (sdp->sd_args.ar_quota == GFS2_QUOTA_OFF)
 		return 0;
 	ret = gfs2_quota_lock(ip, NO_UID_QUOTA_CHANGE, NO_GID_QUOTA_CHANGE);
@@ -48,7 +52,7 @@ static inline int gfs2_quota_lock_check(struct gfs2_inode *ip)
 		return ret;
 	if (sdp->sd_args.ar_quota != GFS2_QUOTA_ON)
 		return 0;
-	ret = gfs2_quota_check(ip, ip->i_inode.i_uid, ip->i_inode.i_gid);
+	ret = gfs2_quota_check(ip, ip->i_inode.i_uid, ip->i_inode.i_gid, ap);
 	if (ret)
 		gfs2_quota_unlock(ip);
 	return ret;

@@ -13,7 +13,6 @@
 #include <linux/delay.h>
 
 #include "do_mounts.h"
-#include "../drivers/md/dm.h"
 
 #define DM_MAX_DEVICES 256
 #define DM_MAX_TARGETS 256
@@ -429,11 +428,8 @@ static void __init dm_setup_drives(void)
 		}
 
 		/* Export the dm device via the ioctl interface */
-		if (!strcmp(DM_NO_UUID, dev->uuid)){
+		if (!strcmp(DM_NO_UUID, dev->uuid))
 			uuid = NULL;
-                } else {
-                        uuid = dev->uuid;
-                }
 		if (dm_ioctl_export(md, dev->name, uuid)) {
 			DMDEBUG("failed to export device with given"
 				" name and uuid");

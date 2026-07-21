@@ -22,7 +22,6 @@ struct alt_instr {
 
 void __init apply_alternatives_all(void);
 void apply_alternatives(void *start, size_t length);
-void free_alternatives_memory(void);
 
 #define ALTINSTR_ENTRY(feature)						      \
 	" .word 661b - .\n"				/* label           */ \
@@ -170,6 +169,10 @@ alternative_endif
 #define _ALTERNATIVE_CFG(insn1, insn2, cap, cfg, ...)	\
 	alternative_insn insn1, insn2, cap, IS_ENABLED(cfg)
 
+.macro user_alt, label, oldinstr, newinstr, cond
+9999:	alternative_insn "\oldinstr", "\newinstr", \cond
+	_asm_extable 9999b, \label
+.endm
 
 /*
  * Generate the assembly for UAO alternatives with exception table entries.
@@ -188,11 +191,8 @@ alternative_endif
 			add	\addr, \addr, \post_inc;
 		alternative_endif
 
-		.section __ex_table,"a";
-		.align	3;
-		.quad	8888b,\l;
-		.quad	8889b,\l;
-		.previous;
+		_asm_extable	8888b,\l;
+		_asm_extable	8889b,\l;
 	.endm
 
 	.macro uao_stp l, reg1, reg2, addr, post_inc
@@ -206,11 +206,8 @@ alternative_endif
 			add	\addr, \addr, \post_inc;
 		alternative_endif
 
-		.section __ex_table,"a";
-		.align	3;
-		.quad	8888b,\l;
-		.quad	8889b,\l;
-		.previous
+		_asm_extable	8888b,\l;
+		_asm_extable	8889b,\l;
 	.endm
 
 	.macro uao_user_alternative l, inst, alt_inst, reg, addr, post_inc
@@ -222,10 +219,7 @@ alternative_endif
 			add		\addr, \addr, \post_inc;
 		alternative_endif
 
-		.section __ex_table,"a";
-		.align	3;
-		.quad	8888b,\l;
-		.previous
+		_asm_extable	8888b,\l;
 	.endm
 #else
 	.macro uao_ldp l, reg1, reg2, addr, post_inc

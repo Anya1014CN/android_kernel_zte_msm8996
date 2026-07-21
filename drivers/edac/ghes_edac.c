@@ -66,26 +66,6 @@ struct ghes_edac_dimm_fill {
 	unsigned count;
 };
 
-char *memory_type[] = {
-	[MEM_EMPTY] = "EMPTY",
-	[MEM_RESERVED] = "RESERVED",
-	[MEM_UNKNOWN] = "UNKNOWN",
-	[MEM_FPM] = "FPM",
-	[MEM_EDO] = "EDO",
-	[MEM_BEDO] = "BEDO",
-	[MEM_SDR] = "SDR",
-	[MEM_RDR] = "RDR",
-	[MEM_DDR] = "DDR",
-	[MEM_RDDR] = "RDDR",
-	[MEM_RMBS] = "RMBS",
-	[MEM_DDR2] = "DDR2",
-	[MEM_FB_DDR2] = "FB_DDR2",
-	[MEM_RDDR2] = "RDDR2",
-	[MEM_XDR] = "XDR",
-	[MEM_DDR3] = "DDR3",
-	[MEM_RDDR3] = "RDDR3",
-};
-
 static void ghes_edac_count_dimms(const struct dmi_header *dh, void *arg)
 {
 	int *num_dimm = arg;
@@ -173,7 +153,7 @@ static void ghes_edac_dmidecode(const struct dmi_header *dh, void *arg)
 
 		if (dimm->nr_pages) {
 			edac_dbg(1, "DIMM%i: %s size = %d MB%s\n",
-				dimm_fill->count, memory_type[dimm->mtype],
+				dimm_fill->count, edac_mem_types[dimm->mtype],
 				PAGES_TO_MiB(dimm->nr_pages),
 				(dimm->edac_mode != EDAC_NONE) ? "(ECC)" : "");
 			edac_dbg(2, "\ttype %d, detail 0x%02x, width %d(total %d)\n",
@@ -209,6 +189,7 @@ void ghes_edac_report_mem_error(struct ghes *ghes, int sev,
 	/* Cleans the error report buffer */
 	memset(e, 0, sizeof (*e));
 	e->error_count = 1;
+	e->grain = 1;
 	strcpy(e->label, "unknown label");
 	e->msg = pvt->msg;
 	e->other_detail = pvt->other_detail;
@@ -304,7 +285,7 @@ void ghes_edac_report_mem_error(struct ghes *ghes, int sev,
 
 	/* Error grain */
 	if (mem_err->validation_bits & CPER_MEM_VALID_PA_MASK)
-		e->grain = ~(mem_err->physical_addr_mask & ~PAGE_MASK);
+		e->grain = ~mem_err->physical_addr_mask + 1;
 
 	/* Memory error location, mapped on e->location */
 	p = e->location;
@@ -411,13 +392,18 @@ void ghes_edac_report_mem_error(struct ghes *ghes, int sev,
 	if (p > pvt->other_detail)
 		*(p - 1) = '\0';
 
+	/* Sanity-check driver-supplied grain value. */
+	if (WARN_ON_ONCE(!e->grain))
+		e->grain = 1;
+
+	grain_bits = fls_long(e->grain - 1);
+
 	/* Generate the trace event */
-	grain_bits = fls_long(e->grain);
-	sprintf(pvt->detail_location, "APEI location: %s %s",
-		e->location, e->other_detail);
+	snprintf(pvt->detail_location, sizeof(pvt->detail_location),
+		 "APEI location: %s %s", e->location, e->other_detail);
 	trace_mc_event(type, e->msg, e->label, e->error_count,
 		       mci->mc_idx, e->top_layer, e->mid_layer, e->low_layer,
-		       PAGES_TO_MiB(e->page_frame_number) | e->offset_in_page,
+		       (e->page_frame_number << PAGE_SHIFT) | e->offset_in_page,
 		       grain_bits, e->syndrome, pvt->detail_location);
 
 	/* Report the error via EDAC API */

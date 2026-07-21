@@ -43,6 +43,8 @@
 
 #include <asm/page.h>
 #include <asm/pgtable.h>
+#include <asm/smap.h>
+#include <asm/nospec-branch.h>
 
 #include <xen/interface/xen.h>
 #include <xen/interface/sched.h>
@@ -213,10 +215,15 @@ privcmd_call(unsigned call,
 	__HYPERCALL_DECLS;
 	__HYPERCALL_5ARG(a1, a2, a3, a4, a5);
 
-	asm volatile("call *%[call]"
+	if (call >= PAGE_SIZE / sizeof(hypercall_page[0]))
+		return -EINVAL;
+
+	stac();
+	asm volatile(CALL_NOSPEC
 		     : __HYPERCALL_5PARAM
-		     : [call] "a" (&hypercall_page[call])
+		     : [thunk_target] "a" (&hypercall_page[call])
 		     : __HYPERCALL_CLOBBER5);
+	clac();
 
 	return (long)__res;
 }
@@ -336,10 +343,10 @@ HYPERVISOR_update_descriptor(u64 ma, u64 desc)
 	return _hypercall4(int, update_descriptor, ma, ma>>32, desc, desc>>32);
 }
 
-static inline int
+static inline long
 HYPERVISOR_memory_op(unsigned int cmd, void *arg)
 {
-	return _hypercall2(int, memory_op, cmd, arg);
+	return _hypercall2(long, memory_op, cmd, arg);
 }
 
 static inline int
@@ -463,6 +470,12 @@ HYPERVISOR_tmem_op(
 	struct tmem_op *op)
 {
 	return _hypercall1(int, tmem_op, op);
+}
+
+static inline int
+HYPERVISOR_xenpmu_op(unsigned int op, void *arg)
+{
+	return _hypercall2(int, xenpmu_op, op, arg);
 }
 
 static inline void

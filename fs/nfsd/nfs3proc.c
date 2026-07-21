@@ -166,7 +166,7 @@ nfsd3_proc_read(struct svc_rqst *rqstp, struct nfsd3_readargs *argp,
 			   	  rqstp->rq_vec, argp->vlen,
 				  &resp->count);
 	if (nfserr == 0) {
-		struct inode	*inode = resp->fh.fh_dentry->d_inode;
+		struct inode	*inode = d_inode(resp->fh.fh_dentry);
 
 		resp->eof = (argp->offset + resp->count) >= inode->i_size;
 	}
@@ -430,8 +430,19 @@ nfsd3_proc_readdir(struct svc_rqst *rqstp, struct nfsd3_readdirargs *argp,
 					&resp->common, nfs3svc_encode_entry);
 	memcpy(resp->verf, argp->verf, 8);
 	resp->count = resp->buffer - argp->buffer;
-	if (resp->offset)
-		xdr_encode_hyper(resp->offset, argp->cookie);
+	if (resp->offset) {
+		loff_t offset = argp->cookie;
+
+		if (unlikely(resp->offset1)) {
+			/* we ended up with offset on a page boundary */
+			*resp->offset = htonl(offset >> 32);
+			*resp->offset1 = htonl(offset & 0xffffffff);
+			resp->offset1 = NULL;
+		} else {
+			xdr_encode_hyper(resp->offset, offset);
+		}
+		resp->offset = NULL;
+	}
 
 	RETURN_STATUS(nfserr);
 }
@@ -499,6 +510,7 @@ nfsd3_proc_readdirplus(struct svc_rqst *rqstp, struct nfsd3_readdirargs *argp,
 		} else {
 			xdr_encode_hyper(resp->offset, offset);
 		}
+		resp->offset = NULL;
 	}
 
 	RETURN_STATUS(nfserr);
@@ -551,7 +563,7 @@ nfsd3_proc_fsinfo(struct svc_rqst * rqstp, struct nfsd_fhandle    *argp,
 	 * different read/write sizes for file systems known to have
 	 * problems with large blocks */
 	if (nfserr == 0) {
-		struct super_block *sb = argp->fh.fh_dentry->d_inode->i_sb;
+		struct super_block *sb = d_inode(argp->fh.fh_dentry)->i_sb;
 
 		/* Note that we don't care for remote fs's here */
 		if (sb->s_magic == MSDOS_SUPER_MAGIC) {
@@ -587,7 +599,7 @@ nfsd3_proc_pathconf(struct svc_rqst * rqstp, struct nfsd_fhandle      *argp,
 	nfserr = fh_verify(rqstp, &argp->fh, 0, NFSD_MAY_NOP);
 
 	if (nfserr == 0) {
-		struct super_block *sb = argp->fh.fh_dentry->d_inode->i_sb;
+		struct super_block *sb = d_inode(argp->fh.fh_dentry)->i_sb;
 
 		/* Note that we don't care for remote fs's here */
 		switch (sb->s_magic) {

@@ -1,4 +1,5 @@
 /* Copyright (c) 2013-2017, The Linux Foundation. All rights reserved.
+ * Copyright (C) 2018 XiaoMi, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -10,17 +11,13 @@
  * GNU General Public License for more details.
  */
 
-#define SENSOR_DRIVER_I2C "camera"
+#define SENSOR_DRIVER_I2C "i2c_camera"
 /* Header file declaration */
 #include "msm_sensor.h"
 #include "msm_sd.h"
 #include "camera.h"
 #include "msm_cci.h"
 #include "msm_camera_dt_util.h"
-
-#include "zte_camera_sensor_util.h"
-#include "zte_eeprom.h"
-#include <linux/debugfs.h>
 
 /* Logging macro */
 #undef CDBG
@@ -75,7 +72,7 @@ static struct platform_driver msm_sensor_platform_driver = {
 
 static struct v4l2_subdev_info msm_sensor_driver_subdev_info[] = {
 	{
-		.code = V4L2_MBUS_FMT_SBGGR10_1X10,
+		.code = MEDIA_BUS_FMT_SBGGR10_1X10,
 		.colorspace = V4L2_COLORSPACE_JPEG,
 		.fmt = 1,
 		.order = 0,
@@ -90,7 +87,7 @@ static int32_t msm_sensor_driver_create_i2c_v4l_subdev
 	struct i2c_client *client = s_ctrl->sensor_i2c_client->client;
 
 	CDBG("%s %s I2c probe succeeded\n", __func__, client->name);
-	if (0 == s_ctrl->bypass_video_node_creation) {
+	if (s_ctrl->bypass_video_node_creation == 0) {
 		rc = camera_init_v4l2(&client->dev, &session_id);
 		if (rc < 0) {
 			pr_err("failed: camera_init_i2c_v4l2 rc %d", rc);
@@ -134,7 +131,7 @@ static int32_t msm_sensor_driver_create_v4l_subdev
 	int32_t rc = 0;
 	uint32_t session_id = 0;
 
-	if (0 == s_ctrl->bypass_video_node_creation) {
+	if (s_ctrl->bypass_video_node_creation == 0) {
 		rc = camera_init_v4l2(&s_ctrl->pdev->dev, &session_id);
 		if (rc < 0) {
 			pr_err("failed: camera_init_v4l2 rc %d", rc);
@@ -168,127 +165,6 @@ static int32_t msm_sensor_driver_create_v4l_subdev
 #endif
 	s_ctrl->msm_sd.sd.devnode->fops =
 		&msm_sensor_v4l2_subdev_fops;
-
-	return rc;
-}
-
-static int32_t msm_get_info_from_eeprom(
-		struct msm_sensor_ctrl_t *s_ctrl, struct device_node *eeprom_node)
-{
-	struct platform_device *eeprom_device = NULL;
-	struct v4l2_subdev *sd = NULL;
-	struct msm_eeprom_ctrl_t *e_ctrl = NULL;
-
-	if (!eeprom_node) {
-		pr_err("%s: can't find eeprom sensor phandle\n", __func__);
-		return -EINVAL;
-	}
-
-	eeprom_device = of_find_device_by_node(eeprom_node);
-	if (!eeprom_device) {
-			pr_err("%s:%d: can't find the device by node\n", __func__, __LINE__);
-			return -EINVAL;
-	}
-
-	sd = platform_get_drvdata(eeprom_device);
-	if (!sd) {
-		pr_err("%s:%d: can't find the eeprom sd\n", __func__, __LINE__);
-		return -EINVAL;
-	}
-
-	e_ctrl = v4l2_get_subdevdata(sd);
-
-	if (!e_ctrl) {
-		pr_err("%s:%d: can't find the eeprom sd\n", __func__, __LINE__);
-		return -EINVAL;
-	}
-
-	s_ctrl->sensordata->sensor_module_name = e_ctrl->sensor_module_name;
-	s_ctrl->sensordata->chromtix_lib_name = e_ctrl->chromtix_lib_name;
-	s_ctrl->sensordata->default_chromtix_lib_name = e_ctrl->default_chromtix_lib_name;
-	s_ctrl->sensordata->eeprom_checksum = e_ctrl->checksum;
-	s_ctrl->sensordata->eeprom_valid_flag = e_ctrl->valid_flag;
-	if (e_ctrl->sensor_module_name)
-		pr_err("%s:%d: sensor_module_name:%s\n", __func__, __LINE__, e_ctrl->sensor_module_name);
-
-	if (e_ctrl->chromtix_lib_name)
-		pr_err("%s:%d:chromtix_lib_name: %s\n", __func__, __LINE__, e_ctrl->chromtix_lib_name);
-
-	if (e_ctrl->default_chromtix_lib_name)
-		pr_err("%s:%d:default_chromtix_lib_name: %s\n", __func__, __LINE__, e_ctrl->default_chromtix_lib_name);
-
-	return 0;
-}
-
-static int32_t msm_sensor_fill_flash_subdevid(
-				struct msm_sensor_ctrl_t *s_ctrl)
-{
-	int32_t rc = 0;
-	struct device_node *src_node = NULL;
-	int32_t *flash_subdev_id, i;
-	int32_t count = 0;
-	uint32_t val = 0;
-	struct  msm_sensor_info_t *sensor_info;
-	struct device_node *of_node = s_ctrl->of_node;
-	const void *p;
-	struct platform_device *flash_device = NULL;
-	struct v4l2_subdev *sd = NULL;
-
-	if (!of_node)
-		return -EINVAL;
-
-	sensor_info = s_ctrl->sensordata->sensor_info;
-	flash_subdev_id = &sensor_info->subdev_id[SUB_MODULE_LED_FLASH];
-
-	p = of_get_property(of_node, "qcom,led-flash-src", &count);
-	if (!p || !count)
-		return 0;
-
-	count /= sizeof(uint32_t);
-	for (i = 0; i < count; i++) {
-		src_node = of_parse_phandle(of_node, "qcom,led-flash-src", i);
-		if (!src_node) {
-			pr_err("flash src node NULL\n");
-			continue;
-		}
-
-		flash_device = of_find_device_by_node(src_node);
-		if (!flash_device) {
-			pr_err("%s:%d: can't find the device by node\n",
-				__func__, __LINE__);
-			of_node_put(src_node);
-			src_node = NULL;
-			continue;
-		}
-
-		sd = platform_get_drvdata(flash_device);
-		if (!sd) {
-			pr_err("%s:%d: can't find the flash sd\n",
-				__func__, __LINE__);
-			of_node_put(src_node);
-			src_node = NULL;
-			continue;
-		}
-
-		rc = of_property_read_u32(src_node, "cell-index", &val);
-		if (rc < 0) {
-			pr_err("%s qcom,eeprom cell index %d, rc %d\n",
-				__func__, val, rc);
-			of_node_put(src_node);
-			src_node = NULL;
-			continue;
-		}
-
-		*flash_subdev_id = val;
-		pr_info("%s:%d flash subdevice id is %d\n",
-			__func__, __LINE__, val);
-		of_node_put(src_node);
-		src_node = NULL;
-		break;
-	}
-
-	pr_info("%s:%d flash subdevice id is %d\n",
-		__func__, __LINE__, val);
 
 	return rc;
 }
@@ -364,8 +240,6 @@ static int32_t msm_sensor_fill_eeprom_subdevid_by_name(
 			continue;
 		}
 
-		msm_get_info_from_eeprom(s_ctrl, src_node);
-
 		*eeprom_subdev_id = val;
 		CDBG("%s:%d Eeprom subdevice id is %d\n",
 			__func__, __LINE__, val);
@@ -424,6 +298,88 @@ static int32_t msm_sensor_fill_actuator_subdevid_by_name(
 	return rc;
 }
 
+static int32_t msm_sensor_fill_laser_led_subdevid_by_name(
+				struct msm_sensor_ctrl_t *s_ctrl)
+{
+	int32_t rc = 0;
+	struct device_node *src_node = NULL;
+	uint32_t val = 0;
+	int32_t *laser_led_subdev_id;
+	struct  msm_sensor_info_t *sensor_info;
+	struct device_node *of_node = s_ctrl->of_node;
+
+	if (!of_node)
+		return -EINVAL;
+
+	sensor_info = s_ctrl->sensordata->sensor_info;
+	laser_led_subdev_id = &sensor_info->subdev_id[SUB_MODULE_LASER_LED];
+	/* set sudev id to -1 and try to found new id */
+	*laser_led_subdev_id = -1;
+
+
+	src_node = of_parse_phandle(of_node, "qcom,laserled-src", 0);
+	if (!src_node) {
+		CDBG("%s:%d src_node NULL\n", __func__, __LINE__);
+	} else {
+		rc = of_property_read_u32(src_node, "cell-index", &val);
+		CDBG("%s qcom,laser led cell index %d, rc %d\n", __func__,
+			val, rc);
+		of_node_put(src_node);
+		src_node = NULL;
+		if (rc < 0) {
+			pr_err("%s cell index not found %d\n",
+				__func__, __LINE__);
+			return -EINVAL;
+		}
+		*laser_led_subdev_id = val;
+	}
+
+	return rc;
+}
+
+static int32_t msm_sensor_fill_flash_subdevid_by_name(
+				struct msm_sensor_ctrl_t *s_ctrl)
+{
+	int32_t rc = 0;
+	struct device_node *src_node = NULL;
+	uint32_t val = 0, flash_name_len;
+	int32_t *flash_subdev_id;
+	struct  msm_sensor_info_t *sensor_info;
+	struct device_node *of_node = s_ctrl->of_node;
+
+	if (!of_node || !s_ctrl->sensordata->flash_name)
+		return -EINVAL;
+
+	sensor_info = s_ctrl->sensordata->sensor_info;
+	flash_subdev_id = &sensor_info->subdev_id[SUB_MODULE_LED_FLASH];
+
+	*flash_subdev_id = -1;
+
+	flash_name_len = strlen(s_ctrl->sensordata->flash_name);
+	if (flash_name_len >= MAX_SENSOR_NAME)
+		return -EINVAL;
+
+	if (flash_name_len == 0)
+		return 0;
+
+	src_node = of_parse_phandle(of_node, "qcom,led-flash-src", 0);
+	if (!src_node) {
+		CDBG("%s:%d src_node NULL\n", __func__, __LINE__);
+	} else {
+		rc = of_property_read_u32(src_node, "cell-index", &val);
+		CDBG("%s qcom,flash cell index %d, rc %d\n", __func__,
+			val, rc);
+		if (rc < 0) {
+			pr_err("%s failed %d\n", __func__, __LINE__);
+			return -EINVAL;
+		}
+		*flash_subdev_id = val;
+		of_node_put(src_node);
+		src_node = NULL;
+	}
+	return rc;
+}
+
 static int32_t msm_sensor_fill_ois_subdevid_by_name(
 				struct msm_sensor_ctrl_t *s_ctrl)
 {
@@ -468,42 +424,6 @@ static int32_t msm_sensor_fill_ois_subdevid_by_name(
 		src_node = NULL;
 	}
 
-	return rc;
-}
-
-static int32_t msm_sensor_fill_flash_subdevid_by_name(
-				struct msm_sensor_ctrl_t *s_ctrl)
-{
-	int32_t rc = 0;
-	struct device_node *src_node = NULL;
-	uint32_t val = 0;
-	int32_t *flash_subdev_id;
-	struct  msm_sensor_info_t *sensor_info;
-	struct device_node *of_node = s_ctrl->of_node;
-
-	if (!of_node)
-		return -EINVAL;
-
-	sensor_info = s_ctrl->sensordata->sensor_info;
-	flash_subdev_id = &sensor_info->subdev_id[SUB_MODULE_LED_FLASH];
-
-	*flash_subdev_id = -1;
-
-	src_node = of_parse_phandle(of_node, "qcom,led-flash-src", 0);
-	if (!src_node) {
-		CDBG("%s:%d src_node NULL\n", __func__, __LINE__);
-	} else {
-		rc = of_property_read_u32(src_node, "cell-index", &val);
-		CDBG("%s qcom,flash cell index %d, rc %d\n", __func__,
-			val, rc);
-		if (rc < 0) {
-			pr_err("%s failed %d\n", __func__, __LINE__);
-			return -EINVAL;
-		}
-		*flash_subdev_id = val;
-		of_node_put(src_node);
-		src_node = NULL;
-	}
 	return rc;
 }
 
@@ -593,7 +513,7 @@ static int32_t msm_sensor_create_pd_settings(void *setting,
 	int c, end;
 	struct msm_sensor_power_setting pd_tmp;
 
-	pr_info("Generating power_down_setting");
+	pr_err("Generating power_down_setting");
 
 #ifdef CONFIG_COMPAT
 	if (is_compat_task()) {
@@ -805,6 +725,35 @@ static void msm_sensor_fill_sensor_info(struct msm_sensor_ctrl_t *s_ctrl,
 	strlcpy(entity_name, s_ctrl->msm_sd.sd.entity.name, MAX_SENSOR_NAME);
 }
 
+extern unsigned int get_hw_version_devid(void);
+
+extern int a1_get_front_sensor_name(char *);
+extern int a4_get_back_sensor_name(char *);
+extern int a4_get_front_sensor_name(char *);
+extern int a7_get_back_sensor_name(char *);
+extern int b7_get_main_sensor_name(char *);
+extern int b7_get_aux_sensor_name(char *);
+extern int a8_get_rear_sensor_name(char *);
+extern int b7_get_front_sensor_name(char *);
+
+/* static function definition */
+static int32_t msm_sensor_driver_is_special_support(
+	struct msm_sensor_ctrl_t *s_ctrl,
+	char *sensor_name)
+{
+	int32_t rc = 0, i = 0;
+	struct msm_camera_sensor_board_info *sensordata = s_ctrl->sensordata;
+
+	for (i = 0; i < sensordata->special_support_size; i++) {
+		if (!strcmp(sensordata->special_support_sensors[i],
+						 sensor_name)) {
+			rc = TRUE;
+			break;
+		}
+	}
+	return rc;
+}
+
 /* static function definition */
 int32_t msm_sensor_driver_probe(void *setting,
 	struct msm_sensor_info_t *probed_info, char *entity_name)
@@ -817,11 +766,18 @@ int32_t msm_sensor_driver_probe(void *setting,
 
 	unsigned long                        mount_pos = 0;
 	uint32_t                             is_yuv;
-/*
- * add by lijing for flash
- * ZTE_CAM_LIJING_20151020
- */
-	unsigned long                             has_flash = 0;
+
+	char a1_front_sensor_name[32];
+	char a4_back_sensor_name[32];
+	char a4_front_sensor_name[32];
+	char a7_back_sensor_name[32];
+	char b7_main_sensor_name[32];
+	char b7_aux_sensor_name[32];
+	char a8_rear_sensor_name[32];
+	char b7_front_sensor_name[32];
+	unsigned int hw_version_devid = 0;
+
+	hw_version_devid = get_hw_version_devid();
 
 	/* Validate input parameters */
 	if (!setting) {
@@ -873,9 +829,6 @@ int32_t msm_sensor_driver_probe(void *setting,
 		slave_info->sensor_id_info = slave_info32->sensor_id_info;
 
 		slave_info->slave_addr = slave_info32->slave_addr;
-
-		slave_info->bakeup_slave_addr = slave_info32->bakeup_slave_addr;
-
 		slave_info->power_setting_array.size =
 			slave_info32->power_setting_array.size;
 		slave_info->power_setting_array.size_down =
@@ -906,6 +859,10 @@ int32_t msm_sensor_driver_probe(void *setting,
 		}
 	}
 
+	pr_err("%s, %s bypass %d force to 0 \n", __func__,
+			slave_info->sensor_name, slave_info->bypass_video_node_creation);
+	slave_info->bypass_video_node_creation = 0;
+
 	if (strlen(slave_info->sensor_name) >= MAX_SENSOR_NAME ||
 		strlen(slave_info->eeprom_name) >= MAX_SENSOR_NAME ||
 		strlen(slave_info->actuator_name) >= MAX_SENSOR_NAME ||
@@ -919,6 +876,93 @@ int32_t msm_sensor_driver_probe(void *setting,
 			strlen(slave_info->ois_name));
 		rc = -EINVAL;
 		goto free_slave_info;
+	}
+
+	if (strcmp(slave_info->eeprom_name, "ov4688") == 0) {
+		a1_get_front_sensor_name(a1_front_sensor_name);
+		if (hw_version_devid == 7)
+			strcat(a1_front_sensor_name, "_a7");
+		pr_info("slave_info sensor_name = %s, front_sensor_name - %s\n",
+				slave_info->sensor_name, a1_front_sensor_name);
+		if (strcmp(slave_info->sensor_name, a1_front_sensor_name) != 0) {
+			pr_err("%s %d: a1 sensor name not match!\n", __func__, __LINE__);
+			rc = -EFAULT;
+			goto free_slave_info;
+		}
+	}
+
+	if (strcmp(slave_info->eeprom_name, "sony_imx378") == 0) {
+		a7_get_back_sensor_name(a7_back_sensor_name);
+		CDBG("slave_info sensor_name = %s, back_sensor_name - %s\n",
+			slave_info->sensor_name, a7_back_sensor_name);
+		if (strcmp(slave_info->sensor_name, a7_back_sensor_name) != 0) {
+			CDBG("%s %d: a7 back sensor name not match!\n", __func__, __LINE__);
+			rc = -EFAULT;
+			goto free_slave_info;
+		}
+	}
+
+	if (strncmp(slave_info->eeprom_name, "imx318", strlen("imx318")) == 0) {
+		a4_get_back_sensor_name(a4_back_sensor_name);
+		CDBG("slave_info sensor_name = %s, back_sensor_name - %s\n",
+			slave_info->sensor_name, a4_back_sensor_name);
+		if (strcmp(slave_info->sensor_name, a4_back_sensor_name) != 0) {
+			CDBG("%s %d: a4 back sensor name not match!\n", __func__, __LINE__);
+			rc = -EFAULT;
+			goto free_slave_info;
+		}
+	}
+	if (strncmp(slave_info->eeprom_name, "imx268", strlen("imx268")) == 0) {
+		a4_get_front_sensor_name(a4_front_sensor_name);
+		CDBG("slave_info sensor_name = %s, front_sensor_name - %s\n",
+			slave_info->sensor_name, a4_front_sensor_name);
+		if (strcmp(slave_info->sensor_name, a4_front_sensor_name) != 0) {
+			CDBG("%s %d: a4 front sensor name not match!\n", __func__, __LINE__);
+			rc = -EFAULT;
+			goto free_slave_info;
+		}
+	}
+
+	if (strcmp(slave_info->eeprom_name, "imx258_gt24c32") == 0) {
+		b7_get_main_sensor_name(b7_main_sensor_name);
+		pr_err("slave_info sensor_name = %s, main_sensor_name - %s\n",
+			slave_info->sensor_name, b7_main_sensor_name);
+		if (strcmp(slave_info->sensor_name, b7_main_sensor_name) != 0) {
+			pr_err("%s %d: b7 main sensor name not match!\n", __func__, __LINE__);
+			rc = -EFAULT;
+			goto free_slave_info;
+		}
+	}
+	if (strcmp(slave_info->eeprom_name, "imx258_mono_gt24c32") == 0) {
+		b7_get_aux_sensor_name(b7_aux_sensor_name);
+		pr_err("slave_info sensor_name = %s, aux_sensor_name - %s\n",
+			slave_info->sensor_name, b7_aux_sensor_name);
+		if (strcmp(slave_info->sensor_name, b7_aux_sensor_name) != 0) {
+			pr_err("%s %d: b7 aux sensor name not match!\n", __func__, __LINE__);
+			rc = -EFAULT;
+			goto free_slave_info;
+		}
+	}
+	if (strcmp(slave_info->eeprom_name, "ov4688_b7") == 0) {
+		b7_get_front_sensor_name(b7_front_sensor_name);
+		pr_err("slave_info sensor_name = %s, front_sensor_name - %s\n",
+			slave_info->sensor_name, b7_front_sensor_name);
+		if (strcmp(slave_info->sensor_name, b7_front_sensor_name) != 0) {
+			pr_err("%s %d: b7 front sensor name not match!\n", __func__, __LINE__);
+			rc = -EFAULT;
+			goto free_slave_info;
+		}
+	}
+
+	if (strcmp(slave_info->eeprom_name, "ov16880_ofilm") == 0) {
+		a8_get_rear_sensor_name(a8_rear_sensor_name);
+		pr_err("slave_info sensor_name = %s, main_sensor_name - %s\n",
+			slave_info->sensor_name, a8_rear_sensor_name);
+		if (strcmp(slave_info->sensor_name, a8_rear_sensor_name) != 0) {
+			pr_err("%s %d: a8 sensor name not match!\n", __func__, __LINE__);
+			rc = -EFAULT;
+			goto free_slave_info;
+		}
 	}
 
 	/* Print slave info */
@@ -956,6 +1000,16 @@ int32_t msm_sensor_driver_probe(void *setting,
 	}
 
 	CDBG("s_ctrl[%d] %pK", slave_info->camera_id, s_ctrl);
+
+	if (s_ctrl->sensordata->special_support_size > 0) {
+		if (!msm_sensor_driver_is_special_support(s_ctrl,
+			slave_info->sensor_name)) {
+			pr_err("%s:%s is not support on this board\n",
+				__func__, slave_info->sensor_name);
+			rc = 0;
+			goto free_slave_info;
+		}
+	}
 
 	if (s_ctrl->is_probe_succeed == 1) {
 		/*
@@ -1009,8 +1063,6 @@ int32_t msm_sensor_driver_probe(void *setting,
 		slave_info->sensor_id_info.sensor_id_reg_addr;
 	camera_info->sensor_id = slave_info->sensor_id_info.sensor_id;
 	camera_info->sensor_id_mask = slave_info->sensor_id_info.sensor_id_mask;
-
-	camera_info->sensor_bakeup_slave_addr = slave_info->bakeup_slave_addr;
 
 	/* Fill CCI master, slave address and CCI default params */
 	if (!s_ctrl->sensor_i2c_client) {
@@ -1067,11 +1119,6 @@ CSID_TG:
 	s_ctrl->sensordata->eeprom_name = slave_info->eeprom_name;
 	s_ctrl->sensordata->actuator_name = slave_info->actuator_name;
 	s_ctrl->sensordata->ois_name = slave_info->ois_name;
-
-	s_ctrl->sensordata->sensor_module_name = NULL;
-	s_ctrl->sensordata->chromtix_lib_name = NULL;
-	s_ctrl->sensordata->default_chromtix_lib_name = NULL;
-
 	s_ctrl->sensordata->flash_name = slave_info->flash_name;
 	/*
 	 * Update eeporm subdevice Id by input eeprom name
@@ -1085,6 +1132,11 @@ CSID_TG:
 	 * Update actuator subdevice Id by input actuator name
 	 */
 	rc = msm_sensor_fill_actuator_subdevid_by_name(s_ctrl);
+	if (rc < 0) {
+		pr_err("%s failed %d\n", __func__, __LINE__);
+		goto free_camera_info;
+	}
+	rc = msm_sensor_fill_laser_led_subdevid_by_name(s_ctrl);
 	if (rc < 0) {
 		pr_err("%s failed %d\n", __func__, __LINE__);
 		goto free_camera_info;
@@ -1110,21 +1162,6 @@ CSID_TG:
 	}
 
 	pr_err("%s probe succeeded", slave_info->sensor_name);
-
-	s_ctrl->bypass_video_node_creation =
-		slave_info->bypass_video_node_creation;
-
-	/*
-	 * Update the subdevice id of flash-src based on availability in kernel.
-	 */
-	if (strlen(slave_info->flash_name) == 0) {
-		s_ctrl->sensordata->sensor_info->
-			subdev_id[SUB_MODULE_LED_FLASH] = -1;
-	} else {
-		msm_sensor_fill_flash_subdevid(s_ctrl);
-		has_flash = 1;
-	}
-	pr_err("has_flash=%ld\n", has_flash);
 
 	/*
 	 * Create /dev/videoX node, comment for now until dummy /dev/videoX
@@ -1163,8 +1200,6 @@ CSID_TG:
 		((s_ctrl->sensordata->
 		sensor_info->sensor_mount_angle / 90) << 8);
 
-	mount_pos = mount_pos | (has_flash << 31);
-
 	s_ctrl->msm_sd.sd.entity.flags = mount_pos | MEDIA_ENT_FL_DEFAULT;
 
 	/*Save sensor info*/
@@ -1172,16 +1207,15 @@ CSID_TG:
 
 	msm_sensor_fill_sensor_info(s_ctrl, probed_info, entity_name);
 
-	if (msm_sensor_enable_debugfs(s_ctrl))
-		CDBG("%s:%d creat debugfs fail\n", __func__, __LINE__);
-
-	msm_sensor_register_sysdev(s_ctrl);
-
 	/*
 	 * Set probe succeeded flag to 1 so that no other camera shall
 	 * probed on this slot
 	 */
 	s_ctrl->is_probe_succeed = 1;
+
+	s_ctrl->bypass_video_node_creation =
+		slave_info->bypass_video_node_creation;
+
 	return rc;
 
 camera_power_down:
@@ -1198,10 +1232,10 @@ free_slave_info:
 
 static int32_t msm_sensor_driver_get_dt_data(struct msm_sensor_ctrl_t *s_ctrl)
 {
-	int32_t                              rc = 0;
+	int32_t                              rc = 0, i = 0;
 	struct msm_camera_sensor_board_info *sensordata = NULL;
 	struct device_node                  *of_node = s_ctrl->of_node;
-	uint32_t cell_id;
+	uint32_t	cell_id;
 
 	s_ctrl->sensordata = kzalloc(sizeof(*sensordata), GFP_KERNEL);
 	if (!s_ctrl->sensordata) {
@@ -1234,6 +1268,35 @@ static int32_t msm_sensor_driver_get_dt_data(struct msm_sensor_ctrl_t *s_ctrl)
 		pr_err("failed: sctrl already filled for cell_id %d", cell_id);
 		rc = -EINVAL;
 		goto FREE_SENSOR_DATA;
+	}
+
+	sensordata->special_support_size =
+		of_property_count_strings(of_node,
+				 "qcom,special-support-sensors");
+
+	if (sensordata->special_support_size < 0)
+		sensordata->special_support_size = 0;
+
+	if (sensordata->special_support_size > MAX_SPECIAL_SUPPORT_SIZE) {
+		pr_debug("%s:support_size exceed max support size\n", __func__);
+		sensordata->special_support_size = MAX_SPECIAL_SUPPORT_SIZE;
+	}
+
+	if (sensordata->special_support_size) {
+		for (i = 0; i < sensordata->special_support_size; i++) {
+			rc = of_property_read_string_index(of_node,
+				"qcom,special-support-sensors", i,
+				&(sensordata->special_support_sensors[i]));
+			if (rc < 0) {
+				/* if read sensor support names failed,
+				*   set support all sensors, break;
+				*/
+				sensordata->special_support_size = 0;
+				break;
+			}
+			CDBG("%s special_support_sensors[%d] = %s\n", __func__,
+				i, sensordata->special_support_sensors[i]);
+		}
 	}
 
 	/* Read subdev info */
@@ -1269,11 +1332,6 @@ static int32_t msm_sensor_driver_get_dt_data(struct msm_sensor_ctrl_t *s_ctrl)
 		s_ctrl->is_secure = 0;
 		rc = 0;
 	}
-
-	sensordata->power_info.ois_en_gpio = of_get_named_gpio(of_node,
-		"qcom,platform-ois-en-gpio", 0);
-	if (!gpio_is_valid(sensordata->power_info.ois_en_gpio))
-		pr_err("%s:%d, ois enable gpio not specified\n", __func__, __LINE__);
 
 	/* Get CCI master */
 	rc = of_property_read_u32(of_node, "qcom,cci-master",
@@ -1388,7 +1446,6 @@ static int32_t msm_sensor_driver_parse(struct msm_sensor_ctrl_t *s_ctrl)
 FREE_DT_DATA:
 	kfree(s_ctrl->sensordata->power_info.gpio_conf->gpio_num_info);
 	kfree(s_ctrl->sensordata->power_info.gpio_conf->cam_gpio_req_tbl);
-	kfree(s_ctrl->sensordata->power_info.gpio_conf->cam_gpio_set_tbl);
 	kfree(s_ctrl->sensordata->power_info.gpio_conf);
 	kfree(s_ctrl->sensordata->power_info.cam_vreg);
 	kfree(s_ctrl->sensordata);
@@ -1537,9 +1594,6 @@ static int __init msm_sensor_driver_init(void)
 	int32_t rc = 0;
 
 	CDBG("%s Enter\n", __func__);
-
-	msm_sensor_creat_debugfs();
-
 	rc = platform_driver_register(&msm_sensor_platform_driver);
 	if (rc)
 		pr_err("%s platform_driver_register failed rc = %d",

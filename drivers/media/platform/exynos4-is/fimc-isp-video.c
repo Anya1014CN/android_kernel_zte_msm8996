@@ -28,7 +28,7 @@
 
 #include <media/v4l2-device.h>
 #include <media/v4l2-ioctl.h>
-#include <media/videobuf2-core.h>
+#include <media/videobuf2-v4l2.h>
 #include <media/videobuf2-dma-contig.h>
 #include <media/exynos-fimc.h>
 
@@ -39,10 +39,11 @@
 #include "fimc-is-param.h"
 
 static int isp_video_capture_queue_setup(struct vb2_queue *vq,
-			const struct v4l2_format *pfmt,
+			const void *parg,
 			unsigned int *num_buffers, unsigned int *num_planes,
 			unsigned int sizes[], void *allocators[])
 {
+	const struct v4l2_format *pfmt = parg;
 	struct fimc_isp *isp = vb2_get_drv_priv(vq);
 	struct v4l2_pix_format_mplane *vid_fmt = &isp->video_capture.pixfmt;
 	const struct v4l2_pix_format_mplane *pixm = NULL;
@@ -194,10 +195,11 @@ static int isp_video_capture_buffer_prepare(struct vb2_buffer *vb)
 
 static void isp_video_capture_buffer_queue(struct vb2_buffer *vb)
 {
+	struct vb2_v4l2_buffer *vbuf = to_vb2_v4l2_buffer(vb);
 	struct fimc_isp *isp = vb2_get_drv_priv(vb->vb2_queue);
 	struct fimc_is_video *video = &isp->video_capture;
 	struct fimc_is *is = fimc_isp_to_is(isp);
-	struct isp_video_buf *ivb = to_isp_video_buf(vb);
+	struct isp_video_buf *ivb = to_isp_video_buf(vbuf);
 	unsigned long flags;
 	unsigned int i;
 
@@ -219,8 +221,8 @@ static void isp_video_capture_buffer_queue(struct vb2_buffer *vb)
 							ivb->dma_addr[i];
 
 			isp_dbg(2, &video->ve.vdev,
-				"dma_buf %pad (%d/%d/%d) addr: %pad\n",
-				&buf_index, ivb->index, i, vb->v4l2_buf.index,
+				"dma_buf %d (%d/%d/%d) addr: %pad\n",
+				buf_index, ivb->index, i, vb->index,
 				&ivb->dma_addr[i]);
 		}
 
@@ -242,7 +244,7 @@ static void isp_video_capture_buffer_queue(struct vb2_buffer *vb)
 void fimc_isp_video_irq_handler(struct fimc_is *is)
 {
 	struct fimc_is_video *video = &is->isp.video_capture;
-	struct vb2_buffer *vb;
+	struct vb2_v4l2_buffer *vbuf;
 	int buf_index;
 
 	/* TODO: Ensure the DMA is really stopped in stop_streaming callback */
@@ -250,10 +252,10 @@ void fimc_isp_video_irq_handler(struct fimc_is *is)
 		return;
 
 	buf_index = (is->i2h_cmd.args[1] - 1) % video->buf_count;
-	vb = &video->buffers[buf_index]->vb;
+	vbuf = &video->buffers[buf_index]->vb;
 
-	v4l2_get_timestamp(&vb->v4l2_buf.timestamp);
-	vb2_buffer_done(vb, VB2_BUF_STATE_DONE);
+	v4l2_get_timestamp(&vbuf->timestamp);
+	vb2_buffer_done(&vbuf->vb2_buf, VB2_BUF_STATE_DONE);
 
 	video->buf_mask &= ~BIT(buf_index);
 	fimc_is_hw_set_isp_buf_mask(is, video->buf_mask);
@@ -321,7 +323,7 @@ static int isp_video_release(struct file *file)
 		ivc->streaming = 0;
 	}
 
-	vb2_fop_release(file);
+	_vb2_fop_release(file, NULL);
 
 	if (v4l2_fh_is_singular_file(file)) {
 		fimc_pipeline_call(&ivc->ve, close);
@@ -389,12 +391,17 @@ static void __isp_video_try_fmt(struct fimc_isp *isp,
 				struct v4l2_pix_format_mplane *pixm,
 				const struct fimc_fmt **fmt)
 {
-	*fmt = fimc_isp_find_format(&pixm->pixelformat, NULL, 2);
+	const struct fimc_fmt *__fmt;
+
+	__fmt = fimc_isp_find_format(&pixm->pixelformat, NULL, 2);
+
+	if (fmt)
+		*fmt = __fmt;
 
 	pixm->colorspace = V4L2_COLORSPACE_SRGB;
 	pixm->field = V4L2_FIELD_NONE;
-	pixm->num_planes = (*fmt)->memplanes;
-	pixm->pixelformat = (*fmt)->fourcc;
+	pixm->num_planes = __fmt->memplanes;
+	pixm->pixelformat = __fmt->fourcc;
 	/*
 	 * TODO: double check with the docmentation these width/height
 	 * constraints are correct.

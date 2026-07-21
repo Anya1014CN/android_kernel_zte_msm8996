@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -33,10 +33,6 @@
 #define EVENT_SYNC_BIT 24
 #define ISAR_BIT 3
 #define SPM_EN_BIT 0
-#define PWR_STATE_IDX_BITS 20
-#define PWR_STATE_IDX_MASK 0x07
-#define WAKE_CONFIG_BITS 1
-#define WAKE_CONFIG_MASK 0x03
 
 struct msm_spm_power_modes {
 	uint32_t mode;
@@ -238,7 +234,7 @@ static void msm_spm_config_slpreq(struct msm_spm_device *dev,
 }
 
 static int msm_spm_dev_set_low_power_mode(struct msm_spm_device *dev,
-		unsigned int mode, bool notify_rpm, bool set_spm_enable)
+		unsigned int mode, bool notify_rpm)
 {
 	uint32_t i;
 	int ret = -EINVAL;
@@ -255,11 +251,9 @@ static int msm_spm_dev_set_low_power_mode(struct msm_spm_device *dev,
 	if (!dev->num_modes)
 		return 0;
 
-	if (mode == MSM_SPM_MODE_DISABLED && set_spm_enable) {
+	if (mode == MSM_SPM_MODE_DISABLED) {
 		ret = msm_spm_drv_set_spm_enable(&dev->reg_data, false);
-	} else {
-		if (set_spm_enable)
-			ret = msm_spm_drv_set_spm_enable(&dev->reg_data, true);
+	} else if (!msm_spm_drv_set_spm_enable(&dev->reg_data, true)) {
 		for (i = 0; i < dev->num_modes; i++) {
 			if (dev->modes[i].mode != mode)
 				continue;
@@ -394,7 +388,7 @@ EXPORT_SYMBOL(msm_spm_reinit);
  */
 bool msm_spm_is_mode_avail(unsigned int mode)
 {
-	struct msm_spm_device *dev = &__get_cpu_var(msm_cpu_spm_device);
+	struct msm_spm_device *dev = this_cpu_ptr(&msm_cpu_spm_device);
 	int i;
 
 	for (i = 0; i < dev->num_modes; i++) {
@@ -542,24 +536,10 @@ EXPORT_SYMBOL(msm_spm_avs_clear_irq);
  */
 int msm_spm_set_low_power_mode(unsigned int mode, bool notify_rpm)
 {
-	struct msm_spm_device *dev = &__get_cpu_var(msm_cpu_spm_device);
-	return msm_spm_dev_set_low_power_mode(dev, mode, notify_rpm, true);
+	struct msm_spm_device *dev = this_cpu_ptr(&msm_cpu_spm_device);
+	return msm_spm_dev_set_low_power_mode(dev, mode, notify_rpm);
 }
 EXPORT_SYMBOL(msm_spm_set_low_power_mode);
-
-void msm_spm_set_rpm_hs(bool allow_rpm_hs)
-{
-	struct msm_spm_device *dev = &__get_cpu_var(msm_cpu_spm_device);
-
-	dev->allow_rpm_hs = allow_rpm_hs;
-}
-EXPORT_SYMBOL(msm_spm_set_rpm_hs);
-
-int msm_spm_config_low_power_mode_addr(struct msm_spm_device *dev,
-		unsigned int mode, bool notify_rpm)
-{
-	return msm_spm_dev_set_low_power_mode(dev, mode, notify_rpm, false);
-}
 
 /**
  * msm_spm_init(): Board initalization function
@@ -602,7 +582,7 @@ struct msm_spm_device *msm_spm_get_device_by_name(const char *name)
 int msm_spm_config_low_power_mode(struct msm_spm_device *dev,
 		unsigned int mode, bool notify_rpm)
 {
-	return msm_spm_dev_set_low_power_mode(dev, mode, notify_rpm, true);
+	return msm_spm_dev_set_low_power_mode(dev, mode, notify_rpm);
 }
 #ifdef CONFIG_MSM_L2_SPM
 
@@ -878,7 +858,6 @@ static int msm_spm_dev_probe(struct platform_device *pdev)
 	for_each_child_of_node(node, n) {
 		const char *name;
 		bool bit_set;
-		u8 field_val;
 		int sync;
 
 		if (!n->name)
@@ -919,16 +898,6 @@ static int msm_spm_dev_probe(struct platform_device *pdev)
 
 		bit_set = of_property_read_bool(n, "qcom,spm_en");
 		modes[mode_count].ctl |= bit_set ? BIT(SPM_EN_BIT) : 0;
-
-		ret  = of_property_read_u8(n, "qcom,pwr-state-idx", &field_val);
-		if (!ret)
-			modes[mode_count].ctl |= (field_val &
-				PWR_STATE_IDX_MASK) << PWR_STATE_IDX_BITS;
-
-		ret = of_property_read_u8(n, "qcom,wake-config", &field_val);
-		if (!ret)
-			modes[mode_count].ctl |= (field_val & WAKE_CONFIG_MASK)
-				<< WAKE_CONFIG_BITS;
 
 		ret = of_property_read_u32(n, "qcom,event_sync", &sync);
 		if (!ret)

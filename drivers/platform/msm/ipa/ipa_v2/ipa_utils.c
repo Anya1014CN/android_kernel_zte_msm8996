@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -94,7 +94,6 @@ static const int ep_mapping[3][IPA_CLIENT_MAX] = {
 	[IPA_1_1][IPA_CLIENT_Q6_LAN_PROD]        =  5,
 	[IPA_1_1][IPA_CLIENT_Q6_WAN_PROD]        = -1,
 	[IPA_1_1][IPA_CLIENT_Q6_CMD_PROD]        = -1,
-	[IPA_1_1][IPA_CLIENT_ETHERNET_PROD]      = -1,
 
 	[IPA_1_1][IPA_CLIENT_HSIC1_CONS]         = 14,
 	[IPA_1_1][IPA_CLIENT_WLAN1_CONS]         = -1,
@@ -120,7 +119,6 @@ static const int ep_mapping[3][IPA_CLIENT_MAX] = {
 	[IPA_1_1][IPA_CLIENT_MHI_CONS]           = -1,
 	[IPA_1_1][IPA_CLIENT_Q6_LAN_CONS]        =  4,
 	[IPA_1_1][IPA_CLIENT_Q6_WAN_CONS]        = -1,
-	[IPA_1_1][IPA_CLIENT_ETHERNET_CONS]      = -1,
 
 
 	[IPA_2_0][IPA_CLIENT_HSIC1_PROD]         = 12,
@@ -150,7 +148,6 @@ static const int ep_mapping[3][IPA_CLIENT_MAX] = {
 						 =  12,
 	[IPA_2_0][IPA_CLIENT_MEMCPY_DMA_ASYNC_PROD]
 						 =  19,
-	[IPA_2_0][IPA_CLIENT_ETHERNET_PROD]      = 12,
 	/* Only for test purpose */
 	[IPA_2_0][IPA_CLIENT_TEST_PROD]          = 19,
 	[IPA_2_0][IPA_CLIENT_TEST1_PROD]         = 19,
@@ -178,7 +175,7 @@ static const int ep_mapping[3][IPA_CLIENT_MAX] = {
 	[IPA_2_0][IPA_CLIENT_APPS_LAN_CONS]      =  2,
 	[IPA_2_0][IPA_CLIENT_APPS_WAN_CONS]      =  5,
 	[IPA_2_0][IPA_CLIENT_ODU_EMB_CONS]       = 13,
-	[IPA_2_0][IPA_CLIENT_ODU_TETH_CONS]      = 1,
+	[IPA_2_0][IPA_CLIENT_ODU_TETH_CONS]      =  1,
 	[IPA_2_0][IPA_CLIENT_MHI_CONS]           = 17,
 	[IPA_2_0][IPA_CLIENT_Q6_LAN_CONS]        =  8,
 	[IPA_2_0][IPA_CLIENT_Q6_WAN_CONS]        =  9,
@@ -191,18 +188,16 @@ static const int ep_mapping[3][IPA_CLIENT_MAX] = {
 						 =  16,
 	[IPA_2_0][IPA_CLIENT_Q6_LTE_WIFI_AGGR_CONS]
 						 =  10,
-	[IPA_2_0][IPA_CLIENT_ETHERNET_CONS]      = 1,
 	/* Only for test purpose */
 	[IPA_2_0][IPA_CLIENT_TEST_CONS]          = 1,
 	[IPA_2_0][IPA_CLIENT_TEST1_CONS]         = 1,
 	[IPA_2_0][IPA_CLIENT_TEST2_CONS]         = 16,
 	[IPA_2_0][IPA_CLIENT_TEST3_CONS]         = 13,
 	[IPA_2_0][IPA_CLIENT_TEST4_CONS]         = 15,
-	[IPA_2_0][IPA_CLIENT_DUMMY_CONS]         = -1,
 
 
 	[IPA_2_6L][IPA_CLIENT_HSIC1_PROD]         = -1,
-	[IPA_2_6L][IPA_CLIENT_WLAN1_PROD]         = -1,
+	[IPA_2_6L][IPA_CLIENT_WLAN1_PROD]         = 18,
 	[IPA_2_6L][IPA_CLIENT_HSIC2_PROD]         = -1,
 	[IPA_2_6L][IPA_CLIENT_USB2_PROD]          = -1,
 	[IPA_2_6L][IPA_CLIENT_HSIC3_PROD]         = -1,
@@ -228,7 +223,6 @@ static const int ep_mapping[3][IPA_CLIENT_MAX] = {
 						 =  -1,
 	[IPA_2_6L][IPA_CLIENT_MEMCPY_DMA_ASYNC_PROD]
 						 =  -1,
-	[IPA_2_6L][IPA_CLIENT_ETHERNET_PROD]      = -1,
 	/* Only for test purpose */
 	[IPA_2_6L][IPA_CLIENT_TEST_PROD]          = 11,
 	[IPA_2_6L][IPA_CLIENT_TEST1_PROD]         = 11,
@@ -237,16 +231,16 @@ static const int ep_mapping[3][IPA_CLIENT_MAX] = {
 	[IPA_2_6L][IPA_CLIENT_TEST4_PROD]         = 14,
 
 	[IPA_2_6L][IPA_CLIENT_HSIC1_CONS]         = -1,
-	[IPA_2_6L][IPA_CLIENT_WLAN1_CONS]         = -1,
+	[IPA_2_6L][IPA_CLIENT_WLAN1_CONS]         = 17,
 	[IPA_2_6L][IPA_CLIENT_HSIC2_CONS]         = -1,
 	[IPA_2_6L][IPA_CLIENT_USB2_CONS]          = -1,
-	[IPA_2_6L][IPA_CLIENT_WLAN2_CONS]         = -1,
+	[IPA_2_6L][IPA_CLIENT_WLAN2_CONS]         = 16,
 	[IPA_2_6L][IPA_CLIENT_HSIC3_CONS]         = -1,
 	[IPA_2_6L][IPA_CLIENT_USB3_CONS]          = -1,
-	[IPA_2_6L][IPA_CLIENT_WLAN3_CONS]         = -1,
+	[IPA_2_6L][IPA_CLIENT_WLAN3_CONS]         = 15,
 	[IPA_2_6L][IPA_CLIENT_HSIC4_CONS]         = -1,
 	[IPA_2_6L][IPA_CLIENT_USB4_CONS]          = -1,
-	[IPA_2_6L][IPA_CLIENT_WLAN4_CONS]         = -1,
+	[IPA_2_6L][IPA_CLIENT_WLAN4_CONS]         = 19,
 	[IPA_2_6L][IPA_CLIENT_HSIC5_CONS]         = -1,
 	[IPA_2_6L][IPA_CLIENT_USB_CONS]           =  0,
 	[IPA_2_6L][IPA_CLIENT_USB_DPL_CONS]       = 10,
@@ -269,14 +263,12 @@ static const int ep_mapping[3][IPA_CLIENT_MAX] = {
 						 =  -1,
 	[IPA_2_6L][IPA_CLIENT_Q6_LTE_WIFI_AGGR_CONS]
 						 =  -1,
-	[IPA_2_6L][IPA_CLIENT_ETHERNET_CONS]      = -1,
 	/* Only for test purpose */
 	[IPA_2_6L][IPA_CLIENT_TEST_CONS]          = 15,
 	[IPA_2_6L][IPA_CLIENT_TEST1_CONS]         = 15,
 	[IPA_2_6L][IPA_CLIENT_TEST2_CONS]         = 0,
 	[IPA_2_6L][IPA_CLIENT_TEST3_CONS]         = 1,
 	[IPA_2_6L][IPA_CLIENT_TEST4_CONS]         = 10,
-	[IPA_2_6L][IPA_CLIENT_DUMMY_CONS]         = -1,
 };
 
 static struct msm_bus_vectors ipa_init_vectors_v1_1[]  = {
@@ -465,9 +457,6 @@ int ipa_get_clients_from_rm_resource(
 		clients->names[i++] = IPA_CLIENT_ODU_EMB_CONS;
 		clients->names[i++] = IPA_CLIENT_ODU_TETH_CONS;
 		break;
-	case IPA_RM_RESOURCE_ETHERNET_CONS:
-		clients->names[i++] = IPA_CLIENT_ETHERNET_CONS;
-		break;
 	case IPA_RM_RESOURCE_USB_PROD:
 		clients->names[i++] = IPA_CLIENT_USB_PROD;
 		break;
@@ -479,10 +468,6 @@ int ipa_get_clients_from_rm_resource(
 		break;
 	case IPA_RM_RESOURCE_ODU_ADAPT_PROD:
 		clients->names[i++] = IPA_CLIENT_ODU_PROD;
-		break;
-	case IPA_RM_RESOURCE_ETHERNET_PROD:
-		clients->names[i++] = IPA_CLIENT_ETHERNET_PROD;
-		break;
 	default:
 		break;
 	}
@@ -522,8 +507,7 @@ bool ipa_should_pipe_be_suspended(enum ipa_client_type client)
 	    client == IPA_CLIENT_WLAN3_CONS   ||
 	    client == IPA_CLIENT_WLAN4_CONS   ||
 	    client == IPA_CLIENT_ODU_EMB_CONS ||
-	    client == IPA_CLIENT_ODU_TETH_CONS ||
-	    client == IPA_CLIENT_ETHERNET_CONS)
+	    client == IPA_CLIENT_ODU_TETH_CONS)
 		return true;
 
 	return false;
@@ -903,8 +887,8 @@ int ipa_init_hw(void)
 	ipa_write_reg(ipa_ctx->mmio, IPA_COMP_SW_RESET_OFST, 1);
 	ipa_write_reg(ipa_ctx->mmio, IPA_COMP_SW_RESET_OFST, 0);
 
-	/* enable IPA */
-	ipa_write_reg(ipa_ctx->mmio, IPA_COMP_CFG_OFST, 1);
+	/* enable IPA Bit:0, enable 2x fast clock Bit:4 */
+	ipa_write_reg(ipa_ctx->mmio, IPA_COMP_CFG_OFST, 0x11);
 
 	/* Read IPA version and make sure we have access to the registers */
 	ipa_version = ipa_read_reg(ipa_ctx->mmio, IPA_VERSION_OFST);
@@ -972,11 +956,39 @@ void ipa2_set_client(int index, enum ipacm_client_enum client, bool uplink)
 	}
 }
 
+/* ipa2_get_wlan_stats() - get ipa wifi stats
+ *
+ * Return value: success or failure
+ */
+int ipa2_get_wlan_stats(struct ipa_get_wdi_sap_stats *wdi_sap_stats)
+{
+	if (ipa_ctx->uc_wdi_ctx.stats_notify) {
+		ipa_ctx->uc_wdi_ctx.stats_notify(IPA_GET_WDI_SAP_STATS,
+			wdi_sap_stats);
+	} else {
+		IPAERR("uc_wdi_ctx.stats_notify not registered\n");
+		return -EFAULT;
+	}
+	return 0;
+}
+
+int ipa2_set_wlan_quota(struct ipa_set_wifi_quota *wdi_quota)
+{
+	if (ipa_ctx->uc_wdi_ctx.stats_notify) {
+		ipa_ctx->uc_wdi_ctx.stats_notify(IPA_SET_WIFI_QUOTA,
+			wdi_quota);
+	} else {
+		IPAERR("uc_wdi_ctx.stats_notify not registered\n");
+		return -EFAULT;
+	}
+	return 0;
+}
+
 /**
  * ipa2_get_client() - provide client mapping
  * @client: client type
  *
- * Return value: none
+ * Return value: client mapping enum
  */
 enum ipacm_client_enum ipa2_get_client(int pipe_idx)
 {
@@ -1071,70 +1083,6 @@ enum ipa_client_type ipa2_get_client_mapping(int pipe_idx)
 	}
 
 	return ipa_ctx->ep[pipe_idx].client;
-}
-
-/**
- * ipa_write_32() - convert 32 bit value to byte array
- * @w: 32 bit integer
- * @dest: byte array
- *
- * Return value: converted value
- */
-u8 *ipa_write_32(u32 w, u8 *dest)
-{
-	*dest++ = (u8)((w) & 0xFF);
-	*dest++ = (u8)((w >> 8) & 0xFF);
-	*dest++ = (u8)((w >> 16) & 0xFF);
-	*dest++ = (u8)((w >> 24) & 0xFF);
-
-	return dest;
-}
-
-/**
- * ipa_write_16() - convert 16 bit value to byte array
- * @hw: 16 bit integer
- * @dest: byte array
- *
- * Return value: converted value
- */
-u8 *ipa_write_16(u16 hw, u8 *dest)
-{
-	*dest++ = (u8)((hw) & 0xFF);
-	*dest++ = (u8)((hw >> 8) & 0xFF);
-
-	return dest;
-}
-
-/**
- * ipa_write_8() - convert 8 bit value to byte array
- * @hw: 8 bit integer
- * @dest: byte array
- *
- * Return value: converted value
- */
-u8 *ipa_write_8(u8 b, u8 *dest)
-{
-	*dest++ = (b) & 0xFF;
-
-	return dest;
-}
-
-/**
- * ipa_pad_to_32() - pad byte array to 32 bit value
- * @dest: byte array
- *
- * Return value: padded value
- */
-u8 *ipa_pad_to_32(u8 *dest)
-{
-	int i = (long)dest & 0x3;
-	int j;
-
-	if (i)
-		for (j = 0; j < (4 - i); j++)
-			*dest++ = 0;
-
-	return dest;
 }
 
 void ipa_generate_mac_addr_hw_rule(u8 **buf, u8 hdr_mac_addr_offset,
@@ -1523,6 +1471,37 @@ int ipa_generate_hw_rule(enum ipa_ip_type ip,
 			*buf = ipa_write_8(0, *buf);
 			*buf = ipa_write_32(0xFFFFFFFF, *buf);
 			*buf = ipa_write_32(attrib->spi, *buf);
+			*buf = ipa_pad_to_32(*buf);
+			ihl_ofst_meq32++;
+		}
+
+		if (attrib->attrib_mask & IPA_FLT_L2TP_INNER_IP_TYPE) {
+			if (ipa_ihl_ofst_meq32[ihl_ofst_meq32] == -1) {
+				IPAERR("ran out of ihl_meq32 eq\n");
+				return -EPERM;
+			}
+			*en_rule |= ipa_ihl_ofst_meq32[ihl_ofst_meq32];
+			/* 22  => offset of IP type after v6 header */
+			*buf = ipa_write_8(22, *buf);
+			*buf = ipa_write_32(0xF0000000, *buf);
+			if (attrib->type == 0x40)
+				*buf = ipa_write_32(0x40000000, *buf);
+			else
+				*buf = ipa_write_32(0x60000000, *buf);
+			*buf = ipa_pad_to_32(*buf);
+			ihl_ofst_meq32++;
+		}
+
+		if (attrib->attrib_mask & IPA_FLT_L2TP_INNER_IPV4_DST_ADDR) {
+			if (ipa_ihl_ofst_meq32[ihl_ofst_meq32] == -1) {
+				IPAERR("ran out of ihl_meq32 eq\n");
+				return -EPERM;
+			}
+			*en_rule |= ipa_ihl_ofst_meq32[ihl_ofst_meq32];
+			/* 38  => offset of inner IPv4 addr */
+			*buf = ipa_write_8(38, *buf);
+			*buf = ipa_write_32(attrib->u.v4.dst_addr_mask, *buf);
+			*buf = ipa_write_32(attrib->u.v4.dst_addr, *buf);
 			*buf = ipa_pad_to_32(*buf);
 			ihl_ofst_meq32++;
 		}
@@ -2123,6 +2102,36 @@ int ipa_generate_flt_eq(enum ipa_ip_type ip,
 				0xFFFFFFFF;
 			eq_atrb->ihl_offset_meq_32[ihl_ofst_meq32].value =
 				attrib->spi;
+			ihl_ofst_meq32++;
+		}
+
+		if (attrib->attrib_mask & IPA_FLT_L2TP_INNER_IP_TYPE) {
+			if (ipa_ihl_ofst_meq32[ihl_ofst_meq32] == -1) {
+				IPAERR("ran out of ihl_meq32 eq\n");
+				return -EPERM;
+			}
+			*en_rule |= ipa_ihl_ofst_meq32[ihl_ofst_meq32];
+			/* 22  => offset of inner IP type after v6 header */
+			eq_atrb->ihl_offset_meq_32[ihl_ofst_meq32].offset = 22;
+			eq_atrb->ihl_offset_meq_32[ihl_ofst_meq32].mask =
+				0xF0000000;
+			eq_atrb->ihl_offset_meq_32[ihl_ofst_meq32].value =
+				(u32)attrib->type << 24;
+			ihl_ofst_meq32++;
+		}
+
+		if (attrib->attrib_mask & IPA_FLT_L2TP_INNER_IPV4_DST_ADDR) {
+			if (ipa_ihl_ofst_meq32[ihl_ofst_meq32] == -1) {
+				IPAERR("ran out of ihl_meq32 eq\n");
+				return -EPERM;
+			}
+			*en_rule |= ipa_ihl_ofst_meq32[ihl_ofst_meq32];
+			/* 38  => offset of inner IPv4 addr */
+			eq_atrb->ihl_offset_meq_32[ihl_ofst_meq32].offset = 38;
+			eq_atrb->ihl_offset_meq_32[ihl_ofst_meq32].mask =
+				attrib->u.v4.dst_addr_mask;
+			eq_atrb->ihl_offset_meq_32[ihl_ofst_meq32].value =
+				attrib->u.v4.dst_addr;
 			ihl_ofst_meq32++;
 		}
 
@@ -3688,8 +3697,7 @@ int ipa2_write_qmap_id(struct ipa_ioc_write_qmapid *param_in)
 	meta.qmap_id = param_in->qmap_id;
 	if (param_in->client == IPA_CLIENT_USB_PROD ||
 	    param_in->client == IPA_CLIENT_HSIC1_PROD ||
-	    param_in->client == IPA_CLIENT_ODU_PROD ||
-	    param_in->client == IPA_CLIENT_ETHERNET_PROD) {
+	    param_in->client == IPA_CLIENT_ODU_PROD) {
 		result = ipa2_cfg_ep_metadata(ipa_ep_idx, &meta);
 	} else if (param_in->client == IPA_CLIENT_WLAN1_PROD) {
 		ipa_ctx->ep[ipa_ep_idx].cfg.meta = meta;
@@ -4591,7 +4599,7 @@ int ipa_tag_process(struct ipa_desc desc[],
 	}
 
 	/* IP_PACKET_INIT IC for tag status to be sent to apps */
-	pkt_init = kzalloc(sizeof(*pkt_init), GFP_KERNEL);
+	pkt_init = kzalloc(sizeof(*pkt_init), flag);
 	if (!pkt_init) {
 		IPAERR("failed to allocate memory\n");
 		res = -ENOMEM;
@@ -4610,7 +4618,7 @@ int ipa_tag_process(struct ipa_desc desc[],
 	desc_idx++;
 
 	/* NO-OP IC for ensuring that IPA pipeline is empty */
-	reg_write_nop = kzalloc(sizeof(*reg_write_nop), GFP_KERNEL);
+	reg_write_nop = kzalloc(sizeof(*reg_write_nop), flag);
 	if (!reg_write_nop) {
 		IPAERR("no mem\n");
 		res = -ENOMEM;
@@ -4629,7 +4637,7 @@ int ipa_tag_process(struct ipa_desc desc[],
 	desc_idx++;
 
 	/* status IC */
-	status = kzalloc(sizeof(*status), GFP_KERNEL);
+	status = kzalloc(sizeof(*status), flag);
 	if (!status) {
 		IPAERR("no mem\n");
 		res = -ENOMEM;
@@ -4665,7 +4673,7 @@ int ipa_tag_process(struct ipa_desc desc[],
 	atomic_set(&comp->cnt, 2);
 
 	/* dummy packet to send to IPA. packet payload is a completion object */
-	dummy_skb = alloc_skb(sizeof(comp), GFP_KERNEL);
+	dummy_skb = alloc_skb(sizeof(comp), flag);
 	if (!dummy_skb) {
 		IPAERR("failed to allocate memory\n");
 		res = -ENOMEM;
@@ -4990,8 +4998,7 @@ int ipa2_disable_apps_wan_cons_deaggr(uint32_t agg_size, uint32_t agg_count)
 	return res;
 }
 
-static const struct ipa_gsi_ep_config *ipa2_get_gsi_ep_info
-	(enum ipa_client_type client)
+static struct ipa_gsi_ep_config *ipa2_get_gsi_ep_info(int ipa_ep_idx)
 {
 	IPAERR("Not supported for IPA 2.x\n");
 	return NULL;
@@ -5071,6 +5078,7 @@ int ipa2_bind_api_controller(enum ipa_hw_type ipa_hw_type,
 	api_ctrl->ipa_cfg_ep_holb_by_client = ipa2_cfg_ep_holb_by_client;
 	api_ctrl->ipa_cfg_ep_ctrl = ipa2_cfg_ep_ctrl;
 	api_ctrl->ipa_add_hdr = ipa2_add_hdr;
+	api_ctrl->ipa_add_hdr_usr = ipa2_add_hdr_usr;
 	api_ctrl->ipa_del_hdr = ipa2_del_hdr;
 	api_ctrl->ipa_commit_hdr = ipa2_commit_hdr;
 	api_ctrl->ipa_reset_hdr = ipa2_reset_hdr;
@@ -5080,6 +5088,7 @@ int ipa2_bind_api_controller(enum ipa_hw_type ipa_hw_type,
 	api_ctrl->ipa_add_hdr_proc_ctx = ipa2_add_hdr_proc_ctx;
 	api_ctrl->ipa_del_hdr_proc_ctx = ipa2_del_hdr_proc_ctx;
 	api_ctrl->ipa_add_rt_rule = ipa2_add_rt_rule;
+	api_ctrl->ipa_add_rt_rule_usr = ipa2_add_rt_rule_usr;
 	api_ctrl->ipa_del_rt_rule = ipa2_del_rt_rule;
 	api_ctrl->ipa_commit_rt = ipa2_commit_rt;
 	api_ctrl->ipa_reset_rt = ipa2_reset_rt;
@@ -5088,6 +5097,7 @@ int ipa2_bind_api_controller(enum ipa_hw_type ipa_hw_type,
 	api_ctrl->ipa_query_rt_index = ipa2_query_rt_index;
 	api_ctrl->ipa_mdfy_rt_rule = ipa2_mdfy_rt_rule;
 	api_ctrl->ipa_add_flt_rule = ipa2_add_flt_rule;
+	api_ctrl->ipa_add_flt_rule_usr = ipa2_add_flt_rule_usr;
 	api_ctrl->ipa_del_flt_rule = ipa2_del_flt_rule;
 	api_ctrl->ipa_mdfy_flt_rule = ipa2_mdfy_flt_rule;
 	api_ctrl->ipa_commit_flt = ipa2_commit_flt;
@@ -5121,6 +5131,8 @@ int ipa2_bind_api_controller(enum ipa_hw_type ipa_hw_type,
 	api_ctrl->ipa_suspend_wdi_pipe = ipa2_suspend_wdi_pipe;
 	api_ctrl->ipa_get_wdi_stats = ipa2_get_wdi_stats;
 	api_ctrl->ipa_get_smem_restr_bytes = ipa2_get_smem_restr_bytes;
+	api_ctrl->ipa_broadcast_wdi_quota_reach_ind =
+			ipa2_broadcast_wdi_quota_reach_ind;
 	api_ctrl->ipa_uc_wdi_get_dbpa = ipa2_uc_wdi_get_dbpa;
 	api_ctrl->ipa_uc_reg_rdyCB = ipa2_uc_reg_rdyCB;
 	api_ctrl->ipa_uc_dereg_rdyCB = ipa2_uc_dereg_rdyCB;
@@ -5201,6 +5213,8 @@ int ipa2_bind_api_controller(enum ipa_hw_type ipa_hw_type,
 		ipa2_set_required_perf_profile;
 	api_ctrl->ipa_get_ipc_logbuf = ipa2_get_ipc_logbuf;
 	api_ctrl->ipa_get_ipc_logbuf_low = ipa2_get_ipc_logbuf_low;
+	api_ctrl->ipa_rx_poll = ipa2_rx_poll;
+	api_ctrl->ipa_recycle_wan_skb = ipa2_recycle_wan_skb;
 	api_ctrl->ipa_setup_uc_ntn_pipes = ipa2_setup_uc_ntn_pipes;
 	api_ctrl->ipa_tear_down_uc_offload_pipes =
 		ipa2_tear_down_uc_offload_pipes;
@@ -5219,7 +5233,8 @@ int ipa2_bind_api_controller(enum ipa_hw_type ipa_hw_type,
  */
 u32 ipa_get_sys_yellow_wm(struct ipa_sys_context *sys)
 {
-	if (ipa_ctx->ipa_hw_type == IPA_HW_v2_6L) {
+	if (ipa_ctx->ipa_hw_type == IPA_HW_v2_6L &&
+		ipa_ctx->ipa_uc_monitor_holb) {
 		return ipa_read_reg(ipa_ctx->mmio,
 			IPA_YELLOW_MARKER_SYS_CFG_OFST);
 	} else {

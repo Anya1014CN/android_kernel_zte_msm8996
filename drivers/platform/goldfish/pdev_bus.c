@@ -21,6 +21,7 @@
 #include <linux/platform_device.h>
 #include <linux/slab.h>
 #include <linux/io.h>
+#include <linux/goldfish.h>
 
 #define PDEV_BUS_OP_DONE        (0x00)
 #define PDEV_BUS_OP_REMOVE_DEV  (0x04)
@@ -130,10 +131,9 @@ static int goldfish_new_pdev(void)
 	dev->pdev.dev.dma_mask = (void *)(dev->pdev.name + name_len + 1);
 	*dev->pdev.dev.dma_mask = ~0;
 
-#ifdef CONFIG_64BIT
-	writel((u32)((u64)name>>32), pdev_bus_base + PDEV_BUS_GET_NAME_HIGH);
-#endif
-	writel((u32)(unsigned long)name, pdev_bus_base + PDEV_BUS_GET_NAME);
+	gf_write_ptr(name, pdev_bus_base + PDEV_BUS_GET_NAME,
+		pdev_bus_base + PDEV_BUS_GET_NAME_HIGH);
+
 	name[name_len] = '\0';
 	dev->pdev.id = readl(pdev_bus_base + PDEV_BUS_ID);
 	dev->pdev.resource[0].start = base;
@@ -157,23 +157,26 @@ static int goldfish_new_pdev(void)
 static irqreturn_t goldfish_pdev_bus_interrupt(int irq, void *dev_id)
 {
 	irqreturn_t ret = IRQ_NONE;
+
 	while (1) {
 		u32 op = readl(pdev_bus_base + PDEV_BUS_OP);
-		switch (op) {
-		case PDEV_BUS_OP_DONE:
-			return IRQ_NONE;
 
+		switch (op) {
 		case PDEV_BUS_OP_REMOVE_DEV:
 			goldfish_pdev_remove();
+			ret = IRQ_HANDLED;
 			break;
 
 		case PDEV_BUS_OP_ADD_DEV:
 			goldfish_new_pdev();
+			ret = IRQ_HANDLED;
 			break;
+
+		case PDEV_BUS_OP_DONE:
+		default:
+			return ret;
 		}
-		ret = IRQ_HANDLED;
 	}
-	return ret;
 }
 
 static int goldfish_pdev_bus_probe(struct platform_device *pdev)
@@ -220,20 +223,10 @@ free_resources:
 	return ret;
 }
 
-static int goldfish_pdev_bus_remove(struct platform_device *pdev)
-{
-	iounmap(pdev_bus_base);
-	free_irq(pdev_bus_irq, pdev);
-	release_mem_region(pdev_bus_addr, pdev_bus_len);
-	return 0;
-}
-
 static struct platform_driver goldfish_pdev_bus_driver = {
 	.probe = goldfish_pdev_bus_probe,
-	.remove = goldfish_pdev_bus_remove,
 	.driver = {
 		.name = "goldfish_pdev_bus"
 	}
 };
-
-module_platform_driver(goldfish_pdev_bus_driver);
+builtin_platform_driver(goldfish_pdev_bus_driver);

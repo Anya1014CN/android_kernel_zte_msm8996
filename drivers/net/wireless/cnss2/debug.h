@@ -52,7 +52,7 @@ extern void *cnss_ipc_log_context;
 		if (!(_condition)) {					\
 			cnss_pr_err("ASSERT at line %d\n",		\
 				    __LINE__);				\
-			BUG_ON(1);					\
+			WARN_ON(1);					\
 		}							\
 	} while (0)
 #else

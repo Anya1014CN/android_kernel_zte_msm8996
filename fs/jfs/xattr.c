@@ -493,15 +493,17 @@ static int ea_get(struct inode *inode, struct ea_buffer *ea_buf, int min_size)
 	if (size > PSIZE) {
 		/*
 		 * To keep the rest of the code simple.  Allocate a
-		 * contiguous buffer to work with
+		 * contiguous buffer to work with. Make the buffer large
+		 * enough to make use of the whole extent.
 		 */
-		ea_buf->xattr = kmalloc(size, GFP_KERNEL);
+		ea_buf->max_size = (size + sb->s_blocksize - 1) &
+		    ~(sb->s_blocksize - 1);
+
+		ea_buf->xattr = kmalloc(ea_buf->max_size, GFP_KERNEL);
 		if (ea_buf->xattr == NULL)
 			return -ENOMEM;
 
 		ea_buf->flag = EA_MALLOC;
-		ea_buf->max_size = (size + sb->s_blocksize - 1) &
-		    ~(sb->s_blocksize - 1);
 
 		if (ea_size == 0)
 			return 0;
@@ -849,7 +851,7 @@ int __jfs_setxattr(tid_t tid, struct inode *inode, const char *name,
 int jfs_setxattr(struct dentry *dentry, const char *name, const void *value,
 		 size_t value_len, int flags)
 {
-	struct inode *inode = dentry->d_inode;
+	struct inode *inode = d_inode(dentry);
 	struct jfs_inode_info *ji = JFS_IP(inode);
 	int rc;
 	tid_t tid;
@@ -872,7 +874,7 @@ int jfs_setxattr(struct dentry *dentry, const char *name, const void *value,
 
 	tid = txBegin(inode->i_sb, 0);
 	mutex_lock(&ji->commit_mutex);
-	rc = __jfs_setxattr(tid, dentry->d_inode, name, value, value_len,
+	rc = __jfs_setxattr(tid, d_inode(dentry), name, value, value_len,
 			    flags);
 	if (!rc)
 		rc = txCommit(tid, 1, &inode, 0);
@@ -959,7 +961,7 @@ ssize_t jfs_getxattr(struct dentry *dentry, const char *name, void *data,
 			return -EOPNOTSUPP;
 	}
 
-	err = __jfs_getxattr(dentry->d_inode, name, data, buf_size);
+	err = __jfs_getxattr(d_inode(dentry), name, data, buf_size);
 
 	return err;
 }
@@ -976,7 +978,7 @@ static inline int can_list(struct jfs_ea *ea)
 
 ssize_t jfs_listxattr(struct dentry * dentry, char *data, size_t buf_size)
 {
-	struct inode *inode = dentry->d_inode;
+	struct inode *inode = d_inode(dentry);
 	char *buffer;
 	ssize_t size = 0;
 	int xattr_size;
@@ -1029,7 +1031,7 @@ ssize_t jfs_listxattr(struct dentry * dentry, char *data, size_t buf_size)
 
 int jfs_removexattr(struct dentry *dentry, const char *name)
 {
-	struct inode *inode = dentry->d_inode;
+	struct inode *inode = d_inode(dentry);
 	struct jfs_inode_info *ji = JFS_IP(inode);
 	int rc;
 	tid_t tid;
@@ -1047,7 +1049,7 @@ int jfs_removexattr(struct dentry *dentry, const char *name)
 
 	tid = txBegin(inode->i_sb, 0);
 	mutex_lock(&ji->commit_mutex);
-	rc = __jfs_setxattr(tid, dentry->d_inode, name, NULL, 0, XATTR_REPLACE);
+	rc = __jfs_setxattr(tid, d_inode(dentry), name, NULL, 0, XATTR_REPLACE);
 	if (!rc)
 		rc = txCommit(tid, 1, &inode, 0);
 	txEnd(tid);

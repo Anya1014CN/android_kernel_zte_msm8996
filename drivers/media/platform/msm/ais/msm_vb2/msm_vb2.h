@@ -38,7 +38,7 @@ struct msm_vb2_buffer {
 	 * because both v4l2 frameworks and driver directly
 	 * cast msm_vb2_buffer to a vb2_buf.
 	 */
-	struct vb2_buffer vb2_buf;
+	struct vb2_v4l2_buffer vb2_v4l2_buf;
 	struct list_head list;
 	int in_freeq;
 };
@@ -54,7 +54,8 @@ struct msm_stream {
 	struct list_head list;
 
 	/* stream index per session, same
-	 * as stream_id but set through s_parm */
+	 * as stream_id but set through s_parm
+	 */
 	unsigned int stream_id;
 	/* vb2 buffer handling */
 	struct vb2_queue *vb2_q;

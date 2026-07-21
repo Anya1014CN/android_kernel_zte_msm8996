@@ -6,7 +6,6 @@ MDSS which manage all data paths to different panel interfaces.
 
 Required properties
 - compatible :		Must be "qcom,mdss_mdp"
-			- "qcom,mdss_mdp3" for mdp3
 - reg :			offset and length of the register set for the device.
 - reg-names :		names to refer to register sets related to this device
 - interrupts :		Interrupt associated with MDSS.
@@ -93,6 +92,8 @@ Required properties
 				active in MDP for this configuration. Meant for
 				hardware that has hw cursors support as a
 				source pipe.
+- qcom,mdss-rot-xin-id:	Array of VBIF clients ids (xins) corresponding
+				to the respective rotator pipes.
 - qcom,mdss-pipe-cursor-xin-id:	Array of VBIF clients ids (xins) corresponding
 				to the respective cursor pipes. Number of xin ids
 				defined should match the number of offsets
@@ -240,10 +241,20 @@ Bus Scaling Data:
 - qcom,max-mixer-width:	Specify maximum MDP mixer width that the device supports.
 				This is a mandatory property, if not specified then
 				mdp probe will fail.
+- qcom,mdss-reg-bus:            Subnode to provide Bus scaling for register access for
+                                MDP and DSI Blocks.
+- qcom,mdss-rot-reg-bus:        Subnode to provide Bus scaling for register access for
+                                Rotator Block.
 
 Optional properties:
 - batfet-supply :	Phandle for battery FET regulator device node.
 - vdd-cx-supply :	Phandle for vdd CX regulator device node.
+- vdd-cx-min-uV :	The minimum voltage level in uV for the CX rail
+			whenever the display is on. If vdd-cx-supply is
+			specified, then this binding is mandatory.
+- vdd-cx-max-uV :	The maximum voltage level in uV for the CX rail
+			whenever the display is on. If vdd-cx-supply is
+			specified, then this binding is mandatory.
 - qcom,vbif-settings :	Array with key-value pairs of constant VBIF register
 			settings used to setup MDSS QoS for optimum performance.
 			The key used should be offset from "vbif_phys" register
@@ -286,10 +297,6 @@ Optional properties:
 			      feature is available or not.
 - qcom,mdss-has-rotator-downscale: Boolean property to indicate if rotator
 				   downscale feature is available or not.
-- qcom,mdss-rot-downscale-min: This integer value indicates the Minimum
-				downscale factor supported by rotator.
-- qcom,mdss-rot-downscale-max: This integer value indicates the Maximum
-				downscale factor supported by rotator.
 - qcom,mdss-ad-off:		Array of offset addresses for the available
 				Assertive Display (AD) blocks. These offsets
 				are calculated from the register "mdp_phys"
@@ -401,6 +408,10 @@ Optional properties:
 				to mdp block. Xin id property is not valid for mdp
 				internal blocks like ctl, lm, dspp. It should set
 				to 0xff for such blocks.
+- qcom,max-dest-scaler-input-width: This 32 bit value provides
+				maximum width to the input of destination scaler.
+- qcom,max-dest-scaler-output-width: This 32 bit value provides
+				maximum width to the output of destination scaler.
 
 Fudge Factors:			Fudge factors are used to boost demand for
 				resources like bus bandswidth, clk rate etc. to
@@ -526,18 +537,13 @@ Fudge Factors:			Fudge factors are used to boost demand for
 - qcom,max-pipe-width:		This value specifies the maximum MDP SSPP width
 				the device supports. If not specified, a default value
 				of 2048 will be applied.
-- qcom,mdss-reg-bus:		Property to provide Bus scaling for register access for
-				MDP and DSI Blocks.
-
-- qcom,mdss-rot-reg-bus:	Property to provide Bus scaling for register access for
-				Rotator Block.
-
-- qcom,mdss-hw-rt:	        Optional Property to request min vote on the bus.
-			        Few Low tier targets expect min vote on the bus during SMMU
-			        and TZ operations. use this handle to request the vote needed.
 
 Optional subnodes:
-- mdss_fb:		Child nodes representing the frame buffer virtual devices.
+- mdss_fb:			Child nodes representing the frame buffer virtual devices.
+
+- qcom,mdss-hw-rt-bus:	        Subnode to request min vote on the bus.
+			        Some targets expect min vote on the bus during SMMU
+			        and TZ operations. Use this handle to request the vote needed.
 
 Subnode properties:
 - compatible :		Must be "qcom,mdss-fb"
@@ -565,6 +571,8 @@ Subnode properties:
 			 Example: Width = 1920, Height = 1080, BytesPerPixel = 4,
 			 Number of frame-buffers reserved = 2.
 			 Size = 1920*1080*4*2 = ROUND_1MB(15.8MB) = 16MB.
+- qcom,mdss-intf:	Phandle to the kernel driver module that is mapped to the
+			frame buffer virtual device.
 - qcom,mdss-fb-splash-logo-enabled:    The boolean entry enables the framebuffer
 					driver to display the splash logo image.
 					It is independent of continuous splash
@@ -630,14 +638,6 @@ Subnode properties:
 						secure mdp domain.
 			"qcom,smmu_rot_sec"	- smmu context bank device for
 						secure rotation domain.
-			"qcom,smmu_kms_unsec" 	- smmu context bank device for
-						unsecure mdp domain for KMS driver.
-			"qcom,smmu_nrt_unsec"	- smmu context bank device for
-						unsecure rotation domain for KMS driver.
-			"qcom,smmu_kms_sec" 	- smmu context bank device for
-						secure mdp domain for KMS driver.
-			"qcom,smmu_nrt_sec"	- smmu context bank device for
-						secure rotation domain for KMS driver.
 			"qcom,smmu_arm_mdp_unsec"	- arm smmu context bank device for
 						unsecure mdp domain.
 			"qcom,smmu_arm_mdp_sec"	- arm smmu context bank device for
@@ -708,6 +708,8 @@ Example:
 
 		qcom,max-mixer-width = <2048>;
 		qcom,max-pipe-width = <2048>;
+		qcom,max-dest-scaler-input-width = <2048>;
+		qcom,max-dest-scaler-output-width = <2560>;
 		qcom,max-clk-rate = <320000000>;
 		qcom,vbif-settings = <0x0004 0x00000001>,
 				     <0x00D8 0x00000707>;
@@ -748,14 +750,13 @@ Example:
 		qcom,mdss-no-hist-vote;
 		qcom,mdss-traffic-shaper-enabled;
 		qcom,mdss-has-rotator-downscale;
-		qcom,mdss-rot-downscale-min = <2>;
-		qcom,mdss-rot-downscale-max = <16>;
 
 		qcom,mdss-has-pingpong-split;
 		qcom,mdss-pipe-vig-xin-id = <0 4 8>;
 		qcom,mdss-pipe-rgb-xin-id = <1 5 9>;
 		qcom,mdss-pipe-dma-xin-id = <2 10>;
 		qcom,mdss-pipe-cursor-xin-id = <7 7>;
+		qcom,mdss-rot-xin-id = <14 15>;
 
 		qcom,mdss-pipe-vig-clk-ctrl-offsets = <0x3AC 0 0>,
 						      <0x3B4 0 0>,
@@ -856,7 +857,7 @@ Example:
 			    <1 590 0 320000>;
 		};
 
-		qcom,mdss-hw-rt-bus {
+		qcom,mdss-hw-rt {
 		    /* hw-rt Bus Scale Settings */
 		    qcom,msm-bus,name = "mdss_hw_rt";
 		    qcom,msm-bus,num-cases = <2>;
@@ -875,13 +876,6 @@ Example:
 			clocks = <&clock_mmss clk_smmu_mdp_ahb_clk>,
 				<&clock_mmss clk_smmu_mdp_axi_clk>;
 			clock-names = "dummy_clk", "dummy_clk";
-		};
-
-		qcom,mdss_wb_panel {
-			compatible = "qcom,mdss_wb";
-			qcom,mdss_pan_res = <1280 720>;
-			qcom,mdss_pan_bpp = <24>;
-			qcom,mdss-fb-map = <&mdss_fb1>;
 		};
 
 		qcom,mdss-rot-reg-bus {

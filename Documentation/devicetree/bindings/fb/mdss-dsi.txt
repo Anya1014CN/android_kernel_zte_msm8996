@@ -46,11 +46,12 @@ Optional properties:
 					-- qcom,supply-max-voltage: maximum voltage level (uV)
 					-- qcom,supply-enable-load: load drawn (uA) from enabled supply
 					-- qcom,supply-disable-load: load drawn (uA) from disabled supply
-					-- qcom,supply-ulp-load: load drawn (uA) from supply in ultra-low power mode
 					-- qcom,supply-pre-on-sleep: time to sleep (ms) before turning on
 					-- qcom,supply-post-on-sleep: time to sleep (ms) after turning on
 					-- qcom,supply-pre-off-sleep: time to sleep (ms) before turning off
 					-- qcom,supply-post-off-sleep: time to sleep (ms) after turning off
+					-- qcom,supply-lp-mode-disable-allowed: supply can be turned off in
+					low power state.
 - pll-src-config			Specified the source PLL for the DSI
 					link clocks:
 					"PLL0" - Clocks sourced out of DSI PLL0
@@ -85,8 +86,6 @@ Required properties:
 - qcom,mdss-fb-map-prim:		pHandle that specifies the framebuffer to which the
 					primary interface is mapped.
 - qcom,mdss-mdp:			pHandle that specifies the mdss-mdp device.
-- qcom,platform-regulator-settings:	An array of length 7 or 5 that specifies the PHY
-					regulator settings. It use 5 bytes for 8996 pll.
 - qcom,platform-strength-ctrl:		An array of length 2 or 10 that specifies the PHY
 					strengthCtrl settings. It use 10 bytes for 8996 pll.
 - qcom,platform-lane-config:		An array of length 45 or 20 that specifies the PHY
@@ -106,16 +105,19 @@ Optional properties:
 - qcom,platform-reset-gpio:		Specifies the panel reset gpio.
 - qcom,platform-te-gpio:		Specifies the gpio used for TE.
 - qcom,platform-bklight-en-gpio:	Specifies the gpio used to enable display back-light
-- qcom,platform-mode-gpio:		Select video/command mode of panel through gpio when it supports
-					both modes.
-- qcom,platform-intf-mux-gpio:		Select dsi/external(hdmi) interface through gpio when it supports
-					either dsi or external interface.
+- qcom,platform-bklight-en-gpio-invert:	Boolean to invert the gpio used to enable display back-light
+- qcom,platform-avdd-en-gpio:	Specifies the gpio used to enable AMOLED AVDD
+- qcom,platform-avdd-en-gpio-invert:	Boolean to invert the gpio used to enable AMOLED AVDD
+- qcom,panel-mode-gpio:			Specifies the GPIO to select video/command/single-port/dual-port
+					mode of panel through gpio when it supports these modes.
 - pinctrl-names:			List of names to assign mdss pin states defined in pinctrl device node
 					Refer to pinctrl-bindings.txt
 - pinctrl-<0..n>:			Lists phandles each pointing to the pin configuration node within a pin
 					controller. These pin configurations are installed in the pinctrl
 					device node. Refer to pinctrl-bindings.txt
 - qcom,regulator-ldo-mode:		Boolean to enable ldo mode for the dsi phy regulator
+- qcom,platform-regulator-settings:	An array of length 7 or 5 that specifies the PHY
+					regulator settings. It use 5 bytes for 8996 pll.
 - qcom,null-insertion-enabled:		Boolean to enable NULL packet insertion
 					feature for DSI controller.
 - qcom,dsi-irq-line:			Boolean specifies if DSI has a different irq line than mdp.
@@ -128,6 +130,28 @@ Optional properties:
 					"lane_map_1032" = <1 0 3 2>
 					"lane_map_2103" = <2 1 0 3>
 					"lane_map_3210" = <3 2 1 0>
+					where lane_map_ABCD means:
+						Logical_Lane_A = Physical_Lane_0
+						Logical_Lane_B = Physical_Lane_1
+						Logical_Lane_C = Physical_Lane_2
+						Logical_Lane_D = Physical_Lane_3
+					The lane map can vary between multiple instances
+					of the DSI controller and should be set accordingly in all
+					of them based on the board configuration.
+- qcom,lane-map-v2:			An array of size 4 uint8s specifying the corresponding
+					mapping for each of the logical data lanes.
+					For example, a value of <A B C D> means
+						Logical_Lane_0 = Physical_Lane_A
+						Logical_Lane_1 = Physical_Lane_B
+						Logical_Lane_2 = Physical_Lane_C
+						Logical_Lane_3 = Physical_Lane_D
+					The default lane mapping is <0 1 2 3>.
+					Since the values are of type uint8, they need to be
+					specified as below:
+						qcom,lane-map-v2 = /bits/ 8 <0 1 2 3>
+					This binding supersedes qcom,lane-map binding and will
+					override any lane swap setting specified by qcom,lane-map.
+					Refer to qcom,lane-map for additional notes.
 - qcom,pluggable			Boolean to enable hotplug feature.
 - qcom,timing-db-mode:			Boolean specifies dsi timing mode registers are supported or not.
 - qcom,display-id			A string indicates the display ID for the controller.
@@ -165,7 +189,6 @@ Example:
 				qcom,supply-max-voltage = <0>;
 				qcom,supply-enable-load = <0>;
 				qcom,supply-disable-load = <0>;
-				qcom,supply-ulp-load = <0>;
 				qcom,supply-pre-on-sleep = <0>;
 				qcom,supply-post-on-sleep = <0>;
 				qcom,supply-pre-off-sleep = <0>;
@@ -184,7 +207,6 @@ Example:
 				qcom,supply-max-voltage = <1800000>;
 				qcom,supply-enable-load = <100000>;
 				qcom,supply-disable-load = <100>;
-				qcom,supply-ulp-load = <100>;
 				qcom,supply-pre-on-sleep = <0>;
 				qcom,supply-post-on-sleep = <20>;
 				qcom,supply-pre-off-sleep = <0>;
@@ -203,7 +225,6 @@ Example:
 				qcom,supply-max-voltage = <1200000>;
 				qcom,supply-enable-load = <100000>;
 				qcom,supply-disable-load = <100>;
-				qcom,supply-ulp-load = <1000>;
 				qcom,supply-pre-on-sleep = <0>;
 				qcom,supply-post-on-sleep = <20>;
 				qcom,supply-pre-off-sleep = <0>;
@@ -251,8 +272,8 @@ Example:
 			qcom,platform-te-gpio = <&msmgpio 24 0>;
 			qcom,platform-enable-gpio = <&msmgpio 58 1>;
 			qcom,platform-bklight-en-gpio = <&msmgpio 86 0>;
-			qcom,platform-mode-gpio = <&msmgpio 7 0>;
-			qcom,platform-intf-mux-gpio = <&tlmm 115 0>;
+			qcom,platform-bklight-en-gpio-invert;
+			qcom,panel-mode-gpio = <&msmgpio 107 0>;
 			qcom,dsi-irq-line;
 			qcom,lane-map = "lane_map_3012";
 			qcom,display-id = "primary";

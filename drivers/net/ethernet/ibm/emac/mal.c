@@ -402,7 +402,7 @@ static int mal_poll(struct napi_struct *napi, int budget)
 	unsigned long flags;
 
 	MAL_DBG2(mal, "poll(%d)" NL, budget);
- again:
+
 	/* Process TX skbs */
 	list_for_each(l, &mal->poll_list) {
 		struct mal_commac *mc =
@@ -451,7 +451,6 @@ static int mal_poll(struct napi_struct *napi, int budget)
 			spin_lock_irqsave(&mal->lock, flags);
 			mal_disable_eob_irq(mal);
 			spin_unlock_irqrestore(&mal->lock, flags);
-			goto again;
 		}
 		mc->ops->poll_tx(mc->dev);
 	}
@@ -753,7 +752,7 @@ static int mal_remove(struct platform_device *ofdev)
 	return 0;
 }
 
-static struct of_device_id mal_platform_match[] =
+static const struct of_device_id mal_platform_match[] =
 {
 	{
 		.compatible	= "ibm,mcmal",
@@ -776,7 +775,6 @@ static struct of_device_id mal_platform_match[] =
 static struct platform_driver mal_of_driver = {
 	.driver = {
 		.name = "mcmal",
-		.owner = THIS_MODULE,
 		.of_match_table = mal_platform_match,
 	},
 	.probe = mal_probe,

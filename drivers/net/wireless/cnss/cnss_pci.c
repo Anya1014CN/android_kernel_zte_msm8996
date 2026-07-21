@@ -1,4 +1,4 @@
-/* Copyright (c) 2013-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -29,6 +29,7 @@
 #include <linux/pm_qos.h>
 #include <linux/pm_runtime.h>
 #include <linux/esoc_client.h>
+#include <linux/pinctrl/consumer.h>
 #include <linux/firmware.h>
 #include <linux/dma-mapping.h>
 #include <linux/msm-bus.h>
@@ -117,11 +118,11 @@
 #define WLAN_VREG_IO_DELAY_MIN	100
 #define WLAN_VREG_IO_DELAY_MAX	1000
 #define WLAN_ENABLE_DELAY	10
-#define PCIE_SWITCH_DELAY       20
 #define WLAN_RECOVERY_DELAY	1
 #define PCIE_ENABLE_DELAY	100
 #define WLAN_BOOTSTRAP_DELAY	10
 #define EVICT_BIN_MAX_SIZE      (512*1024)
+#define CNSS_PINCTRL_STATE_ACTIVE "default"
 
 static DEFINE_SPINLOCK(pci_link_down_lock);
 
@@ -151,6 +152,8 @@ struct cnss_wlan_gpio_info {
 	bool state;
 	bool init;
 	bool prop;
+	struct pinctrl *pinctrl;
+	struct pinctrl_state *gpio_state_default;
 };
 
 struct cnss_wlan_vreg_info {
@@ -286,7 +289,6 @@ static struct cnss_data {
 	atomic_t auto_suspended;
 	bool monitor_wake_intr;
 	struct cnss_dual_wifi dual_wifi_info;
-	struct cnss_dev_platform_ops platform_ops;
 } *penv;
 
 static unsigned int pcie_link_down_panic;
@@ -547,15 +549,15 @@ static int cnss_wlan_bootstrap_gpio_init(void)
 	ret = gpio_request(penv->wlan_bootstrap_gpio, WLAN_BOOTSTRAP_GPIO_NAME);
 	if (ret) {
 		pr_err("%s: Can't get GPIO %s, ret = %d\n",
-		       __func__, WLAN_BOOTSTRAP_GPIO_NAME, ret);
+			__func__, WLAN_BOOTSTRAP_GPIO_NAME, ret);
 		goto out;
 	}
 
 	ret = gpio_direction_output(penv->wlan_bootstrap_gpio,
-				    WLAN_BOOTSTRAP_HIGH);
+				WLAN_BOOTSTRAP_HIGH);
 	if (ret) {
 		pr_err("%s: Can't set GPIO %s direction, ret = %d\n",
-		       __func__, WLAN_BOOTSTRAP_GPIO_NAME, ret);
+			__func__, WLAN_BOOTSTRAP_GPIO_NAME, ret);
 		gpio_free(penv->wlan_bootstrap_gpio);
 		goto out;
 	}
@@ -567,6 +569,7 @@ out:
 
 static void cnss_wlan_gpio_set(struct cnss_wlan_gpio_info *info, bool state)
 {
+#ifndef CONFIG_MSM_GVM_QUIN
 	if (!info->prop)
 		return;
 
@@ -576,11 +579,19 @@ static void cnss_wlan_gpio_set(struct cnss_wlan_gpio_info *info, bool state)
 		return;
 	}
 
+	if (state == WLAN_EN_LOW && penv->dual_wifi_info.is_dual_wifi_enabled) {
+		pr_debug("%s Dual WiFi enabled\n", __func__);
+		return;
+	}
+
 	gpio_set_value(info->num, state);
 	info->state = state;
 
 	pr_debug("%s: %s gpio is now %s\n", __func__,
 		 info->name, info->state ? "enabled" : "disabled");
+#else
+	return;
+#endif
 }
 
 static int cnss_configure_wlan_en_gpio(bool state)
@@ -599,6 +610,29 @@ static int cnss_configure_wlan_en_gpio(bool state)
 	}
 
 	msleep(WLAN_ENABLE_DELAY);
+	return ret;
+}
+
+static int cnss_pinctrl_init(struct cnss_wlan_gpio_info *gpio_info,
+	struct platform_device *pdev)
+{
+	int ret;
+	gpio_info->pinctrl = devm_pinctrl_get(&pdev->dev);
+	if (IS_ERR_OR_NULL(gpio_info->pinctrl)) {
+		pr_err("%s: Failed to get pinctrl!\n", __func__);
+		return PTR_ERR(gpio_info->pinctrl);
+	}
+
+	gpio_info->gpio_state_default = pinctrl_lookup_state(gpio_info->pinctrl,
+		CNSS_PINCTRL_STATE_ACTIVE);
+	if (IS_ERR_OR_NULL(gpio_info->gpio_state_default)) {
+		pr_err("%s: Can not get active pin state!\n", __func__);
+		return PTR_ERR(gpio_info->gpio_state_default);
+	}
+
+	ret = pinctrl_select_state(gpio_info->pinctrl,
+		gpio_info->gpio_state_default);
+
 	return ret;
 }
 
@@ -708,6 +742,10 @@ static int cnss_get_wlan_enable_gpio(
 			pr_err(
 			"can't get gpio %s ret %d", gpio_info->name, ret);
 	}
+
+	ret = cnss_pinctrl_init(gpio_info, pdev);
+	if (ret)
+		pr_debug("%s: pinctrl init failed!\n", __func__);
 
 	ret = cnss_wlan_gpio_init(gpio_info);
 	if (ret)
@@ -854,8 +892,8 @@ static int cnss_wlan_get_resources(struct platform_device *pdev)
 				goto err_ant_switch_set;
 			}
 
-			ret = regulator_set_optimum_mode(vreg_info->ant_switch,
-							 WLAN_ANT_SWITCH_CURR);
+			ret = regulator_set_load(vreg_info->ant_switch,
+						 WLAN_ANT_SWITCH_CURR);
 			if (ret < 0) {
 				pr_err("%s: Set ant_switch current failed!\n",
 				       __func__);
@@ -1436,7 +1474,6 @@ static int cnss_wlan_is_codeswap_supported(u16 revision)
 static int cnss_smmu_init(struct device *dev)
 {
 	struct dma_iommu_mapping *mapping;
-	int disable_htw = 1;
 	int atomic_ctx = 1;
 	int ret;
 
@@ -1444,18 +1481,9 @@ static int cnss_smmu_init(struct device *dev)
 					   penv->smmu_iova_start,
 					   penv->smmu_iova_len);
 	if (IS_ERR(mapping)) {
-		pr_err("%s: create mapping failed, err = %d\n", __func__, ret);
 		ret = PTR_ERR(mapping);
+		pr_err("%s: create mapping failed, err = %d\n", __func__, ret);
 		goto map_fail;
-	}
-
-	ret = iommu_domain_set_attr(mapping->domain,
-			      DOMAIN_ATTR_COHERENT_HTW_DISABLE,
-			      &disable_htw);
-	if (ret) {
-		pr_err("%s: set disable_htw attribute failed, err = %d\n",
-			__func__, ret);
-		goto set_attr_fail;
 	}
 
 	ret = iommu_domain_set_attr(mapping->domain,
@@ -1505,6 +1533,21 @@ int cnss_msm_pcie_pm_control(
 	return msm_pcie_pm_control(pm_opt, bus_num, pdev, NULL, options);
 }
 
+#ifndef CONFIG_GHS_VMM
+static int cnss_msm_pcie_suspend_resume(
+		enum msm_pcie_pm_opt pm_opt, u32 bus_num,
+		struct pci_dev *pdev, u32 options)
+{
+	return msm_pcie_pm_control(pm_opt, bus_num, pdev, NULL, options);
+}
+#else
+static inline int cnss_msm_pcie_suspend_resume(
+		enum msm_pcie_pm_opt pm_opt, u32 bus_num,
+		struct pci_dev *pdev, u32 options)
+{
+	return 0;
+}
+#endif
 int cnss_pci_load_and_free_saved_state(
 	struct pci_dev *dev, struct pci_saved_state **state)
 {
@@ -1536,7 +1579,6 @@ int cnss_msm_pcie_enumerate(u32 rc_idx)
 	return msm_pcie_enumerate(rc_idx);
 }
 #else /* !defined CONFIG_PCI_MSM */
-
 struct pci_saved_state *cnss_pci_store_saved_state(struct pci_dev *dev)
 {
 	return NULL;
@@ -1546,7 +1588,7 @@ int cnss_msm_pcie_pm_control(
 		enum msm_pcie_pm_opt pm_opt, u32 bus_num,
 		struct pci_dev *pdev, u32 options)
 {
-	return -ENODEV;
+	return 0;
 }
 
 int cnss_pci_load_and_free_saved_state(
@@ -1557,54 +1599,29 @@ int cnss_pci_load_and_free_saved_state(
 
 int cnss_msm_pcie_shadow_control(struct pci_dev *dev, bool enable)
 {
-	return -ENODEV;
+	return 0;
 }
 
 int cnss_msm_pcie_deregister_event(struct msm_pcie_register_event *reg)
 {
-	return -ENODEV;
+	return 0;
 }
 
 int cnss_msm_pcie_recover_config(struct pci_dev *dev)
 {
-	return -ENODEV;
+	return 0;
 }
 
 int cnss_msm_pcie_register_event(struct msm_pcie_register_event *reg)
 {
-	return -ENODEV;
+	return 0;
 }
 
 int cnss_msm_pcie_enumerate(u32 rc_idx)
 {
-	return -EPROBE_DEFER;
+	return 0;
 }
 #endif
-
-static void cnss_pcie_set_platform_ops(struct device *dev)
-{
-	struct cnss_dev_platform_ops *pf_ops = &penv->platform_ops;
-
-	pf_ops->request_bus_bandwidth = cnss_pci_request_bus_bandwidth;
-	pf_ops->get_virt_ramdump_mem = cnss_pci_get_virt_ramdump_mem;
-	pf_ops->device_self_recovery = cnss_pci_device_self_recovery;
-	pf_ops->schedule_recovery_work = cnss_pci_schedule_recovery_work;
-	pf_ops->device_crashed = cnss_pci_device_crashed;
-	pf_ops->get_wlan_mac_address = cnss_pci_get_wlan_mac_address;
-	pf_ops->set_wlan_mac_address = cnss_pcie_set_wlan_mac_address;
-	pf_ops->power_up = cnss_pcie_power_up;
-	pf_ops->power_down = cnss_pcie_power_down;
-
-	dev->platform_data = pf_ops;
-}
-
-static void cnss_pcie_reset_platform_ops(struct device *dev)
-{
-	struct cnss_dev_platform_ops *pf_ops = &penv->platform_ops;
-
-	memset(pf_ops, 0, sizeof(struct cnss_dev_platform_ops));
-	dev->platform_data = NULL;
-}
 
 static int cnss_wlan_pci_probe(struct pci_dev *pdev,
 			       const struct pci_device_id *id)
@@ -1616,7 +1633,6 @@ static int cnss_wlan_pci_probe(struct pci_dev *pdev,
 	struct codeswap_codeseg_info *cnss_seg_info = NULL;
 	struct device *dev = &pdev->dev;
 
-	cnss_pcie_set_platform_ops(dev);
 	penv->pdev = pdev;
 	penv->id = id;
 	atomic_set(&penv->fw_available, 0);
@@ -1660,7 +1676,7 @@ static int cnss_wlan_pci_probe(struct pci_dev *pdev,
 		pci_save_state(pdev);
 		penv->saved_state = cnss_pci_store_saved_state(pdev);
 
-		ret = cnss_msm_pcie_pm_control(
+		ret = cnss_msm_pcie_suspend_resume(
 			MSM_PCIE_SUSPEND, cnss_get_pci_dev_bus_number(pdev),
 			pdev, PM_OPTIONS);
 		if (ret) {
@@ -1727,7 +1743,6 @@ end_dma_alloc:
 err_unknown:
 err_pcie_suspend:
 smmu_init_fail:
-	cnss_pcie_reset_platform_ops(dev);
 	return ret;
 }
 
@@ -1739,7 +1754,6 @@ static void cnss_wlan_pci_remove(struct pci_dev *pdev)
 		return;
 
 	dev = &penv->pldev->dev;
-	cnss_pcie_reset_platform_ops(dev);
 	device_remove_file(dev, &dev_attr_wlan_setup);
 
 	if (penv->smmu_mapping)
@@ -1755,9 +1769,6 @@ static int cnss_wlan_pci_suspend(struct device *dev)
 	pm_message_t state = { .event = PM_EVENT_SUSPEND };
 
 	if (!penv)
-		goto out;
-
-	if (!penv->pcie_link_state)
 		goto out;
 
 	wdriver = penv->driver;
@@ -1785,9 +1796,6 @@ static int cnss_wlan_pci_resume(struct device *dev)
 	struct pci_dev *pdev = to_pci_dev(dev);
 
 	if (!penv)
-		goto out;
-
-	if (!penv->pcie_link_state)
 		goto out;
 
 	wdriver = penv->driver;
@@ -1827,7 +1835,7 @@ static int cnss_wlan_runtime_suspend(struct device *dev)
 	if (wdrv && wdrv->runtime_ops && wdrv->runtime_ops->runtime_suspend)
 		ret = wdrv->runtime_ops->runtime_suspend(to_pci_dev(dev));
 
-	pr_info("cnss: runtime suspend status: %d\n", ret);
+	pr_debug("cnss: runtime suspend status: %d\n", ret);
 
 	return ret;
 
@@ -1853,7 +1861,7 @@ static int cnss_wlan_runtime_resume(struct device *dev)
 	if (wdrv && wdrv->runtime_ops && wdrv->runtime_ops->runtime_resume)
 		ret = wdrv->runtime_ops->runtime_resume(to_pci_dev(dev));
 
-	pr_info("cnss: runtime resume status: %d\n", ret);
+	pr_debug("cnss: runtime resume status: %d\n", ret);
 
 	return ret;
 }
@@ -1985,7 +1993,7 @@ static inline void __cnss_disable_irq(void *data)
 {
 	struct pci_dev *pdev = data;
 
-	disable_irq(pdev->irq);
+	disable_irq_nosync(pdev->irq);
 }
 
 void cnss_pci_events_cb(struct msm_pcie_notify *notify)
@@ -2353,7 +2361,7 @@ again:
 		pr_err("%s: PCIe event register failed! %d\n", __func__, ret);
 
 	if (!penv->pcie_link_state && !penv->pcie_link_down_ind) {
-		ret = cnss_msm_pcie_pm_control(
+		ret = cnss_msm_pcie_suspend_resume(
 			MSM_PCIE_RESUME, cnss_get_pci_dev_bus_number(pdev),
 			pdev, PM_OPTIONS);
 		if (ret) {
@@ -2362,11 +2370,9 @@ again:
 		}
 		penv->pcie_link_state = PCIE_LINK_UP;
 	} else if (!penv->pcie_link_state && penv->pcie_link_down_ind) {
-
-		ret = cnss_msm_pcie_pm_control(
+		ret = cnss_msm_pcie_suspend_resume(
 			MSM_PCIE_RESUME, cnss_get_pci_dev_bus_number(pdev),
 			pdev, PM_OPTIONS_RESUME_LINK_DOWN);
-
 		if (ret) {
 			pr_err("PCIe link bring-up failed (link down option)\n");
 			goto err_pcie_link_up;
@@ -2403,7 +2409,7 @@ again:
 			pci_save_state(pdev);
 			penv->saved_state = cnss_pci_store_saved_state(pdev);
 			cnss_msm_pcie_deregister_event(&penv->event_reg);
-			cnss_msm_pcie_pm_control(
+			cnss_msm_pcie_suspend_resume(
 				MSM_PCIE_SUSPEND,
 				cnss_get_pci_dev_bus_number(pdev),
 				pdev, PM_OPTIONS);
@@ -2428,7 +2434,7 @@ err_wlan_probe:
 err_pcie_link_up:
 	cnss_msm_pcie_deregister_event(&penv->event_reg);
 	if (penv->pcie_link_state) {
-		cnss_msm_pcie_pm_control(
+		cnss_msm_pcie_suspend_resume(
 			MSM_PCIE_SUSPEND, cnss_get_pci_dev_bus_number(pdev),
 			pdev, PM_OPTIONS);
 		penv->pcie_link_state = PCIE_LINK_DOWN;
@@ -2491,8 +2497,7 @@ void cnss_wlan_unregister_driver(struct cnss_wlan_driver *driver)
 	if (penv->pcie_link_state && !penv->pcie_link_down_ind) {
 		pci_save_state(pdev);
 		penv->saved_state = cnss_pci_store_saved_state(pdev);
-
-		if (cnss_msm_pcie_pm_control(
+		if (cnss_msm_pcie_suspend_resume(
 			MSM_PCIE_SUSPEND, cnss_get_pci_dev_bus_number(pdev),
 			pdev, PM_OPTIONS)) {
 			pr_err("Failed to shutdown PCIe link\n");
@@ -2500,8 +2505,7 @@ void cnss_wlan_unregister_driver(struct cnss_wlan_driver *driver)
 		}
 	} else if (penv->pcie_link_state && penv->pcie_link_down_ind) {
 		penv->saved_state = NULL;
-
-		if (cnss_msm_pcie_pm_control(
+		if (cnss_msm_pcie_suspend_resume(
 			MSM_PCIE_SUSPEND, cnss_get_pci_dev_bus_number(pdev),
 				pdev, PM_OPTIONS_SUSPEND_LINK_DOWN)) {
 			pr_err("Failed to shutdown PCIe link (with linkdown option)\n");
@@ -2566,7 +2570,7 @@ void *cnss_pci_get_virt_ramdump_mem(unsigned long *size)
 void cnss_pci_device_crashed(void)
 {
 	if (penv && penv->subsys) {
-		subsys_set_crash_status(penv->subsys, true);
+		subsys_set_crash_status(penv->subsys, CRASH_STATUS_ERR_FATAL);
 		subsystem_restart_dev(penv->subsys);
 	}
 }
@@ -2585,7 +2589,7 @@ EXPORT_SYMBOL(cnss_get_virt_ramdump_mem);
 void cnss_device_crashed(void)
 {
 	if (penv && penv->subsys) {
-		subsys_set_crash_status(penv->subsys, true);
+		subsys_set_crash_status(penv->subsys, CRASH_STATUS_ERR_FATAL);
 		subsystem_restart_dev(penv->subsys);
 	}
 }
@@ -2662,13 +2666,6 @@ static int cnss_powerup(const struct subsys_desc *subsys)
 
 	msleep(POWER_ON_DELAY);
 	cnss_configure_wlan_en_gpio(WLAN_EN_HIGH);
-	/**
-	 *  Some platforms have wifi and other PCIE card attached with PCIE
-	 *  switch on the same RC like P5459 board(ROME 3.2 PCIE card + Ethernet
-	 *  PCI), it will need extra time to stable the signals when do SSR,
-	 *  otherwise fail to create the PCIE link, so add PCIE_SWITCH_DELAY.
-	 */
-	msleep(PCIE_SWITCH_DELAY);
 
 	if (!pdev) {
 		pr_err("%d: invalid pdev\n", __LINE__);
@@ -2731,10 +2728,14 @@ err_pcie_link_up:
 	cnss_configure_wlan_en_gpio(WLAN_EN_LOW);
 	cnss_wlan_vreg_set(vreg_info, VREG_OFF);
 	if (penv->pdev) {
-		pr_err("%d: Unregistering pci device\n", __LINE__);
-		pci_unregister_driver(&cnss_wlan_pci_driver);
-		penv->pdev = NULL;
-		penv->pci_register_again = true;
+		if (wdrv && wdrv->update_status)
+			wdrv->update_status(penv->pdev, CNSS_SSR_FAIL);
+		if (!penv->recovery_in_progress) {
+			pr_err("%d: Unregistering pci device\n", __LINE__);
+			pci_unregister_driver(&cnss_wlan_pci_driver);
+			penv->pdev = NULL;
+			penv->pci_register_again = true;
+		}
 	}
 
 err_wlan_vreg_on:
@@ -2887,7 +2888,9 @@ static int cnss_probe(struct platform_device *pdev)
 	struct esoc_desc *desc;
 	const char *client_desc;
 	struct device *dev = &pdev->dev;
+#ifndef CONFIG_MSM_GVM_QUIN
 	u32 rc_num;
+#endif
 	struct resource *res;
 	u32 ramdump_size = 0;
 	u32 smmu_iova_address[2];
@@ -2922,6 +2925,7 @@ static int cnss_probe(struct platform_device *pdev)
 		goto err_get_rc;
 	}
 
+#ifndef CONFIG_MSM_GVM_QUIN
 	ret = of_property_read_u32(dev->of_node, "qcom,wlan-rc-num", &rc_num);
 	if (ret) {
 		pr_err("%s: Failed to find PCIe RC number!\n", __func__);
@@ -2933,6 +2937,7 @@ static int cnss_probe(struct platform_device *pdev)
 		pr_err("%s: Failed to enable PCIe RC%x!\n", __func__, rc_num);
 		goto err_pcie_enumerate;
 	}
+#endif
 
 	penv->pcie_link_state = PCIE_LINK_UP;
 
@@ -3113,7 +3118,9 @@ err_subsys_reg:
 		devm_unregister_esoc_client(&pdev->dev, penv->esoc_desc);
 
 err_esoc_reg:
+#ifndef CONFIG_MSM_GVM_QUIN
 err_pcie_enumerate:
+#endif
 err_get_rc:
 	cnss_configure_wlan_en_gpio(WLAN_EN_LOW);
 	cnss_wlan_release_resources();
@@ -3307,8 +3314,8 @@ int cnss_request_bus_bandwidth(int bandwidth)
 	case CNSS_BUS_WIDTH_LOW:
 	case CNSS_BUS_WIDTH_MEDIUM:
 	case CNSS_BUS_WIDTH_HIGH:
-		ret = msm_bus_scale_client_update_request(
-				penv->bus_client, bandwidth);
+		ret = msm_bus_scale_client_update_request(penv->bus_client,
+				bandwidth);
 		if (!ret) {
 			penv->current_bandwidth_vote = bandwidth;
 		} else {
@@ -3840,7 +3847,7 @@ int cnss_pcie_power_down(struct device *dev)
 	return ret;
 }
 
-fs_initcall(cnss_initialize);
+module_init(cnss_initialize);
 module_exit(cnss_exit);
 
 MODULE_LICENSE("GPL v2");

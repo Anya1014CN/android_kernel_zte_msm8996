@@ -37,7 +37,7 @@ struct ba_ctxt *msm_ba_get_ba_context(void)
 	return gp_ba_ctxt;
 }
 
-void msm_ba_set_ba_context(struct ba_ctxt *ba_ctxt)
+static void msm_ba_set_ba_context(struct ba_ctxt *ba_ctxt)
 {
 	gp_ba_ctxt = ba_ctxt;
 }
@@ -83,23 +83,7 @@ static int msm_ba_v4l2_querycap(struct file *filp, void *fh,
 	return msm_ba_querycap((void *)ba_inst, cap);
 }
 
-static int msm_ba_v4l2_g_priority(struct file *filp, void *fh,
-					enum v4l2_priority *prio)
-{
-	struct msm_ba_inst *ba_inst = get_ba_inst(filp, fh);
-
-	return msm_ba_g_priority((void *)ba_inst, prio);
-}
-
-static int msm_ba_v4l2_s_priority(struct file *filp, void *fh,
-					enum v4l2_priority prio)
-{
-	struct msm_ba_inst *ba_inst = get_ba_inst(filp, fh);
-
-	return msm_ba_s_priority((void *)ba_inst, prio);
-}
-
-int msm_ba_v4l2_enum_input(struct file *file, void *fh,
+static int msm_ba_v4l2_enum_input(struct file *file, void *fh,
 					struct v4l2_input *input)
 {
 	struct msm_ba_inst *ba_inst = get_ba_inst(file, fh);
@@ -107,7 +91,7 @@ int msm_ba_v4l2_enum_input(struct file *file, void *fh,
 	return msm_ba_enum_input((void *)ba_inst, input);
 }
 
-int msm_ba_v4l2_g_input(struct file *file, void *fh,
+static int msm_ba_v4l2_g_input(struct file *file, void *fh,
 					unsigned int *index)
 {
 	struct msm_ba_inst *ba_inst = get_ba_inst(file, fh);
@@ -115,7 +99,7 @@ int msm_ba_v4l2_g_input(struct file *file, void *fh,
 	return msm_ba_g_input((void *)ba_inst, index);
 }
 
-int msm_ba_v4l2_s_input(struct file *file, void *fh,
+static int msm_ba_v4l2_s_input(struct file *file, void *fh,
 					unsigned int index)
 {
 	struct msm_ba_inst *ba_inst = get_ba_inst(file, fh);
@@ -123,7 +107,7 @@ int msm_ba_v4l2_s_input(struct file *file, void *fh,
 	return msm_ba_s_input((void *)ba_inst, index);
 }
 
-int msm_ba_v4l2_enum_output(struct file *file, void *fh,
+static int msm_ba_v4l2_enum_output(struct file *file, void *fh,
 					struct v4l2_output *output)
 {
 	struct msm_ba_inst *ba_inst = get_ba_inst(file, fh);
@@ -131,7 +115,7 @@ int msm_ba_v4l2_enum_output(struct file *file, void *fh,
 	return msm_ba_enum_output((void *)ba_inst, output);
 }
 
-int msm_ba_v4l2_g_output(struct file *file, void *fh,
+static int msm_ba_v4l2_g_output(struct file *file, void *fh,
 					unsigned int *index)
 {
 	struct msm_ba_inst *ba_inst = get_ba_inst(file, fh);
@@ -139,7 +123,7 @@ int msm_ba_v4l2_g_output(struct file *file, void *fh,
 	return msm_ba_g_output((void *)ba_inst, index);
 }
 
-int msm_ba_v4l2_s_output(struct file *file, void *fh,
+static int msm_ba_v4l2_s_output(struct file *file, void *fh,
 					unsigned int index)
 {
 	struct msm_ba_inst *ba_inst = get_ba_inst(file, fh);
@@ -147,7 +131,7 @@ int msm_ba_v4l2_s_output(struct file *file, void *fh,
 	return msm_ba_s_output((void *)ba_inst, index);
 }
 
-int msm_ba_v4l2_enum_fmt(struct file *file, void *fh,
+static int msm_ba_v4l2_enum_fmt(struct file *file, void *fh,
 					struct v4l2_fmtdesc *f)
 {
 	struct msm_ba_inst *ba_inst = get_ba_inst(file, fh);
@@ -155,7 +139,7 @@ int msm_ba_v4l2_enum_fmt(struct file *file, void *fh,
 	return msm_ba_enum_fmt((void *)ba_inst, f);
 }
 
-int msm_ba_v4l2_s_fmt(struct file *file, void *fh,
+static int msm_ba_v4l2_s_fmt(struct file *file, void *fh,
 					struct v4l2_format *f)
 {
 	struct msm_ba_inst *ba_inst = get_ba_inst(file, fh);
@@ -163,7 +147,7 @@ int msm_ba_v4l2_s_fmt(struct file *file, void *fh,
 	return msm_ba_s_fmt((void *)ba_inst, f);
 }
 
-int msm_ba_v4l2_g_fmt(struct file *file, void *fh,
+static int msm_ba_v4l2_g_fmt(struct file *file, void *fh,
 					struct v4l2_format *f)
 {
 	struct msm_ba_inst *ba_inst = get_ba_inst(file, fh);
@@ -171,7 +155,7 @@ int msm_ba_v4l2_g_fmt(struct file *file, void *fh,
 	return msm_ba_g_fmt((void *)ba_inst, f);
 }
 
-int msm_ba_v4l2_s_ctrl(struct file *file, void *fh,
+static int msm_ba_v4l2_s_ctrl(struct file *file, void *fh,
 					struct v4l2_control *a)
 {
 	struct msm_ba_inst *ba_inst = get_ba_inst(file, fh);
@@ -179,7 +163,7 @@ int msm_ba_v4l2_s_ctrl(struct file *file, void *fh,
 	return msm_ba_s_ctrl((void *)ba_inst, a);
 }
 
-int msm_ba_v4l2_g_ctrl(struct file *file, void *fh,
+static int msm_ba_v4l2_g_ctrl(struct file *file, void *fh,
 					struct v4l2_control *a)
 {
 	struct msm_ba_inst *ba_inst = get_ba_inst(file, fh);
@@ -187,7 +171,7 @@ int msm_ba_v4l2_g_ctrl(struct file *file, void *fh,
 	return msm_ba_g_ctrl((void *)ba_inst, a);
 }
 
-int msm_ba_v4l2_s_ext_ctrl(struct file *file, void *fh,
+static int msm_ba_v4l2_s_ext_ctrl(struct file *file, void *fh,
 					struct v4l2_ext_controls *a)
 {
 	struct msm_ba_inst *ba_inst = get_ba_inst(file, fh);
@@ -195,7 +179,7 @@ int msm_ba_v4l2_s_ext_ctrl(struct file *file, void *fh,
 	return msm_ba_s_ext_ctrl((void *)ba_inst, a);
 }
 
-int msm_ba_v4l2_streamon(struct file *file, void *fh,
+static int msm_ba_v4l2_streamon(struct file *file, void *fh,
 					enum v4l2_buf_type i)
 {
 	struct msm_ba_inst *ba_inst = get_ba_inst(file, fh);
@@ -203,7 +187,7 @@ int msm_ba_v4l2_streamon(struct file *file, void *fh,
 	return msm_ba_streamon((void *)ba_inst, i);
 }
 
-int msm_ba_v4l2_streamoff(struct file *file, void *fh,
+static int msm_ba_v4l2_streamoff(struct file *file, void *fh,
 					enum v4l2_buf_type i)
 {
 	struct msm_ba_inst *ba_inst = get_ba_inst(file, fh);
@@ -243,10 +227,16 @@ static int msm_ba_v4l2_g_parm(struct file *file, void *fh,
 	return 0;
 }
 
+static long msm_ba_v4l2_private_ioctl(struct file *file, void *fh,
+			bool valid_prio, unsigned int cmd, void *arg)
+{
+	struct msm_ba_inst *ba_inst = get_ba_inst(file, fh);
+
+	return msm_ba_private_ioctl((void *)ba_inst, cmd, (void *)arg);
+}
+
 static const struct v4l2_ioctl_ops msm_ba_v4l2_ioctl_ops = {
 	.vidioc_querycap = msm_ba_v4l2_querycap,
-	.vidioc_g_priority = msm_ba_v4l2_g_priority,
-	.vidioc_s_priority = msm_ba_v4l2_s_priority,
 	.vidioc_enum_fmt_vid_cap = msm_ba_v4l2_enum_fmt,
 	.vidioc_enum_fmt_vid_out = msm_ba_v4l2_enum_fmt,
 	.vidioc_s_fmt_vid_cap = msm_ba_v4l2_s_fmt,
@@ -268,6 +258,7 @@ static const struct v4l2_ioctl_ops msm_ba_v4l2_ioctl_ops = {
 	.vidioc_enum_output = msm_ba_v4l2_enum_output,
 	.vidioc_g_output = msm_ba_v4l2_g_output,
 	.vidioc_s_output = msm_ba_v4l2_s_output,
+	.vidioc_default = msm_ba_v4l2_private_ioctl,
 };
 
 static unsigned int msm_ba_v4l2_poll(struct file *filp,
@@ -278,7 +269,7 @@ static unsigned int msm_ba_v4l2_poll(struct file *filp,
 	return msm_ba_poll((void *)ba_inst, filp, pt);
 }
 
-void msm_ba_release_video_device(struct video_device *pvdev)
+static void msm_ba_release_video_device(struct video_device *pvdev)
 {
 }
 
@@ -286,7 +277,7 @@ static const struct v4l2_file_operations msm_ba_v4l2_ba_fops = {
 	.owner = THIS_MODULE,
 	.open = msm_ba_v4l2_open,
 	.release = msm_ba_v4l2_close,
-	.ioctl = video_ioctl2,
+	.unlocked_ioctl = video_ioctl2,
 	.poll = msm_ba_v4l2_poll,
 };
 
@@ -384,18 +375,17 @@ static int msm_ba_device_init(struct platform_device *pdev,
 	int rc = 0;
 
 	dprintk(BA_INFO, "Enter %s", __func__);
-	if ((NULL == ret_dev_ctxt) ||
-			(NULL != *ret_dev_ctxt) ||
-			(NULL == pdev)) {
-		dprintk(BA_ERR, "%s(%d) Invalid params %pK %pK %pK",
-			__func__, __LINE__,
-			ret_dev_ctxt, *ret_dev_ctxt, pdev);
+	if ((ret_dev_ctxt == NULL) ||
+		(*ret_dev_ctxt != NULL) ||
+		(pdev == NULL)) {
+		dprintk(BA_ERR, "%s(%d) Invalid params",
+			__func__, __LINE__);
 		return -EINVAL;
 	}
 
 	dev_ctxt = devm_kzalloc(&pdev->dev, sizeof(struct msm_ba_dev),
 			GFP_KERNEL);
-	if (NULL == dev_ctxt)
+	if (dev_ctxt == NULL)
 		return -ENOMEM;
 
 	platform_set_drvdata(pdev, dev_ctxt);
@@ -417,7 +407,7 @@ static int msm_ba_device_init(struct platform_device *pdev,
 	rc = v4l2_device_register(dev_ctxt->v4l2_dev.dev, &dev_ctxt->v4l2_dev);
 	if (!rc) {
 		dev_ctxt->vdev = video_device_alloc();
-		if (NULL == dev_ctxt->vdev) {
+		if (dev_ctxt->vdev == NULL) {
 			v4l2_device_unregister(&dev_ctxt->v4l2_dev);
 			rc = -ENOMEM;
 		} else {
@@ -475,7 +465,7 @@ static int msm_ba_probe(struct platform_device *pdev)
 		__func__, pdev, pdev->id);
 	ba_ctxt = msm_ba_get_ba_context();
 
-	if (NULL == ba_ctxt) {
+	if (ba_ctxt == NULL) {
 		dprintk(BA_ERR, "BA context not yet created");
 		return -EINVAL;
 	}
@@ -503,7 +493,7 @@ static int msm_ba_remove(struct platform_device *pdev)
 	struct msm_ba_sd_event *ba_sd_event_tmp = NULL;
 	int rc = 0;
 
-	if (NULL == dev_ctxt) {
+	if (dev_ctxt == NULL) {
 		dprintk(BA_ERR, "%s invalid device", __func__);
 		rc = -EINVAL;
 	} else {
@@ -525,7 +515,7 @@ static int msm_ba_remove(struct platform_device *pdev)
 	return rc;
 }
 
-int msm_ba_create(void)
+static int msm_ba_create(void)
 {
 	struct ba_ctxt *ba_ctxt;
 	int rc = 0;
@@ -538,7 +528,7 @@ int msm_ba_create(void)
 	}
 	ba_ctxt = kzalloc(sizeof(struct ba_ctxt), GFP_KERNEL);
 
-	if (NULL == ba_ctxt)
+	if (ba_ctxt == NULL)
 		return -ENOMEM;
 
 	memset(ba_ctxt, 0x00, sizeof(struct ba_ctxt));
@@ -557,14 +547,14 @@ int msm_ba_create(void)
 	return rc;
 }
 
-int msm_ba_destroy(void)
+static int msm_ba_destroy(void)
 {
 	struct ba_ctxt *ba_ctxt;
 	int rc = 0;
 
 	ba_ctxt = msm_ba_get_ba_context();
 
-	if (NULL == ba_ctxt) {
+	if (ba_ctxt == NULL) {
 		dprintk(BA_ERR, "BA context non existent");
 		return -EINVAL;
 	}

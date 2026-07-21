@@ -171,7 +171,8 @@ static int32_t msm_isp_stats_buf_divert(struct vfe_device *vfe_dev,
 	if (sw_skip->stats_type_mask &
 		(1 << stream_info->stats_type)) {
 		/* Hw stream output of this src is requested
-		   for drop */
+		 *  for drop
+		 */
 		if (sw_skip->skip_mode == SKIP_ALL) {
 			/* drop all buffers */
 			drop_buffer = 1;
@@ -237,7 +238,7 @@ static int32_t msm_isp_stats_buf_divert(struct vfe_device *vfe_dev,
 		stats_event->stats_buf_idxs
 			[stream_info->stats_type] =
 			done_buf->buf_idx;
-		if (NULL == comp_stats_type_mask) {
+		if (comp_stats_type_mask == NULL) {
 			stats_event->stats_mask =
 				1 << stream_info->stats_type;
 			ISP_DBG("%s: stats frameid: 0x%x %d bufq %x\n",
@@ -683,8 +684,8 @@ static int msm_isp_start_stats_stream(struct vfe_device *vfe_dev,
 			stream_cfg_cmd->num_streams);
 		return -EINVAL;
 	}
-
 	mutex_lock(&vfe_dev->buf_mgr->lock);
+
 	num_stats_comp_mask =
 		vfe_dev->hw_info->stats_hw_info->num_stats_comp_mask;
 	rc = vfe_dev->hw_info->vfe_ops.stats_ops.check_streams(

@@ -783,7 +783,7 @@ static void ssip_rx_strans(struct hsi_client *cl, u32 cmd)
 	}
 	ssip_set_rxstate(ssi, RECEIVING);
 	if (unlikely(SSIP_MSG_ID(cmd) != ssi->rxid)) {
-		dev_err(&cl->device, "START TRANS id %d expeceted %d\n",
+		dev_err(&cl->device, "START TRANS id %d expected %d\n",
 					SSIP_MSG_ID(cmd), ssi->rxid);
 		spin_unlock(&ssi->lock);
 		goto out1;
@@ -976,7 +976,7 @@ static int ssip_pn_xmit(struct sk_buff *skb, struct net_device *dev)
 		goto drop;
 	/* Pad to 32-bits - FIXME: Revisit*/
 	if ((skb->len & 3) && skb_pad(skb, 4 - (skb->len & 3)))
-		goto drop;
+		goto inc_dropped;
 
 	/*
 	 * Modem sends Phonet messages over SSI with its own endianess...
@@ -1028,8 +1028,9 @@ static int ssip_pn_xmit(struct sk_buff *skb, struct net_device *dev)
 drop2:
 	hsi_free_msg(msg);
 drop:
-	dev->stats.tx_dropped++;
 	dev_kfree_skb(skb);
+inc_dropped:
+	dev->stats.tx_dropped++;
 
 	return 0;
 }

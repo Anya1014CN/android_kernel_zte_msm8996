@@ -709,7 +709,7 @@ static int msm_vpe_notify_frame_done(struct vpe_device *vpe_dev)
 		frame_qcmd = msm_dequeue(queue, list_frame);
 		if (!frame_qcmd) {
 			pr_err("%s: %d frame_qcmd is NULL\n",
-				 __func__ , __LINE__);
+				 __func__, __LINE__);
 			return -EINVAL;
 		}
 		processed_frame = frame_qcmd->command;
@@ -726,7 +726,7 @@ static int msm_vpe_notify_frame_done(struct vpe_device *vpe_dev)
 		msm_enqueue(&vpe_dev->eventData_q, &event_qcmd->list_eventdata);
 
 		if (!processed_frame->output_buffer_info.processed_divert) {
-			memset(&buff_mgr_info, 0 ,
+			memset(&buff_mgr_info, 0,
 				sizeof(buff_mgr_info));
 			buff_mgr_info.session_id =
 				((processed_frame->identity >> 16) & 0xFFFF);
@@ -1403,7 +1403,7 @@ static long msm_vpe_subdev_ioctl(struct v4l2_subdev *sd,
 		event_qcmd = msm_dequeue(queue, list_eventdata);
 		if (!event_qcmd) {
 			pr_err("%s: %d event_qcmd is NULL\n",
-				__func__ , __LINE__);
+				__func__, __LINE__);
 			return -EINVAL;
 		}
 		process_frame = event_qcmd->command;
@@ -1411,10 +1411,10 @@ static long msm_vpe_subdev_ioctl(struct v4l2_subdev *sd,
 		if (copy_to_user((void __user *)ioctl_ptr->ioctl_ptr,
 				process_frame,
 				sizeof(struct msm_vpe_frame_info_t))) {
-					mutex_unlock(&vpe_dev->mutex);
-					kfree(process_frame);
-					kfree(event_qcmd);
-					return -EINVAL;
+			mutex_unlock(&vpe_dev->mutex);
+			kfree(process_frame);
+			kfree(event_qcmd);
+			return -EINVAL;
 		}
 
 		kfree(process_frame);

@@ -72,19 +72,20 @@ static enum cnss_cc_src cnss_cc_source = CNSS_SOURCE_CORE;
 
 int cnss_set_wlan_unsafe_channel(u16 *unsafe_ch_list, u16 ch_count)
 {
+	struct cnss_unsafe_channel_list *unsafe_list;
+
 	mutex_lock(&unsafe_channel_list_lock);
-	if ((!unsafe_ch_list) || (ch_count > CNSS_MAX_CH_NUM)) {
+	if ((!unsafe_ch_list) || (!ch_count) || (ch_count > CNSS_MAX_CH_NUM)) {
 		mutex_unlock(&unsafe_channel_list_lock);
 		return -EINVAL;
 	}
 
+	unsafe_list = &unsafe_channel_list;
 	unsafe_channel_list.unsafe_ch_count = ch_count;
 
-	if (ch_count != 0) {
-		memcpy(
-			(char *)unsafe_channel_list.unsafe_ch_list,
-			(char *)unsafe_ch_list, ch_count * sizeof(u16));
-	}
+	memcpy(
+		(char *)unsafe_list->unsafe_ch_list,
+		(char *)unsafe_ch_list, ch_count * sizeof(u16));
 	mutex_unlock(&unsafe_channel_list_lock);
 
 	return 0;
@@ -95,22 +96,25 @@ int cnss_get_wlan_unsafe_channel(
 			u16 *unsafe_ch_list,
 			u16 *ch_count, u16 buf_len)
 {
+	struct cnss_unsafe_channel_list *unsafe_list;
+
 	mutex_lock(&unsafe_channel_list_lock);
 	if (!unsafe_ch_list || !ch_count) {
 		mutex_unlock(&unsafe_channel_list_lock);
 		return -EINVAL;
 	}
 
-	if (buf_len < (unsafe_channel_list.unsafe_ch_count * sizeof(u16))) {
+	unsafe_list = &unsafe_channel_list;
+	if (buf_len < (unsafe_list->unsafe_ch_count * sizeof(u16))) {
 		mutex_unlock(&unsafe_channel_list_lock);
 		return -ENOMEM;
 	}
 
-	*ch_count = unsafe_channel_list.unsafe_ch_count;
+	*ch_count = unsafe_list->unsafe_ch_count;
 	memcpy(
 		(char *)unsafe_ch_list,
-		(char *)unsafe_channel_list.unsafe_ch_list,
-		unsafe_channel_list.unsafe_ch_count * sizeof(u16));
+		(char *)unsafe_list->unsafe_ch_list,
+		unsafe_list->unsafe_ch_count * sizeof(u16));
 	mutex_unlock(&unsafe_channel_list_lock);
 
 	return 0;
@@ -265,105 +269,204 @@ void cnss_dump_stack(struct task_struct *task)
 }
 EXPORT_SYMBOL(cnss_dump_stack);
 
-struct cnss_dev_platform_ops *cnss_get_platform_ops(struct device *dev)
+enum cnss_dev_bus_type cnss_get_dev_bus_type(struct device *dev)
 {
 	if (!dev)
-		return NULL;
+		return CNSS_BUS_NONE;
+
+	if (!dev->bus)
+		return CNSS_BUS_NONE;
+
+	if (memcmp(dev->bus->name, "sdio", 4) == 0)
+		return CNSS_BUS_SDIO;
+	else if (memcmp(dev->bus->name, "pci", 3) == 0)
+		return CNSS_BUS_PCI;
 	else
-		return dev->platform_data;
+		return CNSS_BUS_NONE;
 }
 
 int cnss_common_request_bus_bandwidth(struct device *dev, int bandwidth)
 {
-	struct cnss_dev_platform_ops *pf_ops = cnss_get_platform_ops(dev);
+	int ret;
 
-	if (pf_ops && pf_ops->request_bus_bandwidth)
-		return pf_ops->request_bus_bandwidth(bandwidth);
-	else
-		return -EINVAL;
+	switch (cnss_get_dev_bus_type(dev)) {
+#if defined(CONFIG_CNSS_SDIO)
+	case CNSS_BUS_SDIO:
+		ret = cnss_sdio_request_bus_bandwidth(bandwidth);
+		break;
+#endif
+	case CNSS_BUS_PCI:
+		ret = cnss_pci_request_bus_bandwidth(bandwidth);
+		break;
+	default:
+		pr_debug("%s: Invalid device type\n", __func__);
+		ret = -EINVAL;
+		break;
+	}
+
+	return ret;
 }
 EXPORT_SYMBOL(cnss_common_request_bus_bandwidth);
 
 void *cnss_common_get_virt_ramdump_mem(struct device *dev, unsigned long *size)
 {
-	struct cnss_dev_platform_ops *pf_ops = cnss_get_platform_ops(dev);
-
-	if (pf_ops && pf_ops->get_virt_ramdump_mem)
-		return pf_ops->get_virt_ramdump_mem(size);
-	else
+	switch (cnss_get_dev_bus_type(dev)) {
+#if defined(CONFIG_CNSS_SDIO)
+	case CNSS_BUS_SDIO:
+		return cnss_sdio_get_virt_ramdump_mem(size);
+#endif
+	case CNSS_BUS_PCI:
+		return cnss_pci_get_virt_ramdump_mem(size);
+	default:
+		pr_debug("%s: Invalid device type\n", __func__);
 		return NULL;
+	}
 }
 EXPORT_SYMBOL(cnss_common_get_virt_ramdump_mem);
 
 void cnss_common_device_self_recovery(struct device *dev)
 {
-	struct cnss_dev_platform_ops *pf_ops = cnss_get_platform_ops(dev);
-
-	if (pf_ops && pf_ops->device_self_recovery)
-		pf_ops->device_self_recovery();
+	switch (cnss_get_dev_bus_type(dev)) {
+#if defined(CONFIG_CNSS_SDIO)
+	case CNSS_BUS_SDIO:
+		cnss_sdio_device_self_recovery();
+		break;
+#endif
+	case CNSS_BUS_PCI:
+		cnss_pci_device_self_recovery();
+		break;
+	default:
+		pr_debug("%s: Invalid device type\n", __func__);
+		break;
+	}
 }
 EXPORT_SYMBOL(cnss_common_device_self_recovery);
 
 void cnss_common_schedule_recovery_work(struct device *dev)
 {
-	struct cnss_dev_platform_ops *pf_ops = cnss_get_platform_ops(dev);
-
-	if (pf_ops && pf_ops->schedule_recovery_work)
-		pf_ops->schedule_recovery_work();
+	switch (cnss_get_dev_bus_type(dev)) {
+#if defined(CONFIG_CNSS_SDIO)
+	case CNSS_BUS_SDIO:
+		cnss_sdio_schedule_recovery_work();
+		break;
+#endif
+	case CNSS_BUS_PCI:
+		cnss_pci_schedule_recovery_work();
+		break;
+	default:
+		pr_debug("%s: Invalid device type\n", __func__);
+		break;
+	}
 }
 EXPORT_SYMBOL(cnss_common_schedule_recovery_work);
 
 void cnss_common_device_crashed(struct device *dev)
 {
-	struct cnss_dev_platform_ops *pf_ops = cnss_get_platform_ops(dev);
-
-	if (pf_ops && pf_ops->device_crashed)
-		pf_ops->device_crashed();
+	switch (cnss_get_dev_bus_type(dev)) {
+#if defined(CONFIG_CNSS_SDIO)
+	case CNSS_BUS_SDIO:
+		cnss_sdio_device_crashed();
+		break;
+#endif
+	case CNSS_BUS_PCI:
+		cnss_pci_device_crashed();
+		break;
+	default:
+		pr_debug("%s: Invalid device type\n", __func__);
+		break;
+	}
 }
 EXPORT_SYMBOL(cnss_common_device_crashed);
 
 u8 *cnss_common_get_wlan_mac_address(struct device *dev, uint32_t *num)
 {
-	struct cnss_dev_platform_ops *pf_ops = cnss_get_platform_ops(dev);
+	u8 *ret;
 
-	if (pf_ops && pf_ops->get_wlan_mac_address)
-		return pf_ops->get_wlan_mac_address(num);
-	else
-		return NULL;
+	switch (cnss_get_dev_bus_type(dev)) {
+#if defined(CONFIG_CNSS_SDIO)
+	case CNSS_BUS_SDIO:
+		ret = cnss_sdio_get_wlan_mac_address(num);
+		break;
+#endif
+	case CNSS_BUS_PCI:
+		ret = cnss_pci_get_wlan_mac_address(num);
+		break;
+	default:
+		pr_debug("%s: Invalid device type\n", __func__);
+		ret = NULL;
+		break;
+	}
+	return ret;
 }
 EXPORT_SYMBOL(cnss_common_get_wlan_mac_address);
 
 int cnss_common_set_wlan_mac_address(
 		struct device *dev, const u8 *in, uint32_t len)
 {
-	struct cnss_dev_platform_ops *pf_ops = cnss_get_platform_ops(dev);
+	int ret;
 
-	if (pf_ops && pf_ops->set_wlan_mac_address)
-		return pf_ops->set_wlan_mac_address(in, len);
-	else
-		return -EINVAL;
+	switch (cnss_get_dev_bus_type(dev)) {
+#if defined(CONFIG_CNSS_SDIO)
+	case CNSS_BUS_SDIO:
+		ret = cnss_sdio_set_wlan_mac_address(in, len);
+		break;
+#endif
+	case CNSS_BUS_PCI:
+		ret = cnss_pcie_set_wlan_mac_address(in, len);
+		break;
+	default:
+		pr_debug("%s: Invalid device type\n", __func__);
+		ret = -EINVAL;
+		break;
+	}
+
+	return ret;
 }
 EXPORT_SYMBOL(cnss_common_set_wlan_mac_address);
 
 int cnss_power_up(struct device *dev)
 {
-	struct cnss_dev_platform_ops *pf_ops = cnss_get_platform_ops(dev);
+	int ret;
 
-	if (pf_ops && pf_ops->power_up)
-		return pf_ops->power_up(dev);
-	else
-		return -EINVAL;
+	switch (cnss_get_dev_bus_type(dev)) {
+	case CNSS_BUS_PCI:
+		ret = cnss_pcie_power_up(dev);
+		break;
+#if defined(CONFIG_CNSS_SDIO)
+	case CNSS_BUS_SDIO:
+		ret = cnss_sdio_power_up(dev);
+		break;
+#endif
+	default:
+		pr_err("%s: Invalid Bus Type\n", __func__);
+		ret = -EINVAL;
+		break;
+	}
+
+	return ret;
 }
 EXPORT_SYMBOL(cnss_power_up);
 
 int cnss_power_down(struct device *dev)
 {
-	struct cnss_dev_platform_ops *pf_ops = cnss_get_platform_ops(dev);
+	int ret;
 
-	if (pf_ops && pf_ops->power_down)
-		return pf_ops->power_down(dev);
-	else
-		return -EINVAL;
+	switch (cnss_get_dev_bus_type(dev)) {
+	case CNSS_BUS_PCI:
+		ret = cnss_pcie_power_down(dev);
+		break;
+#if defined(CONFIG_CNSS_SDIO)
+	case CNSS_BUS_SDIO:
+		ret = cnss_sdio_power_down(dev);
+		break;
+#endif
+	default:
+		pr_err("%s: Invalid Bus Type\n", __func__);
+		ret = -EINVAL;
+		break;
+	}
+
+	return ret;
 }
 EXPORT_SYMBOL(cnss_power_down);
 
@@ -424,27 +527,3 @@ const char *cnss_wlan_get_evicted_data_file(void)
 {
 	return FW_FILES_QCA6174_FW_3_0.evicted_data;
 }
-
-int cnss_common_register_tsf_captured_handler(struct device *dev,
-					      irq_handler_t handler, void *ctx)
-{
-	struct cnss_dev_platform_ops *pf_ops = cnss_get_platform_ops(dev);
-
-	if (pf_ops && pf_ops->register_tsf_captured_handler)
-		return pf_ops->register_tsf_captured_handler(handler, ctx);
-	else
-		return -EINVAL;
-}
-EXPORT_SYMBOL(cnss_common_register_tsf_captured_handler);
-
-int cnss_common_unregister_tsf_captured_handler(struct device *dev,
-						void *ctx)
-{
-	struct cnss_dev_platform_ops *pf_ops = cnss_get_platform_ops(dev);
-
-	if (pf_ops && pf_ops->unregister_tsf_captured_handler)
-		return pf_ops->unregister_tsf_captured_handler(ctx);
-	else
-		return -EINVAL;
-}
-EXPORT_SYMBOL(cnss_common_unregister_tsf_captured_handler);

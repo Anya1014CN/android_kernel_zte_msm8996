@@ -26,6 +26,7 @@
 #include <linux/mutex.h>
 #include <linux/aer.h>
 #include <linux/bsg-lib.h>
+#include <linux/vmalloc.h>
 
 #include <net/tcp.h>
 #include <scsi/scsi.h>
@@ -166,6 +167,8 @@
 
 #define DEV_DB_NON_PERSISTENT	0
 #define DEV_DB_PERSISTENT	1
+
+#define QL4_ISP_REG_DISCONNECT 0xffffffffU
 
 #define COPY_ISID(dst_isid, src_isid) {			\
 	int i, j;					\

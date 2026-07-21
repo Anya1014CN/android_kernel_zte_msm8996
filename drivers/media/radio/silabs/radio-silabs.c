@@ -1,4 +1,4 @@
-/* Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014-2015, 2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -886,10 +886,9 @@ static void get_rds_status(struct silabs_fm_device *radio)
 							__func__, retval);
 		mutex_unlock(&radio->lock);
 		return;
-	} else {
-		FMDBG("In %s, successfully read the response from soc\n",
-								__func__);
 	}
+	FMDBG("In %s, successfully read the response from soc\n",
+							__func__);
 
 	radio->block[0] = ((u16)radio->read_buf[MSB_OF_BLK_0] << 8) |
 					(u16)radio->read_buf[LSB_OF_BLK_0];
@@ -970,7 +969,8 @@ static void update_ps(struct silabs_fm_device *radio, u8 addr, u8 ps)
 	if (ps_cmplt) {
 		for (i = 0; (i < MAX_PS_LEN) &&
 			(radio->ps_display[i] == radio->ps_tmp0[i]); i++)
-				;
+			;
+
 		if (i == MAX_PS_LEN) {
 			FMDBG("Same PS string repeated\n");
 			return;
@@ -1022,7 +1022,8 @@ static void display_rt(struct silabs_fm_device *radio)
 
 		for (i = 0; (i < len) &&
 			(radio->rt_display[i] == radio->rt_tmp0[i]); i++)
-				;
+			;
+
 		if (i == len) {
 			FMDBG("Same RT string repeated\n");
 			return;
@@ -1658,10 +1659,9 @@ static void silabs_af_tune(struct work_struct *work)
 			silabs_fm_q_event(radio, SILABS_EVT_TUNE_SUCC);
 
 			break;
-		} else {
-			FMDBG("%s: rssi: %u, af_rssi_th: %u not eq contnuing\n",
-				__func__, rssi, radio->af_rssi_th);
 		}
+		FMDBG("%s: rssi: %u, af_rssi_th: %u not eq contnuing\n",
+			__func__, rssi, radio->af_rssi_th);
 	}
 
 err_tune_fail:
@@ -1687,7 +1687,6 @@ err_tune_fail:
 end:
 	/* Unmute */
 	retval = set_hard_mute(radio, false);
-	return;
 }
 
 /* When RDS interrupt is received, read and process RDS data. */
@@ -1766,7 +1765,6 @@ static void rds_handler(struct work_struct *worker)
 		silabs_rt_plus(radio);
 	else if (radio->ert_carrier && (grp_type == radio->ert_carrier))
 		silabs_buff_ert(radio);
-	return;
 }
 
 /* to enable, disable interrupts. */
@@ -2370,7 +2368,6 @@ static void silabs_interrupts_handler(struct silabs_fm_device *radio)
 		schedule_work(&radio->rds_worker);
 		return;
 	}
-	return;
 }
 
 static void read_int_stat(struct work_struct *work)
@@ -2451,13 +2448,13 @@ static int silabs_fm_request_irq(struct silabs_fm_device *radio)
 	if (retval < 0) {
 		FMDERR("Couldn't acquire FM gpio %d\n", irq);
 		return retval;
-	} else {
-		FMDBG("FM GPIO %d registered\n", irq);
 	}
+	FMDBG("FM GPIO %d registered\n", irq);
+
 	retval = enable_irq_wake(irq);
 	if (retval < 0) {
 		FMDERR("Could not enable FM interrupt\n ");
-		free_irq(irq , radio);
+		free_irq(irq, radio);
 		return retval;
 	}
 
@@ -2470,13 +2467,13 @@ static int silabs_fm_request_irq(struct silabs_fm_device *radio)
 		FMDERR("Couldn't acquire FM status gpio %d\n", irq);
 		/* Do not error out for status int. FM can work without it. */
 		return 0;
-	} else {
-		FMDBG("FM status GPIO %d registered\n", irq);
 	}
+	FMDBG("FM status GPIO %d registered\n", irq);
+
 	retval = enable_irq_wake(irq);
 	if (retval < 0) {
 		FMDERR("Could not enable FM status interrupt\n ");
-		free_irq(irq , radio);
+		free_irq(irq, radio);
 		/* Do not error out for status int. FM can work without it. */
 		return 0;
 	}
@@ -3008,10 +3005,8 @@ static int silabs_fm_vidioc_s_ctrl(struct file *file, void *priv,
 		break;
 	case V4L2_CID_PRIVATE_SILABS_RDS_STD:
 		return retval;
-		break;
 	case V4L2_CID_PRIVATE_SILABS_RDSON:
 		return retval;
-		break;
 	case V4L2_CID_PRIVATE_SILABS_RDSGROUP_MASK:
 		retval = set_property(radio,
 				FM_RDS_INT_SOURCE_PROP,
@@ -3488,7 +3483,8 @@ static int silabs_fm_vidioc_dqbuf(struct file *file, void *priv,
 		FMDERR("kfifo_out_locked can not use len more than 128\n");
 		return -EINVAL;
 	}
-	retval = copy_to_user(buf, &buf_fifo[0], buffer->bytesused);
+	retval = copy_to_user((void __user *)buf, &buf_fifo[0],
+				buffer->bytesused);
 	if (retval > 0) {
 		FMDERR("Failed to copy %d bytes of data\n", retval);
 		return -EAGAIN;
@@ -3529,10 +3525,10 @@ static int silabs_fm_pinctrl_init(struct silabs_fm_device *radio)
 	return retval;
 
 err_suspend_state:
-	radio->gpio_state_suspend = 0;
+	radio->gpio_state_suspend = NULL;
 
 err_active_state:
-	radio->gpio_state_active = 0;
+	radio->gpio_state_active = NULL;
 
 	return retval;
 }
@@ -3632,7 +3628,7 @@ static const struct v4l2_ioctl_ops silabs_fm_ioctl_ops = {
 
 static const struct v4l2_file_operations silabs_fm_fops = {
 	.owner = THIS_MODULE,
-	.ioctl = video_ioctl2,
+	.unlocked_ioctl = video_ioctl2,
 #ifdef CONFIG_COMPAT
 	.compat_ioctl32 = v4l2_compat_ioctl32,
 #endif

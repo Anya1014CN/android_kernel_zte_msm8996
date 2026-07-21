@@ -23,6 +23,7 @@
 #include <linux/slab.h>
 #include <linux/dma-mapping.h>
 #include <linux/export.h>
+#include <linux/module.h>
 #include <video/mmp_disp.h>
 
 static struct mmp_overlay *path_get_overlay(struct mmp_path *path,
@@ -223,10 +224,10 @@ struct mmp_path *mmp_register_path(struct mmp_path_info *info)
 EXPORT_SYMBOL_GPL(mmp_register_path);
 
 /*
- * mmp_unregister_path - unregister and destory path
- * @p: path to be destoried.
+ * mmp_unregister_path - unregister and destroy path
+ * @p: path to be destroyed.
  *
- * this function registers path and destorys it.
+ * this function registers path and destroys it.
  */
 void mmp_unregister_path(struct mmp_path *path)
 {
@@ -249,3 +250,7 @@ void mmp_unregister_path(struct mmp_path *path)
 	mutex_unlock(&disp_lock);
 }
 EXPORT_SYMBOL_GPL(mmp_unregister_path);
+
+MODULE_AUTHOR("Zhou Zhu <zzhu3@marvell.com>");
+MODULE_DESCRIPTION("Marvell MMP display framework");
+MODULE_LICENSE("GPL");

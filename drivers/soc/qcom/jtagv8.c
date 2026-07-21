@@ -1,4 +1,4 @@
-/* Copyright (c) 2014-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -35,10 +35,6 @@
 #else
 #include <asm/hardware/debugv8.h>
 #endif
-
-#define CORESIGHT_LAR		(0xFB0)
-
-#define CORESIGHT_UNLOCK	(0xC5ACCE55)
 
 #define TIMEOUT_US		(100)
 
@@ -978,7 +974,7 @@ static struct notifier_block jtag_cpu_pm_notifier = {
 static int __init msm_jtag_dbg_init(void)
 {
 	int ret;
-
+	u64 version = 0;
 	if (msm_jtag_fuse_apps_access_disabled())
 		return -EPERM;
 
@@ -986,7 +982,8 @@ static int __init msm_jtag_dbg_init(void)
 	dbg_init_arch_data();
 
 	if (dbg_arch_supported(dbg.arch)) {
-		if (scm_get_feat_version(TZ_DBG_ETM_FEAT_ID) < TZ_DBG_ETM_VER) {
+		if (!scm_get_feat_version(TZ_DBG_ETM_FEAT_ID, &version)  &&
+			version < TZ_DBG_ETM_VER) {
 			dbg.save_restore_enabled = true;
 		} else {
 			pr_info("dbg save-restore supported by TZ\n");
@@ -999,9 +996,9 @@ static int __init msm_jtag_dbg_init(void)
 
 	/* Allocate dbg state save space */
 #ifdef CONFIG_ARM64
-	dbg.state = kzalloc(MAX_DBG_STATE_SIZE * sizeof(uint64_t), GFP_KERNEL);
+	dbg.state = kcalloc(MAX_DBG_STATE_SIZE, sizeof(uint64_t), GFP_KERNEL);
 #else
-	dbg.state = kzalloc(MAX_DBG_STATE_SIZE * sizeof(uint32_t), GFP_KERNEL);
+	dbg.state = kcalloc(MAX_DBG_STATE_SIZE, sizeof(uint32_t), GFP_KERNEL);
 #endif
 	if (!dbg.state) {
 		ret = -ENOMEM;

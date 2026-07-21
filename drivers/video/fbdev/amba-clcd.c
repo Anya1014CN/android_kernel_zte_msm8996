@@ -27,7 +27,6 @@
 #include <linux/bitops.h>
 #include <linux/clk.h>
 #include <linux/hardirq.h>
-#include <linux/dma-mapping.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
 #include <linux/of_graph.h>
@@ -600,6 +599,9 @@ static int clcdfb_of_get_mode(struct device *dev, struct device_node *endpoint,
 
 	len = clcdfb_snprintf_mode(NULL, 0, mode);
 	name = devm_kzalloc(dev, len + 1, GFP_KERNEL);
+	if (!name)
+		return -ENOMEM;
+
 	clcdfb_snprintf_mode(name, len + 1, mode);
 	mode->name = name;
 
@@ -757,8 +759,8 @@ static int clcdfb_of_dma_setup(struct clcd_fb *fb)
 	if (err)
 		return err;
 
-	framesize = fb->panel->mode.xres * fb->panel->mode.yres *
-			fb->panel->bpp / 8;
+	framesize = PAGE_ALIGN(fb->panel->mode.xres * fb->panel->mode.yres *
+			fb->panel->bpp / 8);
 	fb->fb.screen_base = dma_alloc_coherent(&fb->dev->dev, framesize,
 			&dma, GFP_KERNEL);
 	if (!fb->fb.screen_base)

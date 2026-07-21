@@ -1,4 +1,4 @@
-/* Copyright (c) 2013-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -17,6 +17,7 @@
 #include "camera.h"
 #include "msm_cci.h"
 #include "msm_camera_dt_util.h"
+#include "msm_early_cam.h"
 
 /* Logging macro */
 #undef CDBG
@@ -59,19 +60,131 @@ static const struct of_device_id msm_sensor_driver_dt_match[] = {
 
 MODULE_DEVICE_TABLE(of, msm_sensor_driver_dt_match);
 
+static int msm_sensor_suspend(struct device *dev)
+{
+	struct msm_sensor_ctrl_t *s_ctrl = NULL;
+	int rc = 0;
+
+	s_ctrl = (struct msm_sensor_ctrl_t *)dev_get_drvdata(dev);
+
+	if (!s_ctrl) {
+		pr_err("%s:%d Invalid platform data\n", __func__,
+			__LINE__);
+		return -EFAULT;
+	}
+
+	if (s_ctrl->is_csid_tg_mode)
+		return 0;
+
+	if (s_ctrl->sensor_state == MSM_SENSOR_CCI_DOWN) {
+
+		/* Turning on cci clock to retain previous state */
+		if (!msm_camera_cci_power_up(s_ctrl->sensor_device_type,
+				s_ctrl->sensor_i2c_client)) {
+			s_ctrl->sensor_state = MSM_SENSOR_CCI_UP;
+		}
+
+		kfree(s_ctrl->stop_setting.reg_setting);
+		s_ctrl->stop_setting.reg_setting = NULL;
+		if (s_ctrl->func_tbl->sensor_power_down) {
+			if (s_ctrl->sensordata->misc_regulator)
+				msm_sensor_misc_regulator(s_ctrl, 0);
+
+			rc = s_ctrl->func_tbl->sensor_power_down(s_ctrl);
+			if (rc < 0) {
+				pr_err("%s:%d failed rc %d\n", __func__,
+					__LINE__, rc);
+				rc = -EFAULT;
+				return rc;
+			}
+			s_ctrl->sensor_state = MSM_SENSOR_POWER_DOWN;
+		} else {
+			rc = -EFAULT;
+		}
+	} else if (s_ctrl->sensor_state == MSM_SENSOR_POWER_DOWN) {
+		pr_debug("just returning success since sensor is already off %d\n",
+			 s_ctrl->sensor_state);
+		return 0;
+	} else {
+		pr_err("%s:%d invalid state\n", __func__,
+			__LINE__);
+		rc = -EFAULT;
+	}
+
+	return rc;
+}
+
+static int msm_sensor_resume(struct device *dev)
+{
+	struct msm_sensor_ctrl_t *s_ctrl = NULL;
+	int rc = 0;
+
+	s_ctrl = (struct msm_sensor_ctrl_t *)dev_get_drvdata(dev);
+
+	if (!s_ctrl) {
+		pr_err("%s:%d Invalid platform data\n", __func__,
+			__LINE__);
+		return -EFAULT;
+	}
+	if (s_ctrl->is_csid_tg_mode)
+		return 0;
+
+	if (s_ctrl->sensor_state == MSM_SENSOR_POWER_DOWN) {
+
+		if (s_ctrl->func_tbl->sensor_power_up) {
+			if (s_ctrl->sensordata->misc_regulator)
+				msm_sensor_misc_regulator(s_ctrl, 1);
+
+			rc = s_ctrl->func_tbl->sensor_power_up(s_ctrl);
+			if (rc < 0) {
+				pr_err("%s:%d failed rc %d\n", __func__,
+					__LINE__, rc);
+				rc = -EFAULT;
+				return rc;
+			}
+			s_ctrl->sensor_state = MSM_SENSOR_POWER_UP;
+			CDBG("%s:%d sensor state %d\n", __func__, __LINE__,
+				s_ctrl->sensor_state);
+		} else {
+			rc = -EFAULT;
+		}
+
+		/* Turning off cci clock to retain previous state */
+		if (!msm_camera_cci_power_down(s_ctrl->sensor_device_type,
+			s_ctrl->sensor_i2c_client)) {
+			s_ctrl->sensor_state = MSM_SENSOR_CCI_DOWN;
+		}
+	} else if (s_ctrl->sensor_state == MSM_SENSOR_CCI_DOWN) {
+		pr_debug("just returning success since sensor is already on %d\n",
+			s_ctrl->sensor_state);
+		rc = 0;
+	} else {
+		pr_err("%s:%d invalid state\n", __func__,
+			__LINE__);
+		rc = -EFAULT;
+	}
+
+	return rc;
+}
+
+static SIMPLE_DEV_PM_OPS(msm_sensor_pm_ops, msm_sensor_suspend,
+			msm_sensor_resume);
+#define MSM_SENSOR_PM_OPS (&msm_sensor_pm_ops)
+
 static struct platform_driver msm_sensor_platform_driver = {
 	.probe = msm_sensor_driver_platform_probe,
 	.driver = {
 		.name = "qcom,camera",
 		.owner = THIS_MODULE,
 		.of_match_table = msm_sensor_driver_dt_match,
+		.pm = MSM_SENSOR_PM_OPS,
 	},
 	.remove = msm_sensor_platform_remove,
 };
 
 static struct v4l2_subdev_info msm_sensor_driver_subdev_info[] = {
 	{
-		.code = V4L2_MBUS_FMT_SBGGR10_1X10,
+		.code = MEDIA_BUS_FMT_SBGGR10_1X10,
 		.colorspace = V4L2_COLORSPACE_JPEG,
 		.fmt = 1,
 		.order = 0,
@@ -184,7 +297,7 @@ static int32_t msm_sensor_fill_eeprom_subdevid_by_name(
 	 */
 	*eeprom_subdev_id = -1;
 
-	if (0 == eeprom_name_len)
+	if (eeprom_name_len == 0)
 		return 0;
 
 	p = of_get_property(of_node, "qcom,eeprom-src", &count);
@@ -201,7 +314,8 @@ static int32_t msm_sensor_fill_eeprom_subdevid_by_name(
 			continue;
 		}
 		/* In the case of eeprom probe from kernel eeprom name
-			should be present, Otherwise it will throw as errors */
+		 *  should be present, Otherwise it will throw as errors
+		 */
 		rc = of_property_read_string(src_node, "qcom,eeprom-name",
 			&eeprom_name);
 		if (rc < 0) {
@@ -263,7 +377,7 @@ static int32_t msm_sensor_fill_actuator_subdevid_by_name(
 	 */
 	*actuator_subdev_id = -1;
 
-	if (0 == actuator_name_len)
+	if (actuator_name_len == 0)
 		return 0;
 
 	src_node = of_parse_phandle(of_node, "qcom,actuator-src", 0);
@@ -310,7 +424,7 @@ static int32_t msm_sensor_fill_ois_subdevid_by_name(
 	 */
 	*ois_subdev_id = -1;
 
-	if (0 == ois_name_len)
+	if (ois_name_len == 0)
 		return 0;
 
 	src_node = of_parse_phandle(of_node, "qcom,ois-src", 0);
@@ -342,17 +456,17 @@ static int32_t msm_sensor_fill_slave_info_init_params(
 		return -EINVAL;
 
 	sensor_init_params = &slave_info->sensor_init_params;
-	if (INVALID_CAMERA_B != sensor_init_params->position)
+	if (sensor_init_params->position != INVALID_CAMERA_B)
 		sensor_info->position =
 			sensor_init_params->position;
 
-	if (SENSOR_MAX_MOUNTANGLE > sensor_init_params->sensor_mount_angle) {
+	if (sensor_init_params->sensor_mount_angle < SENSOR_MAX_MOUNTANGLE) {
 		sensor_info->sensor_mount_angle =
 			sensor_init_params->sensor_mount_angle;
 		sensor_info->is_mount_angle_valid = 1;
 	}
 
-	if (CAMERA_MODE_INVALID != sensor_init_params->modes_supported)
+	if (sensor_init_params->modes_supported != CAMERA_MODE_INVALID)
 		sensor_info->modes_supported =
 			sensor_init_params->modes_supported;
 
@@ -363,17 +477,17 @@ static int32_t msm_sensor_fill_slave_info_init_params(
 static int32_t msm_sensor_validate_slave_info(
 	struct msm_sensor_info_t *sensor_info)
 {
-	if (INVALID_CAMERA_B == sensor_info->position) {
+	if (sensor_info->position == INVALID_CAMERA_B) {
 		sensor_info->position = BACK_CAMERA_B;
 		CDBG("%s:%d Set default sensor position\n",
 			__func__, __LINE__);
 	}
-	if (CAMERA_MODE_INVALID == sensor_info->modes_supported) {
+	if (sensor_info->modes_supported == CAMERA_MODE_INVALID) {
 		sensor_info->modes_supported = CAMERA_MODE_2D_B;
 		CDBG("%s:%d Set default sensor modes_supported\n",
 			__func__, __LINE__);
 	}
-	if (SENSOR_MAX_MOUNTANGLE <= sensor_info->sensor_mount_angle) {
+	if (sensor_info->sensor_mount_angle >= SENSOR_MAX_MOUNTANGLE) {
 		sensor_info->sensor_mount_angle = 0;
 		CDBG("%s:%d Set default sensor mount angle\n",
 			__func__, __LINE__);
@@ -395,7 +509,7 @@ static int32_t msm_sensor_get_pw_settings_compat(
 		pr_err("failed: no memory ps32");
 		return -ENOMEM;
 	}
-	if (copy_from_user(ps32, (void *)us_ps, sizeof(*ps32) * size)) {
+	if (copy_from_user(ps32, (void __user *)us_ps, sizeof(*ps32) * size)) {
 		pr_err("failed: copy_from_user");
 		kfree(ps32);
 		return -EFAULT;
@@ -432,7 +546,9 @@ static int32_t msm_sensor_create_pd_settings(void *setting,
 	} else
 #endif
 	{
-		if (copy_from_user(pd, (void *)pu, sizeof(*pd) * size_down)) {
+		if (copy_from_user(pd,
+				(void __user *)pu,
+				sizeof(*pd) * size_down)) {
 			pr_err("failed: copy_from_user");
 			return -EFAULT;
 		}
@@ -484,7 +600,8 @@ static int32_t msm_sensor_get_power_down_settings(void *setting,
 			}
 		} else
 #endif
-		if (copy_from_user(pd, (void *)slave_info->power_setting_array.
+		if (copy_from_user(pd,
+				(void __user *)slave_info->power_setting_array.
 				power_down_setting, sizeof(*pd) * size_down)) {
 			pr_err("failed: copy_from_user");
 			kfree(pd);
@@ -550,7 +667,8 @@ static int32_t msm_sensor_get_power_up_settings(void *setting,
 #endif
 	{
 		if (copy_from_user(pu,
-			(void *)slave_info->power_setting_array.power_setting,
+			(void __user *)
+			slave_info->power_setting_array.power_setting,
 			sizeof(*pu) * size)) {
 			pr_err("failed: copy_from_user");
 			kfree(pu);
@@ -634,7 +752,7 @@ static irqreturn_t bridge_irq(int irq, void *dev)
 {
 	struct msm_sensor_ctrl_t *s_ctrl = dev;
 
-	pr_err("msm_sensor_driver: received bridge interrupt:0x%x",
+	pr_debug("msm_sensor_driver: received bridge interrupt:0x%x\n",
 		s_ctrl->sensordata->slave_info->sensor_slave_addr);
 	schedule_delayed_work(&s_ctrl->irq_delayed_work,
 						msecs_to_jiffies(0));
@@ -677,7 +795,7 @@ static void bridge_irq_delay_work(struct work_struct *work)
 		&sensor_event);
 	mutex_unlock(s_ctrl->msm_sensor_mutex);
 exit_queue:
-	pr_err("Work IRQ exit");
+	pr_debug("Work IRQ exit\n");
 }
 
 /* static function definition */
@@ -713,13 +831,13 @@ int32_t msm_sensor_driver_probe(void *setting,
 			rc = -ENOMEM;
 			goto free_slave_info;
 		}
-		if (copy_from_user((void *)slave_info32, setting,
+		if (copy_from_user((void *)slave_info32, (void __user *)setting,
 			sizeof(*slave_info32))) {
-				pr_err("failed: copy_from_user");
-				rc = -EFAULT;
-				kfree(slave_info32);
-				goto free_slave_info;
-			}
+			pr_err("failed: copy_from_user");
+			rc = -EFAULT;
+			kfree(slave_info32);
+			goto free_slave_info;
+		}
 
 		strlcpy(slave_info->actuator_name, slave_info32->actuator_name,
 			sizeof(slave_info->actuator_name));
@@ -764,26 +882,11 @@ int32_t msm_sensor_driver_probe(void *setting,
 #endif
 	{
 		if (copy_from_user(slave_info,
-					(void *)setting, sizeof(*slave_info))) {
+				(void __user *)setting, sizeof(*slave_info))) {
 			pr_err("failed: copy_from_user");
 			rc = -EFAULT;
 			goto free_slave_info;
 		}
-	}
-
-	if (strlen(slave_info->sensor_name) >= MAX_SENSOR_NAME ||
-		strlen(slave_info->eeprom_name) >= MAX_SENSOR_NAME ||
-		strlen(slave_info->actuator_name) >= MAX_SENSOR_NAME ||
-		strlen(slave_info->ois_name) >= MAX_SENSOR_NAME) {
-		pr_err("failed: name len greater than 32.\n");
-		pr_err("sensor name len:%zu, eeprom name len: %zu.\n",
-			strlen(slave_info->sensor_name),
-			strlen(slave_info->eeprom_name));
-		pr_err("actuator name len: %zu, ois name len:%zu.\n",
-			strlen(slave_info->actuator_name),
-			strlen(slave_info->ois_name));
-		rc = -EINVAL;
-		goto free_slave_info;
 	}
 
 	/* Print slave info */
@@ -921,7 +1024,8 @@ int32_t msm_sensor_driver_probe(void *setting,
 
 CSID_TG:
 	/* Update sensor, actuator and eeprom name in
-	*  sensor control structure */
+	*  sensor control structure
+	*/
 	s_ctrl->sensordata->sensor_name = slave_info->sensor_name;
 	s_ctrl->sensordata->eeprom_name = slave_info->eeprom_name;
 	s_ctrl->sensordata->actuator_name = slave_info->actuator_name;
@@ -955,8 +1059,6 @@ CSID_TG:
 		pr_err("%s power up failed", slave_info->sensor_name);
 		goto free_camera_info;
 	}
-
-	pr_err("%s probe succeeded", slave_info->sensor_name);
 
 	/*
 	 * Update the subdevice id of flash-src based on availability in kernel.
@@ -1018,8 +1120,6 @@ CSID_TG:
 				pr_err("%s: Failed gpio_direction irq %d",
 						__func__, rc);
 				goto cancel_work;
-			} else {
-				pr_err("sensor probe IRQ direction succeeded");
 			}
 		}
 
@@ -1028,7 +1128,7 @@ CSID_TG:
 			rc = request_irq(s_ctrl->irq, bridge_irq,
 					IRQF_ONESHOT |
 					(slave_info->
-					gpio_intr_config.gpio_trigger),
+					 gpio_intr_config.gpio_trigger),
 					"qcom,camera", s_ctrl);
 			if (rc) {
 				pr_err("%s: Failed request_irq %d",
@@ -1044,7 +1144,7 @@ CSID_TG:
 		}
 
 		/* Keep irq enabled */
-		pr_err("msm_sensor_driver.c irq number = %d", s_ctrl->irq);
+		pr_debug("msm_sensor_driver.c irq number = %d\n", s_ctrl->irq);
 	}
 
 	/*
@@ -1146,8 +1246,8 @@ static int32_t msm_sensor_driver_get_dt_data(struct msm_sensor_ctrl_t *s_ctrl)
 	}
 
 	/* Get mount angle */
-	if (0 > of_property_read_u32(of_node, "qcom,mount-angle",
-		&sensordata->sensor_info->sensor_mount_angle)) {
+	if (of_property_read_u32(of_node, "qcom,mount-angle",
+		&sensordata->sensor_info->sensor_mount_angle) < 0) {
 		/* Invalidate mount angle flag */
 		sensordata->sensor_info->is_mount_angle_valid = 0;
 		sensordata->sensor_info->sensor_mount_angle = 0;
@@ -1156,13 +1256,13 @@ static int32_t msm_sensor_driver_get_dt_data(struct msm_sensor_ctrl_t *s_ctrl)
 	}
 	CDBG("%s qcom,mount-angle %d\n", __func__,
 		sensordata->sensor_info->sensor_mount_angle);
-	if (0 > of_property_read_u32(of_node, "qcom,sensor-position",
-		&sensordata->sensor_info->position)) {
+	if (of_property_read_u32(of_node, "qcom,sensor-position",
+		&sensordata->sensor_info->position) < 0) {
 		CDBG("%s:%d Invalid sensor position\n", __func__, __LINE__);
 		sensordata->sensor_info->position = INVALID_CAMERA_B;
 	}
-	if (0 > of_property_read_u32(of_node, "qcom,sensor-mode",
-		&sensordata->sensor_info->modes_supported)) {
+	if (of_property_read_u32(of_node, "qcom,sensor-mode",
+		&sensordata->sensor_info->modes_supported) < 0) {
 		CDBG("%s:%d Invalid sensor mode supported\n",
 			__func__, __LINE__);
 		sensordata->sensor_info->modes_supported = CAMERA_MODE_INVALID;

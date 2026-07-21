@@ -1,4 +1,5 @@
-/* Copyright (c) 2011-2016, 2018 The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2017, The Linux Foundation. All rights reserved.
+ * Copyright (C) 2018 XiaoMi, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -14,7 +15,6 @@
 #include <linux/of_gpio.h>
 #include <linux/delay.h>
 #include <linux/crc32.h>
-#include <linux/slab.h>
 #include "msm_sd.h"
 #include "msm_cci.h"
 #include "msm_eeprom.h"
@@ -23,19 +23,98 @@
 #define CDBG(fmt, args...) pr_debug(fmt, ##args)
 
 DEFINE_MSM_MUTEX(msm_eeprom_mutex);
+
+#define A1_FRONT_MODULE_ID_OFFSET 0x1
+#define A1_FRONT_PAGE0_OFFSET 0x0
+#define A1_FRONT_PAGE1_OFFSET 0x10
+#define A1_FRONT_PAGE2_OFFSET 0x20
+#define A1_FRONT_MODULE_ID_PRIMAX 0x25
+#define A1_FRONT_MODULE_ID_LIETON 0x15
+#define A1_FRONT_MODULE_LITEON "ov4688"
+#define A1_FRONT_MODULE_PRIMAX "ov4688_primax"
+#define A1_FRONT_SENSOR_NAME "ov4688"
+#define A1_FRONT_TOTAL_CHECK_SUM    13
+
+#define A4_BACK_MODULE_ID_OFFSET 0x0
+#define A4_BACK_MODULE_ID_PRIMAX 0x23
+#define A4_BACK_MODULE_ID_SEMCO 0x0D
+#define A4_BACK_MODULE_DRIVER_IC_OFFSET 0x0A
+#define A4_BACK_MODULE_PRIMAX "imx318"
+#define A4_BACK_MODULE_PRIMAX_AK7371 "imx318_primax"
+#define A4_BACK_MODULE_SEMCO "imx318_semco"
+#define A4_BACK_SENSOR_NAME "imx318"
+
+#define A4_FRONT_MODULE_ID_OFFSET 0x0
+#define A4_FRONT_MODULE_ID_PRIMAX 0x08
+#define A4_FRONT_MODULE_ID_SUNNY 0x00
+#define A4_FRONT_MODULE_PRIMAX "imx268"
+#define A4_FRONT_MODULE_SUNNY "imx268_sunny"
+#define A4_FRONT_SENSOR_NAME "imx268"
+
+#define A7_BACK_MODULE_ID_OFFSET 0x0
+#define A7_BACK_MODULE_ID_LITEON 0x15
+#define A7_BACK_MODULE_ID_SEMCO 0x0D
+#define A7_BACK_MODULE_LITEON "imx378_liteon"
+#define A7_BACK_MODULE_SEMCO "imx378_semco"
+#define A7_BACK_SENSOR_NAME "sony_imx378"
+
+#define B7_FRONT_MODULE_ID_OFFSET 0x1
+#define B7_FRONT_PAGE0_OFFSET 0x0
+#define B7_FRONT_PAGE1_OFFSET 0x10
+#define B7_FRONT_PAGE2_OFFSET 0x20
+#define B7_FRONT_MODULE_ID_PRIMAX 0x25
+#define B7_FRONT_MODULE_ID_LIETON 0x15
+#define B7_FRONT_MODULE_LITEON "ov4688_b7"
+#define B7_FRONT_MODULE_PRIMAX "ov4688_primax_b7"
+#define B7_FRONT_SENSOR_NAME "ov4688_b7"
+#define B7_FRONT_TOTAL_CHECK_SUM    13
+
+#define B7_MAIN_MODULE_ID_OFFSET 0x0
+#define B7_MAIN_MODULE_ID_OFILM 0x00
+#define B7_MAIN_MODULE_ID_SEMCO 0x0D
+#define B7_MAIN_MODULE_OFILM "imx258_ofilm"
+#define B7_MAIN_MODULE_SEMCO "imx258"
+#define B7_MAIN_SENSOR_NAME "imx258_gt24c32"
+
+#define B7_AUX_MODULE_ID_OFFSET 0x0
+#define B7_AUX_MODULE_ID_OFILM 0x00
+#define B7_AUX_MODULE_ID_SEMCO 0x0D
+#define B7_AUX_MODULE_OFILM "imx258_mono_ofilm"
+#define B7_AUX_MODULE_SEMCO "imx258_mono"
+#define B7_AUX_SENSOR_NAME "imx258_mono_gt24c32"
+
+#define A8_REAR_MODULE_ID_OFFSET 0x1
+#define A8_REAR_MODULE_ID_OFILM 0x07
+#define A8_REAR_MODULE_OFILM "ov16880_ofilm"
+#define A8_REAR_SENSOR_NAME "ov16880"
+
+static int a4_set_back_sensor_name;
+static char a4_back_sensor_name[32];
+
+static int a4_set_front_sensor_name;
+static char a4_front_sensor_name[32];
+
+static int a7_set_back_sensor_name;
+static char a7_back_sensor_name[32];
+
+static int b7_set_main_sensor_name;
+static char b7_main_sensor_name[32];
+
+static int b7_set_aux_sensor_name;
+static char b7_aux_sensor_name[32];
+
+static int b7_set_front_sensor_name;
+static char b7_front_sensor_name[32];
+
+static int a1_set_front_sensor_name;
+static char a1_front_sensor_name[32];
+int8_t g_ois_vendor = 0;
+
+static int a8_set_rear_sensor_name;
+static char a8_rear_sensor_name[32];
+
 #ifdef CONFIG_COMPAT
 static struct v4l2_file_operations msm_eeprom_v4l2_subdev_fops;
-static void msm_eeprom_copy_power_settings_compat(
-		struct msm_sensor_power_setting_array*,
-		struct msm_sensor_power_setting_array32*);
-static int eeprom_config_read_cal_data32(struct msm_eeprom_ctrl_t*,
-					void __user*);
-static int eeprom_init_config32(struct msm_eeprom_ctrl_t*, void __user*);
-static int msm_eeprom_config32(struct msm_eeprom_ctrl_t*, void __user*);
-static long msm_eeprom_subdev_ioctl32(struct v4l2_subdev*, unsigned int, void*);
-static long msm_eeprom_subdev_do_ioctl32(struct file*, unsigned int, void*);
-static long msm_eeprom_subdev_fops_ioctl32(struct file*, unsigned int,
-						unsigned long);
 #endif
 
 /**
@@ -101,6 +180,459 @@ static int msm_eeprom_verify_sum(const char *mem, uint32_t size, uint32_t sum)
 	return 0;
 }
 
+static unsigned char xiaomi_eeprom_checksum(unsigned char *buf,
+	unsigned int dataStart, unsigned int dataEnd,
+	unsigned int sumPosition)
+{
+	unsigned char retval = -EINVAL;
+	unsigned int i = 0;
+	unsigned int sum = 0;
+
+	for (i = dataStart; i < dataEnd + 1; i++) {
+		sum += buf[i];
+	}
+	sum = sum%0xFF + 1;
+
+	if (((unsigned char)sum) == buf[sumPosition]) {
+		retval = 0;
+		pr_err("checksum sucessfull");
+	}
+	return retval;
+}
+
+static void set_a4_back_sensor_name(struct msm_eeprom_ctrl_t *e_ctrl,
+		char *mapdata)
+{
+	uint8_t *memptr;
+
+	if (a4_set_back_sensor_name)
+		return;
+
+	memptr = mapdata;
+
+	if (memptr[A4_BACK_MODULE_ID_OFFSET] == A4_BACK_MODULE_ID_PRIMAX) {
+		if (memptr[A4_BACK_MODULE_ID_OFFSET + A4_BACK_MODULE_DRIVER_IC_OFFSET] == 0x02) {
+			strcpy(a4_back_sensor_name, A4_BACK_MODULE_PRIMAX_AK7371);
+		} else {
+			strcpy(a4_back_sensor_name, A4_BACK_MODULE_PRIMAX);
+		}
+		a4_set_back_sensor_name = 1;
+		pr_err("a4 back sensor name = %s, line = %d\n", a4_back_sensor_name, __LINE__);
+		return;
+	} else if (memptr[A4_BACK_MODULE_ID_OFFSET] == A4_BACK_MODULE_ID_SEMCO) {
+		strcpy(a4_back_sensor_name, A4_BACK_MODULE_SEMCO);
+		a4_set_back_sensor_name = 1;
+		pr_err("a4 back sensor name = %s, line = %d\n", a4_back_sensor_name, __LINE__);
+		return;
+		} else {
+		pr_err("a4 back semco sensor name not match!\n");
+	}
+}
+
+static void set_a4_front_sensor_name(struct msm_eeprom_ctrl_t *e_ctrl,
+		char *mapdata)
+{
+	uint8_t *memptr;
+
+	if (a4_set_front_sensor_name)
+		return;
+
+	memptr = mapdata;
+
+	if (memptr[A4_FRONT_MODULE_ID_OFFSET] == A4_FRONT_MODULE_ID_PRIMAX) {
+		strlcpy(a4_front_sensor_name, A4_FRONT_MODULE_PRIMAX, sizeof(a4_front_sensor_name));
+		a4_set_front_sensor_name = 1;
+		pr_err("a4 front sensor name = %s, line = %d\n", a4_front_sensor_name, __LINE__);
+		return;
+	} else if (memptr[A4_FRONT_MODULE_ID_OFFSET] == A4_FRONT_MODULE_ID_SUNNY) {
+		strlcpy(a4_front_sensor_name, A4_FRONT_MODULE_SUNNY, sizeof(a4_front_sensor_name));
+		a4_set_front_sensor_name = 1;
+		pr_err("a4 front sensor name = %s, line = %d\n", a4_front_sensor_name, __LINE__);
+		return;
+	} else {
+		pr_err("a4 front sensor name not match!\n");
+	}
+}
+
+static void set_a7_back_sensor_name(struct msm_eeprom_ctrl_t *e_ctrl,
+		char *mapdata)
+{
+	uint8_t *memptr;
+
+	if (a7_set_back_sensor_name)
+		return;
+
+	memptr = mapdata;
+
+	if (memptr[A7_BACK_MODULE_ID_OFFSET] == A7_BACK_MODULE_ID_LITEON) {
+		strcpy(a7_back_sensor_name, A7_BACK_MODULE_LITEON);
+		a7_set_back_sensor_name = 1;
+		pr_err("a7 back sensor name = %s, line = %d\n", a7_back_sensor_name, __LINE__);
+		return;
+	} else if (memptr[A7_BACK_MODULE_ID_OFFSET] == A7_BACK_MODULE_ID_SEMCO) {
+		strcpy(a7_back_sensor_name, A7_BACK_MODULE_SEMCO);
+		a7_set_back_sensor_name = 1;
+		pr_err("a7 back sensor name = %s, line = %d\n", a7_back_sensor_name, __LINE__);
+		return;
+		} else {
+		pr_err("a7 back sensor name not match!\n");
+	}
+}
+
+static void set_a8_rear_sensor_name(struct msm_eeprom_ctrl_t *e_ctrl,
+		char *mapdata)
+{
+	uint8_t *memptr;
+
+	if (a8_set_rear_sensor_name)
+		return;
+
+	memptr = mapdata;
+	if (memptr[A8_REAR_MODULE_ID_OFFSET] == A8_REAR_MODULE_ID_OFILM) {
+		strcpy(a8_rear_sensor_name, A8_REAR_SENSOR_NAME);
+		a8_set_rear_sensor_name = 1;
+		pr_err("a8 rear sensor name = %s, line = %d\n", a8_rear_sensor_name, __LINE__);
+		return;
+	} else {
+		pr_err("a8 rear sensor name not match!,data = %d,set = %d\n", memptr[A8_REAR_MODULE_ID_OFFSET], A8_REAR_MODULE_ID_OFILM);
+	}
+
+	return;
+}
+
+static void set_b7_main_sensor_name(struct msm_eeprom_ctrl_t *e_ctrl,
+		char *mapdata)
+{
+	uint8_t *memptr;
+
+	if (b7_set_main_sensor_name)
+		return;
+
+	memptr = mapdata;
+
+	if (memptr[B7_MAIN_MODULE_ID_OFFSET] == B7_MAIN_MODULE_ID_OFILM) {
+		strcpy(b7_main_sensor_name, B7_MAIN_MODULE_OFILM);
+		b7_set_main_sensor_name = 1;
+		pr_err("b7 main sensor name = %s, line = %d\n", b7_main_sensor_name, __LINE__);
+		return;
+	} else if (memptr[B7_MAIN_MODULE_ID_OFFSET] == B7_MAIN_MODULE_ID_SEMCO) {
+		strcpy(b7_main_sensor_name, B7_MAIN_MODULE_SEMCO);
+		b7_set_main_sensor_name = 1;
+		pr_err("b7 main sensor name = %s, line = %d\n", b7_main_sensor_name, __LINE__);
+		return;
+	} else {
+		pr_err("b7 main sensor name not match(%d)!\n", memptr[B7_MAIN_MODULE_ID_OFFSET]);
+	}
+}
+
+static void set_b7_aux_sensor_name(struct msm_eeprom_ctrl_t *e_ctrl,
+		char *mapdata)
+{
+	uint8_t *memptr;
+
+	if (b7_set_aux_sensor_name)
+		return;
+
+	memptr = mapdata;
+
+	if (memptr[B7_AUX_MODULE_ID_OFFSET] == B7_AUX_MODULE_ID_OFILM) {
+		strcpy(b7_aux_sensor_name, B7_AUX_MODULE_OFILM);
+		b7_set_aux_sensor_name = 1;
+		pr_err("b7 aux sensor name = %s, line = %d\n", b7_aux_sensor_name, __LINE__);
+		return;
+	} else if (memptr[B7_AUX_MODULE_ID_OFFSET] == B7_AUX_MODULE_ID_SEMCO) {
+		strcpy(b7_aux_sensor_name, B7_AUX_MODULE_SEMCO);
+		b7_set_aux_sensor_name = 1;
+		pr_err("b7 aux sensor name = %s, line = %d\n", b7_aux_sensor_name, __LINE__);
+		return;
+	} else {
+		pr_err("b7 aux sensor name not match(%d)!\n", memptr[B7_AUX_MODULE_ID_OFFSET]);
+	}
+}
+
+static void set_b7_front_sensor_name(struct msm_eeprom_ctrl_t *e_ctrl,
+		char *mapdata)
+{
+	uint8_t *memptr;
+	int offset;
+
+	if (b7_set_front_sensor_name)
+		return;
+
+	memptr = mapdata;
+
+	if ((memptr[B7_FRONT_PAGE2_OFFSET] & 0xC0) == 0x40)
+		offset = B7_FRONT_PAGE2_OFFSET + B7_FRONT_MODULE_ID_OFFSET;
+	else if ((memptr[B7_FRONT_PAGE1_OFFSET] & 0xC0) == 0x40)
+		offset = B7_FRONT_PAGE1_OFFSET + B7_FRONT_MODULE_ID_OFFSET;
+	else if ((memptr[B7_FRONT_PAGE0_OFFSET] & 0xC0) == 0x40)
+		offset = B7_FRONT_PAGE0_OFFSET + B7_FRONT_MODULE_ID_OFFSET;
+	else
+		return;
+
+	if (memptr[offset] == B7_FRONT_MODULE_ID_PRIMAX) {
+		strcpy(b7_front_sensor_name, B7_FRONT_MODULE_PRIMAX);
+		b7_set_front_sensor_name = 1;
+		pr_err("b7 front sensor name = %s\n", b7_front_sensor_name);
+	} else if (memptr[offset] == B7_FRONT_MODULE_ID_LIETON) {
+		strcpy(b7_front_sensor_name, B7_FRONT_MODULE_LITEON);
+		b7_set_front_sensor_name = 1;
+		pr_err("b7 front sensor name = %s\n", b7_front_sensor_name);
+	} else {
+		pr_err("b7 front sensor name not match!\n");
+	}
+}
+
+static void set_front_sensor_name(struct msm_eeprom_ctrl_t *e_ctrl,
+		char *mapdata)
+{
+	uint8_t *memptr;
+	int offset;
+
+	if (a1_set_front_sensor_name)
+		return;
+
+	memptr = mapdata;
+
+	if ((memptr[A1_FRONT_PAGE2_OFFSET] & 0xC0) == 0x40)
+		offset = A1_FRONT_PAGE2_OFFSET + A1_FRONT_MODULE_ID_OFFSET;
+	else if ((memptr[A1_FRONT_PAGE1_OFFSET] & 0xC0) == 0x40)
+		offset = A1_FRONT_PAGE1_OFFSET + A1_FRONT_MODULE_ID_OFFSET;
+	else if ((memptr[A1_FRONT_PAGE0_OFFSET] & 0xC0) == 0x40)
+		offset = A1_FRONT_PAGE0_OFFSET + A1_FRONT_MODULE_ID_OFFSET;
+	else
+		return;
+
+	if (memptr[offset] == A1_FRONT_MODULE_ID_PRIMAX) {
+		strcpy(a1_front_sensor_name, A1_FRONT_MODULE_PRIMAX);
+		a1_set_front_sensor_name = 1;
+		CDBG("a1 front sensor name = %s\n", a1_front_sensor_name);
+	} else if (memptr[offset] == A1_FRONT_MODULE_ID_LIETON) {
+		strcpy(a1_front_sensor_name, A1_FRONT_MODULE_LITEON);
+		a1_set_front_sensor_name = 1;
+		CDBG("a1 front sensor name = %s\n", a1_front_sensor_name);
+	} else {
+		pr_err("a1 front sensor name not match!\n");
+	}
+}
+
+static void a1_set_sensor_name(struct msm_eeprom_ctrl_t *e_ctrl, char *mapdata)
+{
+	struct msm_eeprom_board_info *eb_info;
+
+	eb_info = e_ctrl->eboard_info;
+
+	if (e_ctrl->eboard_info->eeprom_name == NULL || mapdata == NULL)
+		return;
+
+	if (!strcmp(eb_info->eeprom_name, A1_FRONT_SENSOR_NAME)) {
+		set_front_sensor_name(e_ctrl, mapdata);
+	} else {
+		pr_err("a1 sensor name check failed\n");
+	}
+}
+
+static void a4_set_sensor_name(struct msm_eeprom_ctrl_t *e_ctrl, char *mapdata)
+{
+	struct msm_eeprom_board_info *eb_info;
+
+	eb_info = e_ctrl->eboard_info;
+
+	if (e_ctrl->eboard_info->eeprom_name == NULL || mapdata == NULL)
+		return;
+
+	if (!strncmp(eb_info->eeprom_name, A4_BACK_SENSOR_NAME,
+				strlen(A4_BACK_SENSOR_NAME))) {
+		set_a4_back_sensor_name(e_ctrl, mapdata);
+	} else {
+		pr_err("a4 back sensor name check failed\n");
+	}
+}
+
+static void a4_front_set_sensor_name(struct msm_eeprom_ctrl_t *e_ctrl, char *mapdata)
+{
+	struct msm_eeprom_board_info *eb_info;
+
+	eb_info = e_ctrl->eboard_info;
+
+	if (e_ctrl->eboard_info->eeprom_name == NULL || mapdata == NULL)
+		return;
+
+	if (!strncmp(eb_info->eeprom_name, A4_FRONT_SENSOR_NAME,
+				strlen(A4_FRONT_SENSOR_NAME))) {
+		set_a4_front_sensor_name(e_ctrl, mapdata);
+	} else {
+		pr_err("a4 front sensor name check failed\n");
+	}
+}
+
+static void a7_set_sensor_name(struct msm_eeprom_ctrl_t *e_ctrl, char *mapdata)
+{
+	struct msm_eeprom_board_info *eb_info;
+
+	eb_info = e_ctrl->eboard_info;
+
+	if (e_ctrl->eboard_info->eeprom_name == NULL || mapdata == NULL)
+		return;
+
+	if (!strncmp(eb_info->eeprom_name, A7_BACK_SENSOR_NAME,
+				strlen(A7_BACK_SENSOR_NAME))) {
+		set_a7_back_sensor_name(e_ctrl, mapdata);
+	} else {
+		pr_err("a7 sensor name check failed\n");
+	}
+
+}
+
+static void a8_set_sensor_name(struct msm_eeprom_ctrl_t *e_ctrl, char *mapdata)
+{
+	struct msm_eeprom_board_info *eb_info;
+
+	eb_info = e_ctrl->eboard_info;
+
+	if (e_ctrl->eboard_info->eeprom_name == NULL || mapdata == NULL)
+		return;
+
+	if (!strncmp(eb_info->eeprom_name, A8_REAR_SENSOR_NAME,
+				strlen(A8_REAR_SENSOR_NAME))) {
+		set_a8_rear_sensor_name(e_ctrl, mapdata);
+	} else {
+		pr_err("a8 sensor name check failed\n");
+	}
+
+}
+
+static void b7_main_set_sensor_name(struct msm_eeprom_ctrl_t *e_ctrl, char *mapdata)
+{
+	struct msm_eeprom_board_info *eb_info;
+
+	eb_info = e_ctrl->eboard_info;
+
+	if (e_ctrl->eboard_info->eeprom_name == NULL || mapdata == NULL)
+		return;
+
+	if (!strncmp(eb_info->eeprom_name, B7_MAIN_SENSOR_NAME,
+				strlen(B7_MAIN_SENSOR_NAME))) {
+		set_b7_main_sensor_name(e_ctrl, mapdata);
+	} else {
+		pr_err("b7 main sensor name check failed\n");
+	}
+}
+
+static void b7_aux_set_sensor_name(struct msm_eeprom_ctrl_t *e_ctrl, char *mapdata)
+{
+	struct msm_eeprom_board_info *eb_info;
+
+	eb_info = e_ctrl->eboard_info;
+
+	if (e_ctrl->eboard_info->eeprom_name == NULL || mapdata == NULL)
+		return;
+
+	if (!strncmp(eb_info->eeprom_name, B7_AUX_SENSOR_NAME,
+				strlen(B7_AUX_SENSOR_NAME))) {
+		set_b7_aux_sensor_name(e_ctrl, mapdata);
+	} else {
+		pr_err("b7 aux sensor name check failed\n");
+	}
+}
+
+static void b7_front_set_sensor_name(struct msm_eeprom_ctrl_t *e_ctrl, char *mapdata)
+{
+	struct msm_eeprom_board_info *eb_info;
+
+	eb_info = e_ctrl->eboard_info;
+
+	if (e_ctrl->eboard_info->eeprom_name == NULL || mapdata == NULL)
+		return;
+
+	if (!strcmp(eb_info->eeprom_name, B7_FRONT_SENSOR_NAME)) {
+		set_b7_front_sensor_name(e_ctrl, mapdata);
+	} else {
+		pr_err("b7 front sensor name check failed\n");
+	}
+}
+
+int a4_get_back_sensor_name(char *sensor_name)
+{
+	if (a4_set_back_sensor_name) {
+		strcpy(sensor_name, a4_back_sensor_name);
+		return 0;
+	} else
+		return -EINVAL;
+}
+EXPORT_SYMBOL(a4_get_back_sensor_name);
+
+int a4_get_front_sensor_name(char *sensor_name)
+{
+	if (a4_set_front_sensor_name) {
+		strlcpy(sensor_name, a4_front_sensor_name, sizeof(sensor_name));
+		return 0;
+	} else {
+		return -EINVAL;
+	}
+}
+EXPORT_SYMBOL(a4_get_front_sensor_name);
+
+int a7_get_back_sensor_name(char *sensor_name)
+{
+	if (a7_set_back_sensor_name) {
+		strcpy(sensor_name, a7_back_sensor_name);
+		return 0;
+	} else
+		return -EINVAL;
+}
+EXPORT_SYMBOL(a7_get_back_sensor_name);
+
+int b7_get_main_sensor_name(char *sensor_name)
+{
+	if (b7_set_main_sensor_name) {
+		strcpy(sensor_name, b7_main_sensor_name);
+		return 0;
+	} else
+		return -EINVAL;
+}
+EXPORT_SYMBOL(b7_get_main_sensor_name);
+
+int b7_get_aux_sensor_name(char *sensor_name)
+{
+	if (b7_set_aux_sensor_name) {
+		strcpy(sensor_name, b7_aux_sensor_name);
+		return 0;
+	} else
+		return -EINVAL;
+}
+EXPORT_SYMBOL(b7_get_aux_sensor_name);
+
+int a1_get_front_sensor_name(char *sensor_name)
+{
+	if (a1_set_front_sensor_name) {
+		strcpy(sensor_name, a1_front_sensor_name);
+		return 0;
+	} else
+		return -EINVAL;
+}
+EXPORT_SYMBOL(a1_get_front_sensor_name);
+
+int a8_get_rear_sensor_name(char *sensor_name)
+{
+	if (a8_set_rear_sensor_name) {
+		strcpy(sensor_name, a8_rear_sensor_name);
+		return 0;
+	} else
+		return -EINVAL;
+}
+EXPORT_SYMBOL(a8_get_rear_sensor_name);
+
+int b7_get_front_sensor_name(char *sensor_name)
+{
+	if (b7_set_front_sensor_name) {
+		strcpy(sensor_name, b7_front_sensor_name);
+		return 0;
+	} else
+		return -EINVAL;
+}
+EXPORT_SYMBOL(b7_get_front_sensor_name);
+
 /**
   * msm_eeprom_match_crc - verify multiple regions using crc
   * @data:	data block to be verified
@@ -162,7 +694,7 @@ static int read_eeprom_memory(struct msm_eeprom_ctrl_t *e_ctrl,
 	int j;
 	struct msm_eeprom_memory_map_t *emap = block->map;
 	struct msm_eeprom_board_info *eb_info;
-	uint8_t *memptr = block->mapdata;
+	uint8_t *memptr = block->mapdata, temp;
 
 	if (!e_ctrl) {
 		pr_err("%s e_ctrl is NULL", __func__);
@@ -181,11 +713,35 @@ static int read_eeprom_memory(struct msm_eeprom_ctrl_t *e_ctrl,
 		}
 
 		if (emap[j].page.valid_size) {
+			if ((strncmp(eb_info->eeprom_name, "ov4688", strlen("ov4688")) == 0) &&
+				(emap[j].page.addr == 0x5000)) {
+				e_ctrl->i2c_client.addr_type = emap[j].mem.addr_t;
+				rc = e_ctrl->i2c_client.i2c_func_tbl->i2c_read_seq(
+					&(e_ctrl->i2c_client), 0x5000, &temp, 1);
+
+				if (rc < 0) {
+					pr_err("%s: read failed\n", __func__);
+					return rc;
+				}
+
+				if (emap[j].page.data == 0x00)
+					emap[j].page.data = temp & (~0x20);
+				else if (emap[j].page.data == 0x01)
+					emap[j].page.data = 0x20 | (temp & (~0x20));
+				pr_info("write the ov4688 reg when read the OTP, data = 0x%x",
+						emap[j].page.data);
+			}
+
 			e_ctrl->i2c_client.addr_type = emap[j].page.addr_t;
 			rc = e_ctrl->i2c_client.i2c_func_tbl->i2c_write(
 				&(e_ctrl->i2c_client), emap[j].page.addr,
 				emap[j].page.data, emap[j].page.data_t);
+			if (emap[j].page.delay > 20)
 				msleep(emap[j].page.delay);
+			else if (0 != emap[j].page.delay)
+				usleep_range(emap[j].page.delay * 1000,
+					(emap[j].page.delay * 1000) + 1000);
+
 			if (rc < 0) {
 				pr_err("%s: page write failed\n", __func__);
 				return rc;
@@ -196,7 +752,12 @@ static int read_eeprom_memory(struct msm_eeprom_ctrl_t *e_ctrl,
 			rc = e_ctrl->i2c_client.i2c_func_tbl->i2c_write(
 				&(e_ctrl->i2c_client), emap[j].pageen.addr,
 				emap[j].pageen.data, emap[j].pageen.data_t);
+			if (emap[j].pageen.delay > 20)
 				msleep(emap[j].pageen.delay);
+			else if (0 != emap[j].pageen.delay)
+				usleep_range(emap[j].pageen.delay * 1000,
+					(emap[j].pageen.delay * 1000) + 1000);
+
 			if (rc < 0) {
 				pr_err("%s: page enable failed\n", __func__);
 				return rc;
@@ -236,8 +797,399 @@ static int read_eeprom_memory(struct msm_eeprom_ctrl_t *e_ctrl,
 			}
 		}
 	}
+	if (!strcmp(e_ctrl->eboard_info->eeprom_name, A1_FRONT_SENSOR_NAME)) {
+		a1_set_sensor_name(e_ctrl, block->mapdata);
+	}
+	if (!strcmp(e_ctrl->eboard_info->eeprom_name, B7_MAIN_SENSOR_NAME)) {
+		b7_main_set_sensor_name(e_ctrl, block->mapdata);
+	}
+	if (!strcmp(e_ctrl->eboard_info->eeprom_name, B7_AUX_SENSOR_NAME)) {
+		b7_aux_set_sensor_name(e_ctrl, block->mapdata);
+	}
+	if (!strcmp(e_ctrl->eboard_info->eeprom_name, B7_FRONT_SENSOR_NAME)) {
+		b7_front_set_sensor_name(e_ctrl, block->mapdata);
+	}
+
+	if (!strncmp(eb_info->eeprom_name, A4_FRONT_SENSOR_NAME,
+				strlen(A4_FRONT_SENSOR_NAME))) {
+		a4_front_set_sensor_name(e_ctrl, block->mapdata);
+	}
+
 	return rc;
 }
+
+static int a4_back_read_eeprom_memory(struct msm_eeprom_ctrl_t *e_ctrl,
+			      struct msm_eeprom_memory_block_t *block)
+{
+	int rc = 0;
+	int j;
+	struct msm_eeprom_memory_map_t *emap = block->map;
+	struct msm_eeprom_board_info *eb_info;
+	uint8_t *memptr = block->mapdata;
+
+	if (!e_ctrl) {
+		pr_err("%s e_ctrl is NULL", __func__);
+		return -EINVAL;
+	}
+
+	eb_info = e_ctrl->eboard_info;
+
+	if (emap[0].mem.valid_size) {
+		e_ctrl->i2c_client.addr_type = emap[0].mem.addr_t;
+		rc = e_ctrl->i2c_client.i2c_func_tbl->i2c_read_seq(
+			&(e_ctrl->i2c_client), emap[0].mem.addr,
+			memptr, 1);
+
+		if (rc < 0) {
+			pr_err("%s: read failed\n", __func__);
+			return rc;
+		}
+	}
+
+	 /* A4 eeprom i2c addr type:
+	    imx318_primax: P1 module--Byte type, P1F and P2.2 module-Byte type
+	    imx318_semco:  P1 module--Word type, P1F and P2.2 module-Byte type
+	    The code 1 means Byte type, 2 means Word type.
+	 */
+	if ((memptr[0] == A4_BACK_MODULE_ID_PRIMAX)
+		&& (strcmp(eb_info->eeprom_name, "imx318_primax") == 0)) {
+		e_ctrl->i2c_client.addr_type = 1;
+	} else if ((memptr[0] == A4_BACK_MODULE_ID_SEMCO)
+		&& (strcmp(eb_info->eeprom_name, "imx318_semco") == 0)) {
+		e_ctrl->i2c_client.addr_type = 1;
+	}
+
+	for (j = 0; j < block->num_map; j++) {
+		if (emap[j].saddr.addr) {
+			eb_info->i2c_slaveaddr = emap[j].saddr.addr;
+			e_ctrl->i2c_client.cci_client->sid =
+					eb_info->i2c_slaveaddr >> 1;
+			pr_err("qcom,slave-addr = 0x%X\n",
+				eb_info->i2c_slaveaddr);
+		}
+
+		if (emap[j].page.valid_size) {
+			e_ctrl->i2c_client.addr_type = emap[j].page.addr_t;
+			rc = e_ctrl->i2c_client.i2c_func_tbl->i2c_write(
+				&(e_ctrl->i2c_client), emap[j].page.addr,
+				emap[j].page.data, emap[j].page.data_t);
+			if (emap[j].page.delay > 20)
+				msleep(emap[j].page.delay);
+			else if (0 != emap[j].page.delay)
+				usleep_range(emap[j].page.delay * 1000,
+					(emap[j].page.delay * 1000) + 1000);
+
+			if (rc < 0) {
+				pr_err("%s: page write failed\n", __func__);
+				return rc;
+			}
+		}
+
+		if (emap[j].pageen.valid_size) {
+			e_ctrl->i2c_client.addr_type = emap[j].pageen.addr_t;
+			rc = e_ctrl->i2c_client.i2c_func_tbl->i2c_write(
+				&(e_ctrl->i2c_client), emap[j].pageen.addr,
+				emap[j].pageen.data, emap[j].pageen.data_t);
+			if (emap[j].pageen.delay > 20)
+				msleep(emap[j].pageen.delay);
+			else if (0 != emap[j].pageen.delay)
+				usleep_range(emap[j].pageen.delay * 1000,
+					(emap[j].pageen.delay * 1000) + 1000);
+
+			if (rc < 0) {
+				pr_err("%s: page enable failed\n", __func__);
+				return rc;
+			}
+		}
+
+		if (emap[j].poll.valid_size) {
+			e_ctrl->i2c_client.addr_type = emap[j].poll.addr_t;
+			rc = e_ctrl->i2c_client.i2c_func_tbl->i2c_poll(
+				&(e_ctrl->i2c_client), emap[j].poll.addr,
+				emap[j].poll.data, emap[j].poll.data_t,
+				emap[j].poll.delay);
+
+			if (rc < 0) {
+				pr_err("%s: poll failed\n", __func__);
+				return rc;
+			}
+		}
+
+		if (emap[j].mem.valid_size) {
+			rc = e_ctrl->i2c_client.i2c_func_tbl->i2c_read_seq(
+			&(e_ctrl->i2c_client), emap[j].mem.addr,
+				memptr, emap[j].mem.valid_size);
+
+			if (rc < 0) {
+				pr_err("%s: read failed\n", __func__);
+				return rc;
+			}
+			memptr += emap[j].mem.valid_size;
+		}
+
+		if (emap[j].pageen.valid_size) {
+			e_ctrl->i2c_client.addr_type = emap[j].pageen.addr_t;
+			rc = e_ctrl->i2c_client.i2c_func_tbl->i2c_write(
+				&(e_ctrl->i2c_client), emap[j].pageen.addr,
+				0, emap[j].pageen.data_t);
+			if (rc < 0) {
+				pr_err("%s: page disable failed\n", __func__);
+				return rc;
+			}
+		}
+	}
+
+	a4_set_sensor_name(e_ctrl, block->mapdata);
+	return rc;
+}
+
+static int a7_back_read_eeprom_memory(struct msm_eeprom_ctrl_t *e_ctrl,
+			      struct msm_eeprom_memory_block_t *block)
+{
+	int rc = 0;
+	int j;
+	struct msm_eeprom_memory_map_t *emap = block->map;
+	struct msm_eeprom_board_info *eb_info;
+	uint8_t *memptr = block->mapdata;
+
+	if (!e_ctrl) {
+		pr_err("%s e_ctrl is NULL", __func__);
+		return -EINVAL;
+	}
+
+	eb_info = e_ctrl->eboard_info;
+
+	if (emap[0].mem.valid_size) {
+		e_ctrl->i2c_client.addr_type = emap[0].mem.addr_t;
+		rc = e_ctrl->i2c_client.i2c_func_tbl->i2c_read_seq(
+			&(e_ctrl->i2c_client), emap[0].mem.addr,
+			memptr, 1);
+
+		if (rc < 0) {
+			pr_err("%s: read failed\n", __func__);
+			return rc;
+		}
+	}
+
+	if ((memptr[0] == A4_BACK_MODULE_ID_PRIMAX)
+		&& (strcmp(eb_info->eeprom_name, "imx318_primax") == 0)) {
+		e_ctrl->i2c_client.addr_type = 1;
+	} else if ((memptr[0] == A4_BACK_MODULE_ID_SEMCO)
+		&& (strcmp(eb_info->eeprom_name, "imx318_semco") == 0)) {
+		e_ctrl->i2c_client.addr_type = 2;
+	}
+
+	for (j = 0; j < block->num_map; j++) {
+		if (emap[j].saddr.addr) {
+			eb_info->i2c_slaveaddr = emap[j].saddr.addr;
+			e_ctrl->i2c_client.cci_client->sid =
+					eb_info->i2c_slaveaddr >> 1;
+			pr_err("qcom,slave-addr = 0x%X\n",
+				eb_info->i2c_slaveaddr);
+		}
+
+		if (emap[j].page.valid_size) {
+			e_ctrl->i2c_client.addr_type = emap[j].page.addr_t;
+			rc = e_ctrl->i2c_client.i2c_func_tbl->i2c_write(
+				&(e_ctrl->i2c_client), emap[j].page.addr,
+				emap[j].page.data, emap[j].page.data_t);
+			if (emap[j].page.delay > 20)
+				msleep(emap[j].page.delay);
+			else if (0 != emap[j].page.delay)
+				usleep_range(emap[j].page.delay * 1000,
+					(emap[j].page.delay * 1000) + 1000);
+
+			if (rc < 0) {
+				pr_err("%s: page write failed\n", __func__);
+				return rc;
+			}
+		}
+
+		if (emap[j].pageen.valid_size) {
+			e_ctrl->i2c_client.addr_type = emap[j].pageen.addr_t;
+			rc = e_ctrl->i2c_client.i2c_func_tbl->i2c_write(
+				&(e_ctrl->i2c_client), emap[j].pageen.addr,
+				emap[j].pageen.data, emap[j].pageen.data_t);
+			if (emap[j].pageen.delay > 20)
+				msleep(emap[j].pageen.delay);
+			else if (0 != emap[j].pageen.delay)
+				usleep_range(emap[j].pageen.delay * 1000,
+					(emap[j].pageen.delay * 1000) + 1000);
+
+			if (rc < 0) {
+				pr_err("%s: page enable failed\n", __func__);
+				return rc;
+			}
+		}
+
+		if (emap[j].poll.valid_size) {
+			e_ctrl->i2c_client.addr_type = emap[j].poll.addr_t;
+			rc = e_ctrl->i2c_client.i2c_func_tbl->i2c_poll(
+				&(e_ctrl->i2c_client), emap[j].poll.addr,
+				emap[j].poll.data, emap[j].poll.data_t,
+				emap[j].poll.delay);
+			if (emap[j].poll.delay > 20)
+				msleep(emap[j].poll.delay);
+			else if (0 != emap[j].poll.delay)
+				usleep_range(emap[j].poll.delay * 1000,
+					(emap[j].poll.delay * 1000) + 1000);
+
+			if (rc < 0) {
+				pr_err("%s: poll failed\n", __func__);
+				return rc;
+			}
+		}
+
+		if (emap[j].mem.valid_size) {
+			rc = e_ctrl->i2c_client.i2c_func_tbl->i2c_read_seq(
+			&(e_ctrl->i2c_client), emap[j].mem.addr,
+				memptr, emap[j].mem.valid_size);
+
+			if (rc < 0) {
+				pr_err("%s: read failed\n", __func__);
+				return rc;
+			}
+			memptr += emap[j].mem.valid_size;
+		}
+
+		if (emap[j].pageen.valid_size) {
+			e_ctrl->i2c_client.addr_type = emap[j].pageen.addr_t;
+			rc = e_ctrl->i2c_client.i2c_func_tbl->i2c_write(
+				&(e_ctrl->i2c_client), emap[j].pageen.addr,
+				0, emap[j].pageen.data_t);
+			if (rc < 0) {
+				pr_err("%s: page disable failed\n", __func__);
+				return rc;
+			}
+		}
+	}
+
+	a7_set_sensor_name(e_ctrl, block->mapdata);
+	return rc;
+}
+
+static int a8_rear_read_eeprom_memory(struct msm_eeprom_ctrl_t *e_ctrl,
+			      struct msm_eeprom_memory_block_t *block)
+{
+	int rc = 0;
+	int j;
+	struct msm_eeprom_memory_map_t *emap = block->map;
+	struct msm_eeprom_board_info *eb_info;
+	uint8_t *memptr = block->mapdata;
+
+	if (!e_ctrl) {
+		pr_err("%s e_ctrl is NULL", __func__);
+		return -EINVAL;
+	}
+
+	eb_info = e_ctrl->eboard_info;
+
+	if (emap[0].mem.valid_size) {
+		e_ctrl->i2c_client.addr_type = emap[0].mem.addr_t;
+		rc = e_ctrl->i2c_client.i2c_func_tbl->i2c_read_seq(
+			&(e_ctrl->i2c_client), emap[0].mem.addr,
+			memptr, 1);
+
+		if (rc < 0) {
+			pr_err("%s: read failed\n", __func__);
+			return rc;
+		}
+	}
+
+	if ((memptr[0] == A8_REAR_MODULE_ID_OFILM)
+		&& (strcmp(eb_info->eeprom_name, "ov16880_ofilm") == 0)) {
+		e_ctrl->i2c_client.addr_type = 2;
+	}
+
+	for (j = 0; j < block->num_map; j++) {
+		if (emap[j].saddr.addr) {
+			eb_info->i2c_slaveaddr = emap[j].saddr.addr;
+			e_ctrl->i2c_client.cci_client->sid =
+					eb_info->i2c_slaveaddr >> 1;
+			pr_err("qcom,slave-addr = 0x%X\n",
+				eb_info->i2c_slaveaddr);
+		}
+
+		if (emap[j].page.valid_size) {
+			e_ctrl->i2c_client.addr_type = emap[j].page.addr_t;
+			rc = e_ctrl->i2c_client.i2c_func_tbl->i2c_write(
+				&(e_ctrl->i2c_client), emap[j].page.addr,
+				emap[j].page.data, emap[j].page.data_t);
+			if (emap[j].page.delay > 20)
+				msleep(emap[j].page.delay);
+			else if (0 != emap[j].page.delay)
+				usleep_range(emap[j].page.delay * 1000,
+					(emap[j].page.delay * 1000) + 1000);
+
+			if (rc < 0) {
+				pr_err("%s: page write failed\n", __func__);
+				return rc;
+			}
+		}
+
+		if (emap[j].pageen.valid_size) {
+			e_ctrl->i2c_client.addr_type = emap[j].pageen.addr_t;
+			rc = e_ctrl->i2c_client.i2c_func_tbl->i2c_write(
+				&(e_ctrl->i2c_client), emap[j].pageen.addr,
+				emap[j].pageen.data, emap[j].pageen.data_t);
+			if (emap[j].pageen.delay > 20)
+				msleep(emap[j].pageen.delay);
+			else if (0 != emap[j].pageen.delay)
+				usleep_range(emap[j].pageen.delay * 1000,
+					(emap[j].pageen.delay * 1000) + 1000);
+
+			if (rc < 0) {
+				pr_err("%s: page enable failed\n", __func__);
+				return rc;
+			}
+		}
+
+		if (emap[j].poll.valid_size) {
+			e_ctrl->i2c_client.addr_type = emap[j].poll.addr_t;
+			rc = e_ctrl->i2c_client.i2c_func_tbl->i2c_poll(
+				&(e_ctrl->i2c_client), emap[j].poll.addr,
+				emap[j].poll.data, emap[j].poll.data_t,
+				emap[j].poll.delay);
+			if (emap[j].poll.delay > 20)
+				msleep(emap[j].poll.delay);
+			else if (0 != emap[j].poll.delay)
+				usleep_range(emap[j].poll.delay * 1000,
+					(emap[j].poll.delay * 1000) + 1000);
+
+			if (rc < 0) {
+				pr_err("%s: poll failed\n", __func__);
+				return rc;
+			}
+		}
+
+		if (emap[j].mem.valid_size) {
+			rc = e_ctrl->i2c_client.i2c_func_tbl->i2c_read_seq(
+			&(e_ctrl->i2c_client), emap[j].mem.addr,
+				memptr, emap[j].mem.valid_size);
+
+			if (rc < 0) {
+				pr_err("%s: read failed\n", __func__);
+				return rc;
+			}
+			memptr += emap[j].mem.valid_size;
+		}
+
+		if (emap[j].pageen.valid_size) {
+			e_ctrl->i2c_client.addr_type = emap[j].pageen.addr_t;
+			rc = e_ctrl->i2c_client.i2c_func_tbl->i2c_write(
+				&(e_ctrl->i2c_client), emap[j].pageen.addr,
+				0, emap[j].pageen.data_t);
+			if (rc < 0) {
+				pr_err("%s: page disable failed\n", __func__);
+				return rc;
+			}
+		}
+	}
+
+	a8_set_sensor_name(e_ctrl, block->mapdata);
+	return rc;
+}
+
 /**
   * msm_eeprom_parse_memory_map() - parse memory map in device node
   * @of:	device node
@@ -377,7 +1329,12 @@ static int eeprom_parse_memory_map(struct msm_eeprom_ctrl_t *e_ctrl,
 					eeprom_map->mem_settings[i].reg_addr,
 					eeprom_map->mem_settings[i].reg_data,
 					eeprom_map->mem_settings[i].data_type);
-				msleep(eeprom_map->mem_settings[i].delay);
+				if (eeprom_map->mem_settings[i].delay > 20)
+					msleep(eeprom_map->mem_settings[i].delay);
+				else if (0 != eeprom_map->mem_settings[i].delay)
+					usleep_range(eeprom_map->mem_settings[i].delay * 1000,
+						(eeprom_map->mem_settings[i].delay * 1000) + 1000);
+
 				if (rc < 0) {
 					pr_err("%s: page write failed\n",
 						__func__);
@@ -409,7 +1366,12 @@ static int eeprom_parse_memory_map(struct msm_eeprom_ctrl_t *e_ctrl,
 					eeprom_map->mem_settings[i].reg_addr,
 					memptr,
 					eeprom_map->mem_settings[i].reg_data);
-				msleep(eeprom_map->mem_settings[i].delay);
+				if (eeprom_map->mem_settings[i].delay > 20)
+					msleep(eeprom_map->mem_settings[i].delay);
+				else if (0 != eeprom_map->mem_settings[i].delay)
+					usleep_range(eeprom_map->mem_settings[i].delay * 1000,
+						(eeprom_map->mem_settings[i].delay * 1000) + 1000);
+
 				if (rc < 0) {
 					pr_err("%s: read failed\n",
 						__func__);
@@ -574,6 +1536,7 @@ static int eeprom_init_config(struct msm_eeprom_ctrl_t *e_ctrl,
 	rc = eeprom_parse_memory_map(e_ctrl, memory_map_arr);
 	if (rc < 0) {
 		pr_err("%s::%d memory map parse failed\n", __func__, __LINE__);
+		goto free_mem;
 	}
 
 	rc = msm_camera_power_down(power_info, e_ctrl->eeprom_device_type,
@@ -581,6 +1544,7 @@ static int eeprom_init_config(struct msm_eeprom_ctrl_t *e_ctrl,
 	if (rc < 0) {
 		pr_err("%s:%d Power down failed rc %d\n",
 			__func__, __LINE__, rc);
+		goto free_mem;
 	}
 
 free_mem:
@@ -780,92 +1744,6 @@ static int msm_eeprom_close(struct v4l2_subdev *sd,
 	return rc;
 }
 
-static int msm_eeprom_get_dt_data(struct msm_eeprom_ctrl_t *e_ctrl)
-{
-	int rc = 0, i = 0;
-	struct msm_eeprom_board_info *eb_info;
-	struct msm_camera_power_ctrl_t *power_info =
-		&e_ctrl->eboard_info->power_info;
-	struct device_node *of_node = NULL;
-	struct msm_camera_gpio_conf *gconf = NULL;
-	int8_t gpio_array_size = 0;
-	uint16_t *gpio_array = NULL;
-
-	eb_info = e_ctrl->eboard_info;
-	if (e_ctrl->eeprom_device_type == MSM_CAMERA_SPI_DEVICE)
-		of_node = e_ctrl->i2c_client.
-			spi_client->spi_master->dev.of_node;
-	else if (e_ctrl->eeprom_device_type == MSM_CAMERA_PLATFORM_DEVICE)
-		of_node = e_ctrl->pdev->dev.of_node;
-	else
-		of_node = e_ctrl->i2c_client.client->dev.of_node;
-
-	if (!of_node) {
-		pr_err("%s: %d of_node is NULL\n", __func__ , __LINE__);
-		return -ENOMEM;
-	}
-	rc = msm_camera_get_dt_vreg_data(of_node, &power_info->cam_vreg,
-					     &power_info->num_vreg);
-	if (rc < 0)
-		return rc;
-
-	if (e_ctrl->userspace_probe == 0) {
-		rc = msm_camera_get_dt_power_setting_data(of_node,
-			power_info->cam_vreg, power_info->num_vreg,
-			power_info);
-		if (rc < 0)
-			goto ERROR1;
-	}
-
-	power_info->gpio_conf = kzalloc(sizeof(struct msm_camera_gpio_conf),
-					GFP_KERNEL);
-	if (!power_info->gpio_conf) {
-		rc = -ENOMEM;
-		goto ERROR2;
-	}
-	gconf = power_info->gpio_conf;
-	gpio_array_size = of_gpio_count(of_node);
-	CDBG("%s gpio count %d\n", __func__, gpio_array_size);
-
-	if (gpio_array_size > 0) {
-		gpio_array = kcalloc(gpio_array_size, sizeof(uint16_t),
-			GFP_KERNEL);
-		if (gpio_array == NULL)
-			goto ERROR3;
-		for (i = 0; i < gpio_array_size; i++) {
-			gpio_array[i] = of_get_gpio(of_node, i);
-			CDBG("%s gpio_array[%d] = %d\n", __func__, i,
-				gpio_array[i]);
-		}
-
-		rc = msm_camera_get_dt_gpio_req_tbl(of_node, gconf,
-			gpio_array, gpio_array_size);
-		if (rc < 0) {
-			pr_err("%s failed %d\n", __func__, __LINE__);
-			goto ERROR4;
-		}
-
-		rc = msm_camera_init_gpio_pin_tbl(of_node, gconf,
-			gpio_array, gpio_array_size);
-		if (rc < 0) {
-			pr_err("%s failed %d\n", __func__, __LINE__);
-			goto ERROR4;
-		}
-		kfree(gpio_array);
-	}
-
-	return rc;
-ERROR4:
-	kfree(gpio_array);
-ERROR3:
-	kfree(power_info->gpio_conf);
-ERROR2:
-	kfree(power_info->cam_vreg);
-ERROR1:
-	kfree(power_info->power_setting);
-	return rc;
-}
-
 static const struct v4l2_subdev_internal_ops msm_eeprom_internal_ops = {
 	.open = msm_eeprom_open,
 	.close = msm_eeprom_close,
@@ -883,173 +1761,111 @@ static int msm_eeprom_i2c_probe(struct i2c_client *client,
 			 const struct i2c_device_id *id)
 {
 	int rc = 0;
-	int j = 0;
-	uint32_t temp;
-
 	struct msm_eeprom_ctrl_t *e_ctrl = NULL;
-	struct msm_eeprom_board_info *eb_info = NULL;
-	struct device_node *of_node;
-	struct msm_camera_power_ctrl_t *power_info = NULL;
-	uint32_t cell_id;
-
 	CDBG("%s E\n", __func__);
+
+	if (!i2c_check_functionality(client->adapter, I2C_FUNC_I2C)) {
+		pr_err("%s i2c_check_functionality failed\n", __func__);
+		goto probe_failure;
+	}
 
 	e_ctrl = kzalloc(sizeof(*e_ctrl), GFP_KERNEL);
 	if (!e_ctrl) {
+		pr_err("%s:%d kzalloc failed\n", __func__, __LINE__);
 		return -ENOMEM;
 	}
 	e_ctrl->eeprom_v4l2_subdev_ops = &msm_eeprom_subdev_ops;
 	e_ctrl->eeprom_mutex = &msm_eeprom_mutex;
+	CDBG("%s client = 0x%pK\n", __func__, client);
+	e_ctrl->eboard_info = (struct msm_eeprom_board_info *)(id->driver_data);
+	if (!e_ctrl->eboard_info) {
+		pr_err("%s:%d board info NULL\n", __func__, __LINE__);
+		rc = -EINVAL;
+		goto ectrl_free;
+	}
 	e_ctrl->i2c_client.client = client;
 	e_ctrl->cal_data.mapdata = NULL;
 	e_ctrl->cal_data.map = NULL;
 	e_ctrl->userspace_probe = 0;
-	e_ctrl->is_supported = 0;
-	of_node = e_ctrl->i2c_client.client->dev.of_node;
-	if (!of_node) {
-		pr_err("%s dev.of_node NULL\n", __func__);
-		rc = -EINVAL;
-		goto ectrl_free;
-	}
+	e_ctrl->is_supported = 1;
 
-	/* Set device type as platform device */
+	/* Set device type as I2C */
 	e_ctrl->eeprom_device_type = MSM_CAMERA_I2C_DEVICE;
 	e_ctrl->i2c_client.i2c_func_tbl = &msm_eeprom_qup_func_tbl;
 
-	e_ctrl->eboard_info = kzalloc(sizeof(
-		struct msm_eeprom_board_info), GFP_KERNEL);
-	if (e_ctrl->eboard_info == NULL) {
-		rc = -ENOMEM;
-		goto ectrl_free;
-	}
-	eb_info = e_ctrl->eboard_info;
-	power_info = &eb_info->power_info;
-	power_info->dev = &e_ctrl->i2c_client.client->dev;
-
+	if (e_ctrl->eboard_info->i2c_slaveaddr != 0)
+		e_ctrl->i2c_client.client->addr =
+			e_ctrl->eboard_info->i2c_slaveaddr;
 
 	/*Get clocks information*/
-	rc = msm_camera_i2c_dev_get_clk_info(&e_ctrl->i2c_client.client->dev,
-		&power_info->clk_info,
-		&power_info->clk_ptr,
-		&power_info->clk_info_size);
+	rc = msm_camera_i2c_dev_get_clk_info(
+		&e_ctrl->i2c_client.client->dev,
+		&e_ctrl->eboard_info->power_info.clk_info,
+		&e_ctrl->eboard_info->power_info.clk_ptr,
+		&e_ctrl->eboard_info->power_info.clk_info_size);
 	if (rc < 0) {
 		pr_err("failed: msm_camera_get_clk_info rc %d", rc);
-		goto board_free;
+		goto ectrl_free;
 	}
 
-	rc = of_property_read_u32(of_node, "cell-index",
-		&cell_id);
-	CDBG("cell-index %d, rc %d\n", cell_id, rc);
-	if (rc < 0) {
-		pr_err("failed rc %d\n", rc);
-		goto board_free;
-	}
-	e_ctrl->subdev_id = cell_id;
-
-	rc = of_property_read_string(of_node, "qcom,eeprom-name",
-		&eb_info->eeprom_name);
-	CDBG("%s qcom,eeprom-name %s, rc %d\n", __func__,
-		eb_info->eeprom_name, rc);
-	if (rc < 0) {
-		pr_err("%s failed %d\n", __func__, __LINE__);
-		e_ctrl->userspace_probe = 1;
-	}
-
-	rc = msm_eeprom_get_dt_data(e_ctrl);
-	if (rc < 0)
-		goto board_free;
-
-	if (e_ctrl->userspace_probe == 0) {
-		rc = of_property_read_u32(of_node, "qcom,slave-addr",
-			&temp);
-		if (rc < 0) {
-			pr_err("%s failed rc %d\n", __func__, rc);
-			goto board_free;
-		}
-
-		rc = of_property_read_u32(of_node, "qcom,i2c-freq-mode",
-			&e_ctrl->i2c_freq_mode);
-		CDBG("qcom,i2c_freq_mode %d, rc %d\n",
-			e_ctrl->i2c_freq_mode, rc);
-		if (rc < 0) {
-			pr_err("%s qcom,i2c-freq-mode read fail. Setting to 0 %d\n",
-				__func__, rc);
-			e_ctrl->i2c_freq_mode = 0;
-		}
-		if (e_ctrl->i2c_freq_mode >= I2C_MAX_MODES) {
-			pr_err("%s:%d invalid i2c_freq_mode = %d\n",
-				__func__, __LINE__, e_ctrl->i2c_freq_mode);
-			e_ctrl->i2c_freq_mode = 0;
-		}
-		eb_info->i2c_slaveaddr = temp;
-		CDBG("qcom,slave-addr = 0x%X\n", eb_info->i2c_slaveaddr);
-		eb_info->i2c_freq_mode = e_ctrl->i2c_freq_mode;
-
-		rc = msm_eeprom_parse_memory_map(of_node, &e_ctrl->cal_data);
-		if (rc < 0)
-			goto board_free;
-
-		rc = msm_camera_power_up(power_info, e_ctrl->eeprom_device_type,
-			&e_ctrl->i2c_client);
-		if (rc) {
-			pr_err("failed rc %d\n", rc);
-			goto memdata_free;
-		}
-		rc = read_eeprom_memory(e_ctrl, &e_ctrl->cal_data);
-		if (rc < 0) {
-			pr_err("%s read_eeprom_memory failed\n", __func__);
-			goto power_down;
-		}
-		for (j = 0; j < e_ctrl->cal_data.num_data; j++)
-			CDBG("memory_data[%d] = 0x%X\n", j,
-				e_ctrl->cal_data.mapdata[j]);
-
-		e_ctrl->is_supported |= msm_eeprom_match_crc(&e_ctrl->cal_data);
-
-		rc = msm_camera_power_down(power_info,
-			e_ctrl->eeprom_device_type, &e_ctrl->i2c_client);
-		if (rc) {
-			pr_err("failed rc %d\n", rc);
-			goto memdata_free;
-		}
-	} else {
-		e_ctrl->is_supported = 1;
-	}
-	v4l2_subdev_init(&e_ctrl->msm_sd.sd,
+	/*IMPLEMENT READING PART*/
+	/* Initialize sub device */
+	v4l2_i2c_subdev_init(&e_ctrl->msm_sd.sd,
+		e_ctrl->i2c_client.client,
 		e_ctrl->eeprom_v4l2_subdev_ops);
 	v4l2_set_subdevdata(&e_ctrl->msm_sd.sd, e_ctrl);
 	e_ctrl->msm_sd.sd.internal_ops = &msm_eeprom_internal_ops;
 	e_ctrl->msm_sd.sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
-	snprintf(e_ctrl->msm_sd.sd.name,
-		ARRAY_SIZE(e_ctrl->msm_sd.sd.name), "msm_eeprom");
 	media_entity_init(&e_ctrl->msm_sd.sd.entity, 0, NULL, 0);
 	e_ctrl->msm_sd.sd.entity.type = MEDIA_ENT_T_V4L2_SUBDEV;
 	e_ctrl->msm_sd.sd.entity.group_id = MSM_CAMERA_SUBDEV_EEPROM;
 	msm_sd_register(&e_ctrl->msm_sd);
-
-#ifdef CONFIG_COMPAT
-	msm_cam_copy_v4l2_subdev_fops(&msm_eeprom_v4l2_subdev_fops);
-	msm_eeprom_v4l2_subdev_fops.compat_ioctl32 =
-		msm_eeprom_subdev_fops_ioctl32;
-	e_ctrl->msm_sd.sd.devnode->fops = &msm_eeprom_v4l2_subdev_fops;
-#endif
-
-	e_ctrl->is_supported = (e_ctrl->is_supported << 1) | 1;
-	CDBG("%s X\n", __func__);
+	CDBG("%s success result=%d X\n", __func__, rc);
 	return rc;
 
-power_down:
-	msm_camera_power_down(power_info, e_ctrl->eeprom_device_type,
-		&e_ctrl->i2c_client);
-memdata_free:
-	kfree(e_ctrl->cal_data.mapdata);
-	kfree(e_ctrl->cal_data.map);
-board_free:
-	kfree(e_ctrl->eboard_info);
 ectrl_free:
 	kfree(e_ctrl);
+probe_failure:
+	pr_err("%s failed! rc = %d\n", __func__, rc);
 	return rc;
+}
 
+static int msm_eeprom_i2c_remove(struct i2c_client *client)
+{
+	struct v4l2_subdev *sd = i2c_get_clientdata(client);
+	struct msm_eeprom_ctrl_t  *e_ctrl;
+	if (!sd) {
+		pr_err("%s: Subdevice is NULL\n", __func__);
+		return 0;
+	}
+
+	e_ctrl = (struct msm_eeprom_ctrl_t *)v4l2_get_subdevdata(sd);
+	if (!e_ctrl) {
+		pr_err("%s: eeprom device is NULL\n", __func__);
+		return 0;
+	}
+
+	if (!e_ctrl->eboard_info) {
+		pr_err("%s: eboard_info is NULL\n", __func__);
+		return 0;
+	}
+
+	msm_camera_i2c_dev_put_clk_info(&e_ctrl->i2c_client.client->dev,
+		&e_ctrl->eboard_info->power_info.clk_info,
+		&e_ctrl->eboard_info->power_info.clk_ptr,
+		e_ctrl->eboard_info->power_info.clk_info_size);
+
+	kfree(e_ctrl->cal_data.mapdata);
+	kfree(e_ctrl->cal_data.map);
+	if (e_ctrl->eboard_info) {
+		kfree(e_ctrl->eboard_info->power_info.gpio_conf);
+		kfree(e_ctrl->eboard_info);
+	}
+	e_ctrl->cal_data.mapdata = NULL;
+	kfree(e_ctrl);
+	e_ctrl = NULL;
+
+	return 0;
 }
 
 #define msm_eeprom_spi_parse_cmd(spic, str, name, out, size)		\
@@ -1103,6 +1919,93 @@ static int msm_eeprom_match_id(struct msm_eeprom_ctrl_t *e_ctrl)
 
 	return 0;
 }
+
+static int msm_eeprom_get_dt_data(struct msm_eeprom_ctrl_t *e_ctrl)
+{
+	int rc = 0, i = 0;
+	struct msm_eeprom_board_info *eb_info;
+	struct msm_camera_power_ctrl_t *power_info =
+		&e_ctrl->eboard_info->power_info;
+	struct device_node *of_node = NULL;
+	struct msm_camera_gpio_conf *gconf = NULL;
+	int8_t gpio_array_size = 0;
+	uint16_t *gpio_array = NULL;
+
+	eb_info = e_ctrl->eboard_info;
+	if (e_ctrl->eeprom_device_type == MSM_CAMERA_SPI_DEVICE)
+		of_node = e_ctrl->i2c_client.
+			spi_client->spi_master->dev.of_node;
+	else if (e_ctrl->eeprom_device_type == MSM_CAMERA_PLATFORM_DEVICE)
+		of_node = e_ctrl->pdev->dev.of_node;
+
+	if (!of_node) {
+		pr_err("%s: %d of_node is NULL\n", __func__ , __LINE__);
+		return -ENOMEM;
+	}
+	rc = msm_camera_get_dt_vreg_data(of_node, &power_info->cam_vreg,
+					     &power_info->num_vreg);
+	if (rc < 0)
+		return rc;
+
+	if (e_ctrl->userspace_probe == 0) {
+		rc = msm_camera_get_dt_power_setting_data(of_node,
+			power_info->cam_vreg, power_info->num_vreg,
+			power_info);
+		if (rc < 0)
+			goto ERROR1;
+	}
+
+	power_info->gpio_conf = kzalloc(sizeof(struct msm_camera_gpio_conf),
+					GFP_KERNEL);
+	if (!power_info->gpio_conf) {
+		rc = -ENOMEM;
+		goto ERROR2;
+	}
+	gconf = power_info->gpio_conf;
+	gpio_array_size = of_gpio_count(of_node);
+	CDBG("%s gpio count %d\n", __func__, gpio_array_size);
+
+	if (gpio_array_size > 0) {
+		gpio_array = kzalloc(sizeof(uint16_t) * gpio_array_size,
+			GFP_KERNEL);
+		if (!gpio_array) {
+			pr_err("%s failed %d\n", __func__, __LINE__);
+			goto ERROR3;
+		}
+		for (i = 0; i < gpio_array_size; i++) {
+			gpio_array[i] = of_get_gpio(of_node, i);
+			CDBG("%s gpio_array[%d] = %d\n", __func__, i,
+				gpio_array[i]);
+		}
+
+		rc = msm_camera_get_dt_gpio_req_tbl(of_node, gconf,
+			gpio_array, gpio_array_size);
+		if (rc < 0) {
+			pr_err("%s failed %d\n", __func__, __LINE__);
+			goto ERROR4;
+		}
+
+		rc = msm_camera_init_gpio_pin_tbl(of_node, gconf,
+			gpio_array, gpio_array_size);
+		if (rc < 0) {
+			pr_err("%s failed %d\n", __func__, __LINE__);
+			goto ERROR4;
+		}
+		kfree(gpio_array);
+	}
+
+	return rc;
+ERROR4:
+	kfree(gpio_array);
+ERROR3:
+	kfree(power_info->gpio_conf);
+ERROR2:
+	kfree(power_info->cam_vreg);
+ERROR1:
+	kfree(power_info->power_setting);
+	return rc;
+}
+
 
 static int msm_eeprom_cmm_dts(struct msm_eeprom_board_info *eb_info,
 	struct device_node *of_node)
@@ -1341,9 +2244,10 @@ static int msm_eeprom_spi_remove(struct spi_device *sdev)
 	}
 
 	if (!e_ctrl->eboard_info) {
-		pr_err("%s: eboard_info is NULL\n", __func__);
+		pr_err("%s: board info is NULL\n", __func__);
 		return 0;
 	}
+
 	msm_camera_i2c_dev_put_clk_info(
 		&e_ctrl->i2c_client.spi_client->spi_master->dev,
 		&e_ctrl->eboard_info->power_info.clk_info,
@@ -1365,7 +2269,6 @@ static int msm_eeprom_spi_remove(struct spi_device *sdev)
 }
 
 #ifdef CONFIG_COMPAT
-
 static void msm_eeprom_copy_power_settings_compat(
 	struct msm_sensor_power_setting_array *ps,
 	struct msm_sensor_power_setting_array32 *ps32)
@@ -1421,6 +2324,9 @@ static int eeprom_config_read_cal_data32(struct msm_eeprom_ctrl_t *e_ctrl,
 		return -EFAULT;
 
 	ptr_dest = (uint8_t *) compat_ptr(cdata32->cfg.read_data.dbuffer);
+
+	if (e_ctrl->cal_data.mapdata[0] == 0x15 && e_ctrl->cal_data.mapdata[1] == 0x01)
+		g_ois_vendor = 1; /* Liteon OIS Module */
 
 	rc = copy_to_user(ptr_dest, e_ctrl->cal_data.mapdata,
 		cdata.cfg.read_data.num_bytes);
@@ -1647,8 +2553,11 @@ static long msm_eeprom_subdev_fops_ioctl32(struct file *file, unsigned int cmd,
 {
 	return video_usercopy(file, cmd, arg, msm_eeprom_subdev_do_ioctl32);
 }
+
 #endif
 
+uint8_t g_cal_fadj_data[128];
+EXPORT_SYMBOL(g_cal_fadj_data);
 static int msm_eeprom_platform_probe(struct platform_device *pdev)
 {
 	int rc = 0;
@@ -1675,6 +2584,7 @@ static int msm_eeprom_platform_probe(struct platform_device *pdev)
 	e_ctrl->cal_data.map = NULL;
 	e_ctrl->userspace_probe = 0;
 	e_ctrl->is_supported = 0;
+	e_ctrl->is_read_vendor_id = 0;
 	if (!of_node) {
 		pr_err("%s dev.of_node NULL\n", __func__);
 		rc = -EINVAL;
@@ -1747,11 +2657,17 @@ static int msm_eeprom_platform_probe(struct platform_device *pdev)
 		e_ctrl->userspace_probe = 1;
 	}
 
+	rc = of_property_read_u32(of_node, "xiaomi,read-vendor-id",
+		&e_ctrl->is_read_vendor_id);
+	if (rc < 0) {
+		pr_err("not config xiaomi,read-vendor-id rc %d\n", rc);
+	}
+
 	rc = msm_eeprom_get_dt_data(e_ctrl);
 	if (rc < 0)
 		goto board_free;
 
-	if (e_ctrl->userspace_probe == 0) {
+	if ((e_ctrl->userspace_probe == 0) || (e_ctrl->is_read_vendor_id == 1)) {
 		rc = of_property_read_u32(of_node, "qcom,slave-addr",
 			&temp);
 		if (rc < 0) {
@@ -1789,7 +2705,32 @@ static int msm_eeprom_platform_probe(struct platform_device *pdev)
 			pr_err("failed rc %d\n", rc);
 			goto memdata_free;
 		}
-		rc = read_eeprom_memory(e_ctrl, &e_ctrl->cal_data);
+		if (strcmp(eb_info->eeprom_name, "ov16880_ofilm") == 0)
+			rc = a8_rear_read_eeprom_memory(e_ctrl, &e_ctrl->cal_data);
+		else if ((strcmp(eb_info->eeprom_name, "imx318_primax") == 0) ||
+				(strcmp(eb_info->eeprom_name, "imx318_semco") == 0))
+			rc = a4_back_read_eeprom_memory(e_ctrl, &e_ctrl->cal_data);
+		else if (strcmp(eb_info->eeprom_name, "sony_imx378") == 0) {
+			rc = a7_back_read_eeprom_memory(e_ctrl, &e_ctrl->cal_data);
+		} else if (strncmp(eb_info->eeprom_name, "ov4688", strlen("ov4688")) == 0) {
+			int offset = 0;
+			int retry = 3;
+			do {
+				rc = read_eeprom_memory(e_ctrl, &e_ctrl->cal_data);
+				if ((e_ctrl->cal_data.mapdata[A1_FRONT_PAGE2_OFFSET] & 0xC0) == 0x40)
+					offset = A1_FRONT_PAGE2_OFFSET;
+				else if ((e_ctrl->cal_data.mapdata[A1_FRONT_PAGE1_OFFSET] & 0xC0) == 0x40)
+					offset = A1_FRONT_PAGE1_OFFSET;
+				else if ((e_ctrl->cal_data.mapdata[A1_FRONT_PAGE0_OFFSET] & 0xC0) == 0x40)
+					offset = A1_FRONT_PAGE0_OFFSET;
+				else
+					offset = A1_FRONT_PAGE2_OFFSET;
+
+				retry--;
+			} while (xiaomi_eeprom_checksum(e_ctrl->cal_data.mapdata, offset + 1,
+					offset + 12, A1_FRONT_TOTAL_CHECK_SUM) && retry);
+		} else
+			rc = read_eeprom_memory(e_ctrl, &e_ctrl->cal_data);
 		if (rc < 0) {
 			pr_err("%s read_eeprom_memory failed\n", __func__);
 			goto power_down;
@@ -1798,13 +2739,37 @@ static int msm_eeprom_platform_probe(struct platform_device *pdev)
 			CDBG("memory_data[%d] = 0x%X\n", j,
 				e_ctrl->cal_data.mapdata[j]);
 
-		e_ctrl->is_supported |= msm_eeprom_match_crc(&e_ctrl->cal_data);
+		if (strcmp(eb_info->eeprom_name, "sony_imx298") == 0) {
+			CDBG("cp cal data\n");
+			memcpy((void *) g_cal_fadj_data, (void *) e_ctrl->cal_data.mapdata, 128);
+			for (j = 0; j < 128; j++)
+				CDBG("g_cal_fadj_data[%d] = 0x%X\n", j, g_cal_fadj_data[j]);
+		}
+		if (e_ctrl->is_read_vendor_id == 1)
+			e_ctrl->is_supported = 1;
+		else
+			e_ctrl->is_supported |= msm_eeprom_match_crc(&e_ctrl->cal_data);
 
 		rc = msm_camera_power_down(power_info,
 			e_ctrl->eeprom_device_type, &e_ctrl->i2c_client);
 		if (rc) {
 			pr_err("failed rc %d\n", rc);
 			goto memdata_free;
+		}
+		if (e_ctrl->is_read_vendor_id == 1) {
+			kfree(e_ctrl->cal_data.mapdata);
+			kfree(e_ctrl->cal_data.map);
+			e_ctrl->cal_data.mapdata = NULL;
+			e_ctrl->cal_data.map = NULL;
+			e_ctrl->cal_data.num_map = 0;
+			e_ctrl->cal_data.num_data = 0;
+			kfree(e_ctrl->eboard_info->power_info.power_setting);
+			kfree(e_ctrl->eboard_info->power_info.power_down_setting);
+			e_ctrl->eboard_info->power_info.power_setting = NULL;
+			e_ctrl->eboard_info->power_info.power_down_setting = NULL;
+			e_ctrl->eboard_info->power_info.power_setting_size = 0;
+			e_ctrl->eboard_info->power_info.power_down_setting_size = 0;
+			e_ctrl->userspace_probe = 1;
 		}
 	} else
 		e_ctrl->is_supported = 1;
@@ -1864,9 +2829,10 @@ static int msm_eeprom_platform_remove(struct platform_device *pdev)
 	}
 
 	if (!e_ctrl->eboard_info) {
-		pr_err("%s: eboard_info is NULL\n", __func__);
+		pr_err("%s: board info is NULL\n", __func__);
 		return 0;
 	}
+
 	msm_camera_put_clk_info(e_ctrl->pdev,
 		&e_ctrl->eboard_info->power_info.clk_info,
 		&e_ctrl->eboard_info->power_info.clk_ptr,
@@ -1901,25 +2867,16 @@ static struct platform_driver msm_eeprom_platform_driver = {
 };
 
 static const struct i2c_device_id msm_eeprom_i2c_id[] = {
-	{ "qcom,eeprom", (kernel_ulong_t)NULL},
+	{ "msm_eeprom", (kernel_ulong_t)NULL},
 	{ }
 };
-
-static const struct of_device_id msm_eeprom_i2c_dt_match[] = {
-	{.compatible = "qcom,eeprom"},
-	{ }
-};
-
-MODULE_DEVICE_TABLE(of, msm_eeprom_i2c_dt_match);
 
 static struct i2c_driver msm_eeprom_i2c_driver = {
 	.id_table = msm_eeprom_i2c_id,
 	.probe  = msm_eeprom_i2c_probe,
-	.remove = __exit_p(msm_eeprom_i2c_remove),
+	.remove = msm_eeprom_i2c_remove,
 	.driver = {
-		.name = "qcom,eeprom",
-		.owner = THIS_MODULE,
-		.of_match_table = msm_eeprom_i2c_dt_match,
+		.name = "msm_eeprom",
 	},
 };
 

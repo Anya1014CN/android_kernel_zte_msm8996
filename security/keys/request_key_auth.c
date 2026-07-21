@@ -59,7 +59,7 @@ static void request_key_auth_free_preparse(struct key_preparsed_payload *prep)
 static int request_key_auth_instantiate(struct key *key,
 					struct key_preparsed_payload *prep)
 {
-	key->payload.data = (struct request_key_auth *)prep->data;
+	key->payload.data[0] = (struct request_key_auth *)prep->data;
 	return 0;
 }
 
@@ -69,11 +69,14 @@ static int request_key_auth_instantiate(struct key *key,
 static void request_key_auth_describe(const struct key *key,
 				      struct seq_file *m)
 {
-	struct request_key_auth *rka = key->payload.data;
+	struct request_key_auth *rka = key->payload.data[0];
+
+	if (!rka)
+		return;
 
 	seq_puts(m, "key:");
 	seq_puts(m, key->description);
-	if (key_is_instantiated(key))
+	if (key_is_positive(key))
 		seq_printf(m, " pid:%d ci:%zu", rka->pid, rka->callout_len);
 }
 
@@ -84,9 +87,12 @@ static void request_key_auth_describe(const struct key *key,
 static long request_key_auth_read(const struct key *key,
 				  char __user *buffer, size_t buflen)
 {
-	struct request_key_auth *rka = key->payload.data;
+	struct request_key_auth *rka = key->payload.data[0];
 	size_t datalen;
 	long ret;
+
+	if (!rka)
+		return -EKEYREVOKED;
 
 	datalen = rka->callout_len;
 	ret = datalen;
@@ -110,7 +116,7 @@ static long request_key_auth_read(const struct key *key,
  */
 static void request_key_auth_revoke(struct key *key)
 {
-	struct request_key_auth *rka = key->payload.data;
+	struct request_key_auth *rka = key->payload.data[0];
 
 	kenter("{%d}", key->serial);
 
@@ -125,7 +131,7 @@ static void request_key_auth_revoke(struct key *key)
  */
 static void request_key_auth_destroy(struct key *key)
 {
-	struct request_key_auth *rka = key->payload.data;
+	struct request_key_auth *rka = key->payload.data[0];
 
 	kenter("{%d}", key->serial);
 
@@ -179,7 +185,7 @@ struct key *request_key_auth_new(struct key *target, const void *callout_info,
 		if (test_bit(KEY_FLAG_REVOKED, &cred->request_key_auth->flags))
 			goto auth_key_revoked;
 
-		irka = cred->request_key_auth->payload.data;
+		irka = cred->request_key_auth->payload.data[0];
 		rka->cred = get_cred(irka->cred);
 		rka->pid = irka->pid;
 
@@ -254,7 +260,7 @@ struct key *key_get_instantiation_authkey(key_serial_t target_id)
 	struct key *authkey;
 	key_ref_t authkey_ref;
 
-	sprintf(description, "%x", target_id);
+	ctx.index_key.desc_len = sprintf(description, "%x", target_id);
 
 	authkey_ref = search_process_keyrings(&ctx);
 

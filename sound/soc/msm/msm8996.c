@@ -1,5 +1,6 @@
 /*
- * Copyright (c) 2014-2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2014-2017, 2019, The Linux Foundation. All rights reserved.
+ * Copyright (C) 2018 XiaoMi, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -22,6 +23,7 @@
 #include <linux/module.h>
 #include <linux/switch.h>
 #include <linux/input.h>
+#include <linux/qpnp/pin.h>
 #include <sound/core.h>
 #include <sound/soc.h>
 #include <sound/soc-dapm.h>
@@ -32,6 +34,7 @@
 #include <sound/pcm_params.h>
 #include <sound/info.h>
 #include <device_event.h>
+#include <asm/bootinfo.h>
 #include "qdsp6v2/msm-pcm-routing-v2.h"
 #include "../codecs/wcd9xxx-common.h"
 #include "../codecs/wcd9330.h"
@@ -41,12 +44,16 @@
 #define DRV_NAME "msm8996-asoc-snd"
 
 #define SAMPLING_RATE_8KHZ      8000
+#define SAMPLING_RATE_11P025KHZ 11025
 #define SAMPLING_RATE_16KHZ     16000
+#define SAMPLING_RATE_22P05KHZ  22050
 #define SAMPLING_RATE_32KHZ     32000
-#define SAMPLING_RATE_48KHZ     48000
-#define SAMPLING_RATE_96KHZ     96000
-#define SAMPLING_RATE_192KHZ    192000
 #define SAMPLING_RATE_44P1KHZ   44100
+#define SAMPLING_RATE_48KHZ     48000
+#define SAMPLING_RATE_88P2KHZ   88200
+#define SAMPLING_RATE_96KHZ     96000
+#define SAMPLING_RATE_176P4KHZ  176400
+#define SAMPLING_RATE_192KHZ    192000
 
 #define MSM8996_SPK_ON     1
 #define MSM8996_HIFI_ON    1
@@ -60,9 +67,13 @@
 #define WSA8810_NAME_1 "wsa881x.20170211"
 #define WSA8810_NAME_2 "wsa881x.20170212"
 
+#define PIN_PULL_DOWN		0
+#define PIN_PULL_UP		1
+#define PIN_FLOAT		2
+
 static int slim0_rx_sample_rate = SAMPLING_RATE_48KHZ;
 static int slim0_tx_sample_rate = SAMPLING_RATE_48KHZ;
-static int slim1_tx_sample_rate = SAMPLING_RATE_48KHZ;
+static int slim1_tx_sample_rate = SAMPLING_RATE_96KHZ;
 static int slim0_rx_bit_format = SNDRV_PCM_FORMAT_S16_LE;
 static int slim0_tx_bit_format = SNDRV_PCM_FORMAT_S16_LE;
 static int slim1_tx_bit_format = SNDRV_PCM_FORMAT_S16_LE;
@@ -72,6 +83,249 @@ static int slim5_rx_sample_rate = SAMPLING_RATE_48KHZ;
 static int slim5_rx_bit_format = SNDRV_PCM_FORMAT_S16_LE;
 static int slim6_rx_sample_rate = SAMPLING_RATE_48KHZ;
 static int slim6_rx_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+
+/* TDM default channels */
+static int msm_pri_tdm_tx_0_ch = 2;
+static int msm_pri_tdm_tx_1_ch = 2;
+static int msm_pri_tdm_tx_2_ch = 2;
+static int msm_pri_tdm_tx_3_ch = 2;
+
+static int msm_pri_tdm_rx_0_ch = 2;
+static int msm_pri_tdm_rx_1_ch = 2;
+static int msm_pri_tdm_rx_2_ch = 2;
+static int msm_pri_tdm_rx_3_ch = 2;
+
+static int msm_sec_tdm_tx_0_ch = 2;
+static int msm_sec_tdm_tx_1_ch = 2;
+static int msm_sec_tdm_tx_2_ch = 2;
+static int msm_sec_tdm_tx_3_ch = 2;
+
+static int msm_sec_tdm_rx_0_ch = 2;
+static int msm_sec_tdm_rx_1_ch = 2;
+static int msm_sec_tdm_rx_2_ch = 2;
+static int msm_sec_tdm_rx_3_ch = 2;
+
+static int msm_tert_tdm_rx_0_ch = 2;
+static int msm_tert_tdm_rx_1_ch = 2;
+static int msm_tert_tdm_rx_2_ch = 2;
+static int msm_tert_tdm_rx_3_ch = 2;
+
+static int msm_tert_tdm_tx_0_ch = 2;
+static int msm_tert_tdm_tx_1_ch = 2;
+static int msm_tert_tdm_tx_2_ch = 2;
+static int msm_tert_tdm_tx_3_ch = 2;
+
+static int msm_quat_tdm_rx_0_ch = 2;
+static int msm_quat_tdm_rx_1_ch = 2;
+static int msm_quat_tdm_rx_2_ch = 2;
+static int msm_quat_tdm_rx_3_ch = 2;
+
+static int msm_quat_tdm_tx_0_ch = 2;
+static int msm_quat_tdm_tx_1_ch = 2;
+static int msm_quat_tdm_tx_2_ch = 2;
+static int msm_quat_tdm_tx_3_ch = 2;
+
+/* TDM default bit format */
+static int msm_pri_tdm_tx_0_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+static int msm_pri_tdm_tx_1_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+static int msm_pri_tdm_tx_2_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+static int msm_pri_tdm_tx_3_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+
+static int msm_pri_tdm_rx_0_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+static int msm_pri_tdm_rx_1_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+static int msm_pri_tdm_rx_2_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+static int msm_pri_tdm_rx_3_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+
+static int msm_sec_tdm_tx_0_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+static int msm_sec_tdm_tx_1_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+static int msm_sec_tdm_tx_2_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+static int msm_sec_tdm_tx_3_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+
+static int msm_sec_tdm_rx_0_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+static int msm_sec_tdm_rx_1_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+static int msm_sec_tdm_rx_2_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+static int msm_sec_tdm_rx_3_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+
+static int msm_tert_tdm_rx_0_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+static int msm_tert_tdm_rx_1_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+static int msm_tert_tdm_rx_2_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+static int msm_tert_tdm_rx_3_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+
+static int msm_tert_tdm_tx_0_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+static int msm_tert_tdm_tx_1_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+static int msm_tert_tdm_tx_2_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+static int msm_tert_tdm_tx_3_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+
+static int msm_quat_tdm_rx_0_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+static int msm_quat_tdm_rx_1_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+static int msm_quat_tdm_rx_2_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+static int msm_quat_tdm_rx_3_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+
+static int msm_quat_tdm_tx_0_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+static int msm_quat_tdm_tx_1_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+static int msm_quat_tdm_tx_2_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+static int msm_quat_tdm_tx_3_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+
+static int msm_pri_tdm_rate = SAMPLING_RATE_48KHZ;
+static int msm_pri_tdm_slot_width = 32;
+static int msm_pri_tdm_slot_num = 8;
+static int msm_sec_tdm_rate = SAMPLING_RATE_48KHZ;
+static int msm_sec_tdm_slot_width = 32;
+static int msm_sec_tdm_slot_num = 8;
+static int msm_quat_tdm_rate = SAMPLING_RATE_48KHZ;
+static int msm_quat_tdm_slot_width = 32;
+static int msm_quat_tdm_slot_num = 8;
+static int msm_tert_tdm_rate = SAMPLING_RATE_48KHZ;
+static int msm_tert_tdm_slot_width = 32;
+static int msm_tert_tdm_slot_num = 8;
+
+static int msm_tdm_slot_width = 32;
+static int msm_tdm_num_slots = 8;
+
+enum {
+	QUATERNARY_TDM_RX_0,
+	QUATERNARY_TDM_RX_1,
+	QUATERNARY_TDM_RX_2,
+	QUATERNARY_TDM_RX_3,
+	QUATERNARY_TDM_RX_4,
+	QUATERNARY_TDM_RX_5,
+	QUATERNARY_TDM_RX_6,
+	QUATERNARY_TDM_RX_7,
+	QUATERNARY_TDM_TX_0,
+	QUATERNARY_TDM_TX_1,
+	QUATERNARY_TDM_TX_2,
+	QUATERNARY_TDM_TX_3,
+	QUATERNARY_TDM_TX_4,
+	QUATERNARY_TDM_TX_5,
+	QUATERNARY_TDM_TX_6,
+	QUATERNARY_TDM_TX_7,
+	TERTIARY_TDM_RX_0,
+	TERTIARY_TDM_RX_1,
+	TERTIARY_TDM_RX_2,
+	TERTIARY_TDM_RX_3,
+	TERTIARY_TDM_RX_4,
+	TERTIARY_TDM_RX_5,
+	TERTIARY_TDM_RX_6,
+	TERTIARY_TDM_RX_7,
+	TERTIARY_TDM_TX_0,
+	TERTIARY_TDM_TX_1,
+	TERTIARY_TDM_TX_2,
+	TERTIARY_TDM_TX_3,
+	TERTIARY_TDM_TX_4,
+	TERTIARY_TDM_TX_5,
+	TERTIARY_TDM_TX_6,
+	TERTIARY_TDM_TX_7,
+	SECONDARY_TDM_RX_0,
+	SECONDARY_TDM_RX_1,
+	SECONDARY_TDM_RX_2,
+	SECONDARY_TDM_RX_3,
+	SECONDARY_TDM_RX_4,
+	SECONDARY_TDM_RX_5,
+	SECONDARY_TDM_RX_6,
+	SECONDARY_TDM_RX_7,
+	SECONDARY_TDM_TX_0,
+	SECONDARY_TDM_TX_1,
+	SECONDARY_TDM_TX_2,
+	SECONDARY_TDM_TX_3,
+	SECONDARY_TDM_TX_4,
+	SECONDARY_TDM_TX_5,
+	SECONDARY_TDM_TX_6,
+	SECONDARY_TDM_TX_7,
+	PRIMARY_TDM_RX_0,
+	PRIMARY_TDM_RX_1,
+	PRIMARY_TDM_RX_2,
+	PRIMARY_TDM_RX_3,
+	PRIMARY_TDM_RX_4,
+	PRIMARY_TDM_RX_5,
+	PRIMARY_TDM_RX_6,
+	PRIMARY_TDM_RX_7,
+	PRIMARY_TDM_TX_0,
+	PRIMARY_TDM_TX_1,
+	PRIMARY_TDM_TX_2,
+	PRIMARY_TDM_TX_3,
+	PRIMARY_TDM_TX_4,
+	PRIMARY_TDM_TX_5,
+	PRIMARY_TDM_TX_6,
+	PRIMARY_TDM_TX_7,
+	TDM_MAX,
+};
+
+#define TDM_SLOT_OFFSET_MAX    8
+/* TDM default offset */
+static unsigned int tdm_slot_offset[TDM_MAX][TDM_SLOT_OFFSET_MAX] = {
+	/* QUAT_TDM_RX */
+	{0, 4, 0xFFFF},
+	{8, 12, 0xFFFF},
+	{16, 20, 0xFFFF},
+	{24, 28, 0xFFFF},
+	{0xFFFF}, /* not used */
+	{0xFFFF}, /* not used */
+	{0xFFFF}, /* not used */
+	{0xFFFF}, /* not used */
+	/* QUAT_TDM_TX */
+	{0, 4, 0xFFFF},
+	{8, 12, 0xFFFF},
+	{16, 20, 0xFFFF},
+	{24, 28, 0xFFFF},
+	{0xFFFF}, /* not used */
+	{0xFFFF}, /* not used */
+	{0xFFFF}, /* not used */
+	{0xFFFF}, /* not used */
+	/* TERT_TDM_RX */
+	{0, 4, 0xFFFF},
+	{8, 12, 0xFFFF},
+	{16, 20, 0xFFFF},
+	{24, 28, 0xFFFF},
+	{0xFFFF}, /* not used */
+	{0xFFFF}, /* not used */
+	{0xFFFF}, /* not used */
+	{0xFFFF}, /* not used */
+	/* TERT_TDM_TX */
+	{0, 4, 0xFFFF},
+	{8, 12, 0xFFFF},
+	{16, 20, 0xFFFF},
+	{24, 28, 0xFFFF},
+	{0xFFFF}, /* not used */
+	{0xFFFF}, /* not used */
+	{0xFFFF}, /* not used */
+	{0xFFFF}, /* not used */
+	/* SEC_TDM_RX */
+	{0, 4, 0xFFFF},
+	{8, 12, 0xFFFF},
+	{16, 20, 0xFFFF},
+	{24, 28, 0xFFFF},
+	{0xFFFF}, /* not used */
+	{0xFFFF}, /* not used */
+	{0xFFFF}, /* not used */
+	{0xFFFF}, /* not used */
+	/* SEC_TDM_TX */
+	{0, 4, 0xFFFF},
+	{8, 12, 0xFFFF},
+	{16, 20, 0xFFFF},
+	{24, 28, 0xFFFF},
+	{0xFFFF}, /* not used */
+	{0xFFFF}, /* not used */
+	{0xFFFF}, /* not used */
+	{0xFFFF}, /* not used */
+	/* PRI_TDM_RX */
+	{0, 4, 0xFFFF},
+	{8, 12, 0xFFFF},
+	{16, 20, 0xFFFF},
+	{24, 28, 0xFFFF},
+	{0xFFFF}, /* not used */
+	{0xFFFF}, /* not used */
+	{0xFFFF}, /* not used */
+	{0xFFFF}, /* not used */
+	/* PRI_TDM_TX */
+	{0, 4, 0xFFFF},
+	{8, 12, 0xFFFF},
+	{16, 20, 0xFFFF},
+	{24, 28, 0xFFFF},
+	{0xFFFF}, /* not used */
+	{0xFFFF}, /* not used */
+	{0xFFFF}, /* not used */
+	{0xFFFF}, /* not used */
+};
 
 static struct platform_device *spdev;
 static int ext_us_amp_gpio = -1;
@@ -87,10 +341,12 @@ static int msm_vi_feed_tx_ch = 2;
 static int msm_hdmi_rx_ch = 2;
 static int msm_proxy_rx_ch = 2;
 static int hdmi_rx_sample_rate = SAMPLING_RATE_48KHZ;
-static int msm_tert_mi2s_tx_ch = 2;
+
+static int speaker_id_gpio = -1;
 
 static bool codec_reg_done;
 
+static const char *const speaker_id_text[] = {"None", "AAC", "Knowles", "Goer"};
 static const char *const hifi_function[] = {"Off", "On"};
 static const char *const pin_states[] = {"Disable", "active"};
 static const char *const spk_function[] = {"Off", "On"};
@@ -104,6 +360,7 @@ static const char *const vi_feed_ch_text[] = {"One", "Two"};
 static char const *hdmi_rx_ch_text[] = {"Two", "Three", "Four", "Five",
 					"Six", "Seven", "Eight"};
 static char const *rx_bit_format_text[] = {"S16_LE", "S24_LE", "S24_3LE"};
+static char const *usb_bit_format_text[] = {"S16_LE", "S24_LE", "S24_3LE"};
 static char const *slim5_rx_bit_format_text[] = {"S16_LE", "S24_LE", "S24_3LE"};
 static char const *slim6_rx_bit_format_text[] = {"S16_LE", "S24_LE", "S24_3LE"};
 static char const *slim0_rx_sample_rate_text[] = {"KHZ_48", "KHZ_96",
@@ -118,10 +375,61 @@ static const char *const proxy_rx_ch_text[] = {"One", "Two", "Three", "Four",
 
 static char const *hdmi_rx_sample_rate_text[] = {"KHZ_48", "KHZ_96",
 					"KHZ_192"};
+static char const *tdm_ch_text[] = {"One", "Two", "Three", "Four",
+		"Five", "Six", "Seven", "Eight"};
+
+static char const *tdm_bit_format_text[] = {"S16_LE", "S24_LE"};
+static const char *const tdm_rate_text[] = {"8000", "16000", "48000"};
+
+static const char *const tdm_slot_num_text[] = {"One", "Two", "Four",
+		"Eight", "Sixteen", "Thirtytwo"};
+
+
+static const char *const tdm_slot_width_text[] = {"16", "24", "32"};
+
+static const char *const usb_ch_text[] = {"One", "Two", "Three", "Four",
+					"Five", "Six", "Seven", "Eight"};
+static char const *usb_sample_rate_text[] = {"KHZ_8", "KHZ_11P025",
+					"KHZ_16", "KHZ_22P05", "KHZ_32",
+					"KHZ_44P1", "KHZ_48", "KHZ_88P2",
+					"KHZ_96", "KHZ_176P4", "KHZ_192"};
+
+#ifdef CONFIG_MACH_XIAOMI_A8
+static const char *const ultrasound_power_text[] = {"Off", "On"};
+#endif
+
+static SOC_ENUM_SINGLE_EXT_DECL(usb_rx_chs, usb_ch_text);
+static SOC_ENUM_SINGLE_EXT_DECL(usb_tx_chs, usb_ch_text);
+static SOC_ENUM_SINGLE_EXT_DECL(usb_rx_format, usb_bit_format_text);
+static SOC_ENUM_SINGLE_EXT_DECL(usb_tx_format, usb_bit_format_text);
+static SOC_ENUM_SINGLE_EXT_DECL(usb_rx_sample_rate, usb_sample_rate_text);
+static SOC_ENUM_SINGLE_EXT_DECL(usb_tx_sample_rate, usb_sample_rate_text);
+
+#ifdef CONFIG_MACH_XIAOMI_A8
+static SOC_ENUM_SINGLE_EXT_DECL(ultrasound_power, ultrasound_power_text);
+#endif
 
 static const char *const auxpcm_rate_text[] = {"8000", "16000"};
 static const struct soc_enum msm8996_auxpcm_enum[] = {
 		SOC_ENUM_SINGLE_EXT(2, auxpcm_rate_text),
+};
+
+struct usb_be_config {
+	u32 sample_rate;
+	u32 bit_format;
+	u32 channels;
+};
+
+static struct usb_be_config usb_rx_cfg = {
+	.sample_rate = SAMPLING_RATE_48KHZ,
+	.bit_format = SNDRV_PCM_FORMAT_S16_LE,
+	.channels = 2,
+};
+
+static struct usb_be_config usb_tx_cfg = {
+	.sample_rate = SAMPLING_RATE_48KHZ,
+	.bit_format = SNDRV_PCM_FORMAT_S16_LE,
+	.channels = 2,
 };
 
 static struct afe_clk_set mi2s_tx_clk = {
@@ -141,12 +449,159 @@ struct msm8996_wsa881x_dev_info {
 static struct snd_soc_aux_dev *msm8996_aux_dev;
 static struct snd_soc_codec_conf *msm8996_codec_conf;
 
+static int pri_mi2s_sample_rate = SAMPLING_RATE_48KHZ;
+static int sec_mi2s_sample_rate = SAMPLING_RATE_48KHZ;
+static int tert_mi2s_sample_rate = SAMPLING_RATE_48KHZ;
+static int quat_mi2s_sample_rate = SAMPLING_RATE_48KHZ;
+
+static int pri_mi2s_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+static int sec_mi2s_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+static int tert_mi2s_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+static int quat_mi2s_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+
+static int msm_pri_mi2s_tx_ch = 2;
+static int msm_pri_mi2s_rx_ch = 2;
+static int msm_sec_mi2s_tx_ch = 2;
+static int msm_sec_mi2s_rx_ch = 4;
+static int msm_tert_mi2s_tx_ch = 2;
+static int msm_tert_mi2s_rx_ch = 2;
+static int msm_quat_mi2s_tx_ch = 2;
+static int msm_quat_mi2s_rx_ch = 2;
+
+/* Maintain struct aligned with the one from msm-dai-q6-v2.h */
+struct msm_mi2s_pdata {
+	u16 rx_sd_lines;
+	u16 tx_sd_lines;
+	u16 intf_id;
+	u16 slave;
+	u32 ext_mclk_rate;
+};
+
+struct msm_mi2s_data {
+	struct afe_clk_set mi2s_clk;
+	struct afe_clk_set mi2s_mclk;
+	atomic_t mi2s_rsc_ref;
+	int *sample_rate;
+	int *bit_format;
+};
+
+static struct msm_mi2s_data msm_pri_mi2s_data = {
+	.mi2s_clk = {
+		AFE_API_VERSION_I2S_CONFIG,
+		Q6AFE_LPASS_CLK_ID_PRI_MI2S_IBIT,
+		Q6AFE_LPASS_IBIT_CLK_1_P536_MHZ,
+		Q6AFE_LPASS_CLK_ATTRIBUTE_COUPLE_NO,
+		Q6AFE_LPASS_CLK_ROOT_DEFAULT,
+		0,
+	},
+	.mi2s_mclk = {
+		AFE_API_VERSION_I2S_CONFIG,
+		Q6AFE_LPASS_CLK_ID_MCLK_1, /* TBD */
+		0,
+		Q6AFE_LPASS_CLK_ATTRIBUTE_COUPLE_NO,
+		Q6AFE_LPASS_CLK_ROOT_DEFAULT,
+		0,
+	},
+	.sample_rate = &pri_mi2s_sample_rate,
+	.bit_format = &pri_mi2s_bit_format,
+};
+
+static struct msm_mi2s_data msm_sec_mi2s_data = {
+	.mi2s_clk = {
+		AFE_API_VERSION_I2S_CONFIG,
+		Q6AFE_LPASS_CLK_ID_SEC_MI2S_IBIT,
+		Q6AFE_LPASS_IBIT_CLK_1_P536_MHZ,
+		Q6AFE_LPASS_CLK_ATTRIBUTE_COUPLE_NO,
+		Q6AFE_LPASS_CLK_ROOT_DEFAULT,
+		0,
+	},
+	.mi2s_mclk = {
+		AFE_API_VERSION_I2S_CONFIG,
+		Q6AFE_LPASS_CLK_ID_MCLK_2, /* TBD */
+		0,
+		Q6AFE_LPASS_CLK_ATTRIBUTE_COUPLE_NO,
+		Q6AFE_LPASS_CLK_ROOT_DEFAULT,
+		0,
+	},
+	.sample_rate = &sec_mi2s_sample_rate,
+	.bit_format = &sec_mi2s_bit_format,
+};
+
+static struct msm_mi2s_data msm_tert_mi2s_data = {
+	.mi2s_clk = {
+		AFE_API_VERSION_I2S_CONFIG,
+		Q6AFE_LPASS_CLK_ID_TER_MI2S_IBIT,
+		Q6AFE_LPASS_IBIT_CLK_1_P536_MHZ,
+		Q6AFE_LPASS_CLK_ATTRIBUTE_COUPLE_NO,
+		Q6AFE_LPASS_CLK_ROOT_DEFAULT,
+		0,
+	},
+	.mi2s_mclk = {
+		AFE_API_VERSION_I2S_CONFIG,
+		Q6AFE_LPASS_CLK_ID_MCLK_3, /* TBD */
+		0,
+		Q6AFE_LPASS_CLK_ATTRIBUTE_COUPLE_NO,
+		Q6AFE_LPASS_CLK_ROOT_DEFAULT,
+		0,
+	},
+	.sample_rate = &tert_mi2s_sample_rate,
+	.bit_format = &tert_mi2s_bit_format,
+};
+
+static struct msm_mi2s_data msm_quat_mi2s_data = {
+	.mi2s_clk = {
+		AFE_API_VERSION_I2S_CONFIG,
+		Q6AFE_LPASS_CLK_ID_QUAD_MI2S_IBIT,
+		Q6AFE_LPASS_IBIT_CLK_1_P536_MHZ,
+		Q6AFE_LPASS_CLK_ATTRIBUTE_COUPLE_NO,
+		Q6AFE_LPASS_CLK_ROOT_DEFAULT,
+		0,
+	},
+	.mi2s_mclk = {
+		AFE_API_VERSION_I2S_CONFIG,
+		Q6AFE_LPASS_CLK_ID_MCLK_3, /* TBD */
+		0,
+		Q6AFE_LPASS_CLK_ATTRIBUTE_COUPLE_NO,
+		Q6AFE_LPASS_CLK_ROOT_DEFAULT,
+		0,
+	},
+	.sample_rate = &quat_mi2s_sample_rate,
+	.bit_format = &quat_mi2s_bit_format,
+};
+
+static char const *mi2s_bit_format_text[] = {"S16_LE", "S24_LE"};
+static char const *mi2s_sample_rate_text[] = {"KHZ_8", "KHZ_16", "KHZ_32",
+						"KHZ_48", "KHZ_96", "KHZ_192"};
+
+static const char *const pri_mi2s_tx_ch_text[] = {"One", "Two", "Three",
+						  "Four"};
+static const char *const pri_mi2s_rx_ch_text[] = {"One", "Two", "Three",
+						  "Four"};
+static const char *const sec_mi2s_tx_ch_text[] = {"One", "Two", "Three",
+						  "Four"};
+static const char *const sec_mi2s_rx_ch_text[] = {"One", "Two", "Three",
+						  "Four"};
+static const char *const tert_mi2s_tx_ch_text[] = {"One", "Two", "Three",
+						   "Four"};
+static const char *const tert_mi2s_rx_ch_text[] = {"One", "Two", "Three",
+						   "Four"};
+static const char *const quat_mi2s_tx_ch_text[] = {"One", "Two", "Three", "Four",
+						   "Five", "Six", "Seven",
+						   "Eight"};
+static const char *const quat_mi2s_rx_ch_text[] = {"One", "Two", "Three", "Four",
+						   "Five", "Six", "Seven",
+						   "Eight"};
+
 struct msm8996_asoc_mach_data {
 	u32 mclk_freq;
 	int us_euro_gpio;
 	int hph_en1_gpio;
 	int hph_en0_gpio;
 	struct snd_info_entry *codec_root;
+#ifdef CONFIG_MACH_XIAOMI_A8
+	struct regulator *us_p_power;
+	struct regulator *us_n_power;
+#endif
 };
 
 struct msm8996_asoc_wcd93xx_codec {
@@ -172,6 +627,10 @@ static int msm_snd_enable_codec_ext_clk(struct snd_soc_codec *codec,
 					int enable, bool dapm);
 static int msm8996_wsa881x_init(struct snd_soc_component *component);
 
+#ifdef CONFIG_MACH_XIAOMI_A8
+static int ultrasound_power_state;
+#endif
+
 /*
  * Need to report LINEIN
  * if R/L channel impedance is larger than 5K ohm
@@ -184,15 +643,15 @@ static struct wcd_mbhc_config wcd_mbhc_cfg = {
 	.swap_gnd_mic = NULL,
 	.hs_ext_micbias = true,
 	.key_code[0] = KEY_MEDIA,
-	.key_code[1] = KEY_VOICECOMMAND,
-	.key_code[2] = KEY_VOLUMEUP,
-	.key_code[3] = KEY_VOLUMEDOWN,
+	.key_code[1] = BTN_1,
+	.key_code[2] = BTN_2,
+	.key_code[3] = 0,
 	.key_code[4] = 0,
 	.key_code[5] = 0,
 	.key_code[6] = 0,
 	.key_code[7] = 0,
 	.linein_th = 5000,
-	.moist_cfg = { V_45_MV, I_3P0_UA },
+	.moisture_en = true,
 	.mbhc_micbias = MIC_BIAS_2,
 	.anc_micbias = MIC_BIAS_2,
 	.enable_anc_mic_detect = false,
@@ -220,6 +679,96 @@ static void param_set_mask(struct snd_pcm_hw_params *p, int n, unsigned bit)
 		m->bits[1] = 0;
 		m->bits[bit >> 5] |= (1 << (bit & 31));
 	}
+}
+
+static int msm_get_pm_pin_3states(int pin)
+{
+	struct qpnp_pin_cfg pin_cfg;
+	int pu_value = 0;
+	int pd_value = 0;
+	int ret = 0;
+
+	ret = gpio_request(pin, "spkr_id_gpio");
+	if (ret) {
+		pr_err("%s: spkr_id_gpio request failed, ret:%d\n",
+			__func__, ret);
+		return -EINVAL;
+	}
+
+	memset(&pin_cfg, 0, sizeof(struct qpnp_pin_cfg));
+
+	pin_cfg.mode = QPNP_PIN_MODE_DIG_IN;
+	pin_cfg.pull = QPNP_PIN_GPIO_PULL_UP_30;
+	pin_cfg.vin_sel = QPNP_PIN_VIN2;
+	pin_cfg.out_strength = QPNP_PIN_OUT_STRENGTH_LOW;
+	pin_cfg.master_en = 1;
+	qpnp_pin_config(pin, &pin_cfg);
+	msleep(3);
+	pu_value = gpio_get_value(pin);
+
+	pin_cfg.mode = QPNP_PIN_MODE_DIG_IN;
+	pin_cfg.pull = QPNP_PIN_GPIO_PULL_DN;
+	pin_cfg.vin_sel = QPNP_PIN_VIN2;
+	pin_cfg.out_strength = QPNP_PIN_OUT_STRENGTH_LOW;
+	pin_cfg.master_en = 1;
+	qpnp_pin_config(pin, &pin_cfg);
+	msleep(3);
+	pd_value = gpio_get_value(pin);
+
+	gpio_free(pin);
+
+	if ((pu_value == pd_value) && (pu_value == 0)) {
+		pin_cfg.pull = QPNP_PIN_GPIO_PULL_DN;
+		pr_info("%s: pin%d = %d\n", __func__, pin, pu_value);
+		ret = PIN_PULL_DOWN;
+	} else if ((pu_value == pd_value) && (pu_value == 1)) {
+		pin_cfg.pull = QPNP_PIN_GPIO_PULL_UP_30;
+		pr_info("%s: pin%d = %d\n", __func__, pin, pu_value);
+		ret = PIN_PULL_UP;
+	} else {
+		pin_cfg.pull = QPNP_PIN_GPIO_PULL_NO;
+		pr_info("%s: pin%d = 2\n", __func__, pin);
+		ret = PIN_FLOAT;
+	}
+
+	pin_cfg.mode = QPNP_PIN_MODE_DIG_IN;
+	pin_cfg.out_strength = QPNP_PIN_OUT_STRENGTH_LOW;
+	pin_cfg.master_en = 0;
+	qpnp_pin_config(pin, &pin_cfg);
+
+	return ret;
+}
+
+static int msm_get_speaker_id(int pin)
+{
+	int hwid_major = get_hw_version_devid();
+	int pin_state = -1;
+	int id = 0;
+
+	pr_debug("%s: pin = %d, hwid_major = %d\n", __func__,
+			pin, hwid_major);
+	if (gpio_is_valid(pin))
+		pin_state = msm_get_pm_pin_3states(pin);
+
+	switch (pin_state) {
+	case 0:
+		if (hwid_major == 4)
+			id = 3;
+		else
+			id = 1;
+		break;
+	case 2:
+		if (hwid_major == 4)
+			id = 1;
+		else
+			id = 3;
+		break;
+	default:
+		id = 0;
+		break;
+	}
+
+	return id;
 }
 
 static void msm8996_liquid_docking_irq_work(struct work_struct *work)
@@ -325,9 +874,8 @@ exit:
 
 static void msm8996_ext_control(struct snd_soc_codec *codec)
 {
-	struct snd_soc_dapm_context *dapm = &codec->dapm;
+	struct snd_soc_dapm_context *dapm = snd_soc_codec_get_dapm(codec);
 
-	mutex_lock(&codec->mutex);
 	pr_debug("%s: msm8996_spk_control = %d", __func__,
 		 msm8996_spk_control);
 	if (msm8996_spk_control == MSM8996_SPK_ON) {
@@ -337,7 +885,6 @@ static void msm8996_ext_control(struct snd_soc_codec *codec)
 		snd_soc_dapm_disable_pin(dapm, "Lineout_1 amp");
 		snd_soc_dapm_disable_pin(dapm, "Lineout_2 amp");
 	}
-	mutex_unlock(&codec->mutex);
 	snd_soc_dapm_sync(dapm);
 }
 
@@ -367,7 +914,7 @@ static int msm8996_set_spk(struct snd_kcontrol *kcontrol,
 
 static int msm8996_hifi_ctrl(struct snd_soc_codec *codec)
 {
-	struct snd_soc_dapm_context *dapm = &codec->dapm;
+	struct snd_soc_dapm_context *dapm = snd_soc_codec_get_dapm(codec);
 	struct snd_soc_card *card = codec->component.card;
 	struct msm8996_asoc_mach_data *pdata =
 				snd_soc_card_get_drvdata(card);
@@ -378,7 +925,6 @@ static int msm8996_hifi_ctrl(struct snd_soc_codec *codec)
 		pr_err("%s: hph_en1_gpio is invalid\n", __func__);
 		return -EINVAL;
 	}
-	mutex_lock(&codec->mutex);
 	if (msm_hifi_control == MSM8996_HIFI_ON) {
 		gpio_direction_output(pdata->hph_en1_gpio, 1);
 		/* 5msec delay needed as per HW requirement */
@@ -386,7 +932,6 @@ static int msm8996_hifi_ctrl(struct snd_soc_codec *codec)
 	} else {
 		gpio_direction_output(pdata->hph_en1_gpio, 0);
 	}
-	mutex_unlock(&codec->mutex);
 	snd_soc_dapm_sync(dapm);
 	return 0;
 }
@@ -412,6 +957,41 @@ static int msm8996_hifi_put(struct snd_kcontrol *kcontrol,
 	msm8996_hifi_ctrl(codec);
 	return 1;
 }
+
+#ifdef CONFIG_MACH_XIAOMI_A8
+static int ultrasound_power_get(struct snd_kcontrol *kcontrol,
+				struct snd_ctl_elem_value *ucontrol)
+{
+	ucontrol->value.integer.value[0] = ultrasound_power_state;
+	return 0;
+}
+
+static int ultrasound_power_put(struct snd_kcontrol *kcontrol,
+				struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_codec *codec = snd_soc_kcontrol_codec(kcontrol);
+	struct snd_soc_card *card = codec->component.card;
+	struct msm8996_asoc_mach_data *pdata = snd_soc_card_get_drvdata(card);
+	int ret;
+
+	ultrasound_power_state = ucontrol->value.integer.value[0];
+	pr_debug("%s: ultrasound power %d\n", __func__, ultrasound_power_state);
+
+	if (ultrasound_power_state == 1) {
+		if (pdata->us_p_power)
+			ret = regulator_enable(pdata->us_p_power);
+		if (pdata->us_n_power)
+			ret = regulator_enable(pdata->us_n_power);
+	} else {
+		if (pdata->us_p_power)
+			ret = regulator_disable(pdata->us_p_power);
+		if (pdata->us_n_power)
+			ret = regulator_disable(pdata->us_n_power);
+	}
+
+	return 0;
+}
+#endif
 
 static int msm8996_ext_us_amp_init(void)
 {
@@ -479,13 +1059,15 @@ static int msm_snd_enable_codec_ext_clk(struct snd_soc_codec *codec,
 static int msm8996_mclk_event(struct snd_soc_dapm_widget *w,
 				 struct snd_kcontrol *kcontrol, int event)
 {
+	struct snd_soc_codec *codec = snd_soc_dapm_to_codec(w->dapm);
+
 	pr_debug("%s: event = %d\n", __func__, event);
 
 	switch (event) {
 	case SND_SOC_DAPM_PRE_PMU:
-		return msm_snd_enable_codec_ext_clk(w->codec, 1, true);
+		return msm_snd_enable_codec_ext_clk(codec, 1, true);
 	case SND_SOC_DAPM_POST_PMD:
-		return msm_snd_enable_codec_ext_clk(w->codec, 0, true);
+		return msm_snd_enable_codec_ext_clk(codec, 0, true);
 	}
 	return 0;
 }
@@ -508,13 +1090,15 @@ static int msm_snd_enable_codec_ext_tx_clk(struct snd_soc_codec *codec,
 static int msm8996_mclk_tx_event(struct snd_soc_dapm_widget *w,
 				 struct snd_kcontrol *kcontrol, int event)
 {
+	struct snd_soc_codec *codec = snd_soc_dapm_to_codec(w->dapm);
+
 	pr_debug("%s: event = %d\n", __func__, event);
 
 	switch (event) {
 	case SND_SOC_DAPM_PRE_PMU:
-		return msm_snd_enable_codec_ext_tx_clk(w->codec, 1, true);
+		return msm_snd_enable_codec_ext_tx_clk(codec, 1, true);
 	case SND_SOC_DAPM_POST_PMD:
-		return msm_snd_enable_codec_ext_tx_clk(w->codec, 0, true);
+		return msm_snd_enable_codec_ext_tx_clk(codec, 0, true);
 	}
 	return 0;
 }
@@ -522,7 +1106,8 @@ static int msm8996_mclk_tx_event(struct snd_soc_dapm_widget *w,
 static int msm_hifi_ctrl_event(struct snd_soc_dapm_widget *w,
 				    struct snd_kcontrol *k, int event)
 {
-	struct snd_soc_card *card = w->codec->component.card;
+	struct snd_soc_codec *codec = snd_soc_dapm_to_codec(w->dapm);
+	struct snd_soc_card *card = codec->component.card;
 	struct msm8996_asoc_mach_data *pdata =
 				snd_soc_card_get_drvdata(card);
 	int ret = 0;
@@ -1115,6 +1700,152 @@ static int msm_slim_1_tx_ch_put(struct snd_kcontrol *kcontrol,
 	return 1;
 }
 
+static int msm_pri_mi2s_rx_ch_get(struct snd_kcontrol *kcontrol,
+				struct snd_ctl_elem_value *ucontrol)
+{
+	pr_debug("%s: msm_pri_mi2s_rx_ch  = %d\n", __func__,
+		 msm_pri_mi2s_rx_ch);
+	ucontrol->value.integer.value[0] = msm_pri_mi2s_rx_ch - 1;
+	return 0;
+}
+
+static int msm_pri_mi2s_rx_ch_put(struct snd_kcontrol *kcontrol,
+				struct snd_ctl_elem_value *ucontrol)
+{
+	msm_pri_mi2s_rx_ch = ucontrol->value.integer.value[0] + 1;
+	pr_debug("%s: msm_pri_mi2s_rx_ch = %d\n", __func__,
+		 msm_pri_mi2s_rx_ch);
+	return 1;
+
+}
+
+static int msm_sec_mi2s_rx_ch_get(struct snd_kcontrol *kcontrol,
+				struct snd_ctl_elem_value *ucontrol)
+{
+	pr_debug("%s: msm_sec_mi2s_rx_ch  = %d\n", __func__,
+		 msm_sec_mi2s_rx_ch);
+	ucontrol->value.integer.value[0] = msm_sec_mi2s_rx_ch - 1;
+	return 0;
+}
+
+static int msm_sec_mi2s_rx_ch_put(struct snd_kcontrol *kcontrol,
+				struct snd_ctl_elem_value *ucontrol)
+{
+	msm_sec_mi2s_rx_ch = ucontrol->value.integer.value[0] + 1;
+	pr_debug("%s: msm_sec_mi2s_rx_ch = %d\n", __func__,
+		 msm_sec_mi2s_rx_ch);
+	return 1;
+}
+
+static int msm_tert_mi2s_rx_ch_get(struct snd_kcontrol *kcontrol,
+				struct snd_ctl_elem_value *ucontrol)
+{
+	pr_debug("%s: msm_tert_mi2s_rx_ch  = %d\n", __func__,
+		 msm_tert_mi2s_rx_ch);
+	ucontrol->value.integer.value[0] = msm_tert_mi2s_rx_ch - 1;
+	return 0;
+}
+
+static int msm_tert_mi2s_rx_ch_put(struct snd_kcontrol *kcontrol,
+				struct snd_ctl_elem_value *ucontrol)
+{
+	msm_tert_mi2s_rx_ch = ucontrol->value.integer.value[0] + 1;
+	pr_debug("%s: msm_tert_mi2s_rx_ch = %d\n", __func__,
+		 msm_tert_mi2s_rx_ch);
+	return 1;
+}
+
+static int msm_quat_mi2s_rx_ch_get(struct snd_kcontrol *kcontrol,
+				struct snd_ctl_elem_value *ucontrol)
+{
+	pr_debug("%s: msm_quat_mi2s_rx_ch  = %d\n", __func__,
+		 msm_quat_mi2s_rx_ch);
+	ucontrol->value.integer.value[0] = msm_quat_mi2s_rx_ch - 1;
+	return 0;
+}
+
+static int msm_quat_mi2s_rx_ch_put(struct snd_kcontrol *kcontrol,
+				struct snd_ctl_elem_value *ucontrol)
+{
+	msm_quat_mi2s_rx_ch = ucontrol->value.integer.value[0] + 1;
+	pr_debug("%s: msm_quat_mi2s_rx_ch = %d\n", __func__,
+		 msm_quat_mi2s_rx_ch);
+	return 1;
+}
+
+static int msm_pri_mi2s_tx_ch_get(struct snd_kcontrol *kcontrol,
+				struct snd_ctl_elem_value *ucontrol)
+{
+	pr_debug("%s: msm_pri_mi2s_tx_ch  = %d\n", __func__,
+		 msm_pri_mi2s_tx_ch);
+	ucontrol->value.integer.value[0] = msm_pri_mi2s_tx_ch - 1;
+	return 0;
+}
+
+static int msm_pri_mi2s_tx_ch_put(struct snd_kcontrol *kcontrol,
+				struct snd_ctl_elem_value *ucontrol)
+{
+	msm_pri_mi2s_tx_ch = ucontrol->value.integer.value[0] + 1;
+	pr_debug("%s: msm_pri_mi2s_tx_ch = %d\n", __func__,
+		 msm_pri_mi2s_tx_ch);
+	return 1;
+
+}
+
+static int msm_sec_mi2s_tx_ch_get(struct snd_kcontrol *kcontrol,
+				struct snd_ctl_elem_value *ucontrol)
+{
+	pr_debug("%s: msm_sec_mi2s_tx_ch  = %d\n", __func__,
+		 msm_sec_mi2s_tx_ch);
+	ucontrol->value.integer.value[0] = msm_sec_mi2s_tx_ch - 1;
+	return 0;
+}
+
+static int msm_sec_mi2s_tx_ch_put(struct snd_kcontrol *kcontrol,
+				struct snd_ctl_elem_value *ucontrol)
+{
+	msm_sec_mi2s_tx_ch = ucontrol->value.integer.value[0] + 1;
+	pr_debug("%s: msm_sec_mi2s_tx_ch = %d\n", __func__,
+		 msm_sec_mi2s_tx_ch);
+	return 1;
+}
+
+static int msm_tert_mi2s_tx_ch_get(struct snd_kcontrol *kcontrol,
+				struct snd_ctl_elem_value *ucontrol)
+{
+	pr_debug("%s: msm_tert_mi2s_tx_ch  = %d\n", __func__,
+		 msm_tert_mi2s_tx_ch);
+	ucontrol->value.integer.value[0] = msm_tert_mi2s_tx_ch - 1;
+	return 0;
+}
+
+static int msm_tert_mi2s_tx_ch_put(struct snd_kcontrol *kcontrol,
+				struct snd_ctl_elem_value *ucontrol)
+{
+	msm_tert_mi2s_tx_ch = ucontrol->value.integer.value[0] + 1;
+	pr_debug("%s: msm_tert_mi2s_tx_ch = %d\n", __func__,
+		 msm_tert_mi2s_tx_ch);
+	return 1;
+}
+
+static int msm_quat_mi2s_tx_ch_get(struct snd_kcontrol *kcontrol,
+				struct snd_ctl_elem_value *ucontrol)
+{
+	pr_debug("%s: msm_quat_mi2s_tx_ch  = %d\n", __func__,
+		 msm_quat_mi2s_tx_ch);
+	ucontrol->value.integer.value[0] = msm_quat_mi2s_tx_ch - 1;
+	return 0;
+}
+
+static int msm_quat_mi2s_tx_ch_put(struct snd_kcontrol *kcontrol,
+				struct snd_ctl_elem_value *ucontrol)
+{
+	msm_quat_mi2s_tx_ch = ucontrol->value.integer.value[0] + 1;
+	pr_debug("%s: msm_quat_mi2s_tx_ch = %d\n", __func__,
+		 msm_quat_mi2s_tx_ch);
+	return 1;
+}
+
 static int msm_vi_feed_tx_ch_get(struct snd_kcontrol *kcontrol,
 	struct snd_ctl_elem_value *ucontrol)
 {
@@ -1255,6 +1986,600 @@ static int hdmi_rx_sample_rate_put(struct snd_kcontrol *kcontrol,
 	return 0;
 }
 
+static int usb_audio_rx_ch_get(struct snd_kcontrol *kcontrol,
+			       struct snd_ctl_elem_value *ucontrol)
+{
+	pr_debug("%s: usb_audio_rx_ch  = %d\n", __func__,
+			usb_rx_cfg.channels);
+	ucontrol->value.integer.value[0] = usb_rx_cfg.channels - 1;
+	return 0;
+}
+
+static int usb_audio_rx_ch_put(struct snd_kcontrol *kcontrol,
+			       struct snd_ctl_elem_value *ucontrol)
+{
+	usb_rx_cfg.channels = ucontrol->value.integer.value[0] + 1;
+
+	pr_debug("%s: usb_audio_rx_ch = %d\n", __func__, usb_rx_cfg.channels);
+	return 1;
+}
+
+static int usb_audio_rx_sample_rate_get(struct snd_kcontrol *kcontrol,
+					struct snd_ctl_elem_value *ucontrol)
+{
+	int sample_rate_val = 0;
+
+	switch (usb_rx_cfg.sample_rate) {
+	case SAMPLING_RATE_192KHZ:
+		sample_rate_val = 10;
+		break;
+	case SAMPLING_RATE_176P4KHZ:
+		sample_rate_val = 9;
+		break;
+	case SAMPLING_RATE_96KHZ:
+		sample_rate_val = 8;
+		break;
+	case SAMPLING_RATE_88P2KHZ:
+		sample_rate_val = 7;
+		break;
+	case SAMPLING_RATE_48KHZ:
+		sample_rate_val = 6;
+		break;
+	case SAMPLING_RATE_44P1KHZ:
+		sample_rate_val = 5;
+		break;
+	case SAMPLING_RATE_32KHZ:
+		sample_rate_val = 4;
+		break;
+	case SAMPLING_RATE_22P05KHZ:
+		sample_rate_val = 3;
+		break;
+	case SAMPLING_RATE_16KHZ:
+		sample_rate_val = 2;
+		break;
+	case SAMPLING_RATE_11P025KHZ:
+		sample_rate_val = 1;
+		break;
+	case SAMPLING_RATE_8KHZ:
+	default:
+		sample_rate_val = 0;
+		break;
+	}
+
+	ucontrol->value.integer.value[0] = sample_rate_val;
+	pr_debug("%s: usb_audio_rx_sample_rate = %d\n", __func__,
+		 usb_rx_cfg.sample_rate);
+	return 0;
+}
+
+static int usb_audio_rx_sample_rate_put(struct snd_kcontrol *kcontrol,
+					struct snd_ctl_elem_value *ucontrol)
+{
+	switch (ucontrol->value.integer.value[0]) {
+	case 10:
+		usb_rx_cfg.sample_rate = SAMPLING_RATE_192KHZ;
+		break;
+	case 9:
+		usb_rx_cfg.sample_rate = SAMPLING_RATE_176P4KHZ;
+		break;
+	case 8:
+		usb_rx_cfg.sample_rate = SAMPLING_RATE_96KHZ;
+		break;
+	case 7:
+		usb_rx_cfg.sample_rate = SAMPLING_RATE_88P2KHZ;
+		break;
+	case 6:
+		usb_rx_cfg.sample_rate = SAMPLING_RATE_48KHZ;
+		break;
+	case 5:
+		usb_rx_cfg.sample_rate = SAMPLING_RATE_44P1KHZ;
+		break;
+	case 4:
+		usb_rx_cfg.sample_rate = SAMPLING_RATE_32KHZ;
+		break;
+	case 3:
+		usb_rx_cfg.sample_rate = SAMPLING_RATE_22P05KHZ;
+		break;
+	case 2:
+		usb_rx_cfg.sample_rate = SAMPLING_RATE_16KHZ;
+		break;
+	case 1:
+		usb_rx_cfg.sample_rate = SAMPLING_RATE_11P025KHZ;
+		break;
+	case 0:
+		usb_rx_cfg.sample_rate = SAMPLING_RATE_8KHZ;
+		break;
+	default:
+		usb_rx_cfg.sample_rate = SAMPLING_RATE_48KHZ;
+		break;
+	}
+
+	pr_debug("%s: control value = %ld, usb_audio_rx_sample_rate = %d\n",
+		__func__, ucontrol->value.integer.value[0],
+		usb_rx_cfg.sample_rate);
+	return 0;
+}
+
+static int usb_audio_rx_format_get(struct snd_kcontrol *kcontrol,
+				   struct snd_ctl_elem_value *ucontrol)
+{
+	switch (usb_rx_cfg.bit_format) {
+	case SNDRV_PCM_FORMAT_S24_3LE:
+		ucontrol->value.integer.value[0] = 2;
+		break;
+	case SNDRV_PCM_FORMAT_S24_LE:
+		ucontrol->value.integer.value[0] = 1;
+		break;
+	case SNDRV_PCM_FORMAT_S16_LE:
+	default:
+		ucontrol->value.integer.value[0] = 0;
+		break;
+	}
+
+	pr_debug("%s: usb_audio_rx_format = %d, ucontrol value = %ld\n",
+		 __func__, usb_rx_cfg.bit_format,
+		 ucontrol->value.integer.value[0]);
+	return 0;
+}
+
+static int usb_audio_rx_format_put(struct snd_kcontrol *kcontrol,
+				   struct snd_ctl_elem_value *ucontrol)
+{
+	int rc = 0;
+
+	switch (ucontrol->value.integer.value[0]) {
+	case 2:
+		usb_rx_cfg.bit_format = SNDRV_PCM_FORMAT_S24_3LE;
+		break;
+	case 1:
+		usb_rx_cfg.bit_format = SNDRV_PCM_FORMAT_S24_LE;
+		break;
+	case 0:
+	default:
+		usb_rx_cfg.bit_format = SNDRV_PCM_FORMAT_S16_LE;
+		break;
+	}
+	pr_debug("%s: usb_audio_rx_format = %d, ucontrol value = %ld\n",
+		 __func__, usb_rx_cfg.bit_format,
+		 ucontrol->value.integer.value[0]);
+
+	return rc;
+}
+
+static int mi2_get_sample_rate(int sample_rate)
+{
+	int sample_rate_val = 0;
+
+	switch (sample_rate) {
+	case SAMPLING_RATE_192KHZ:
+		sample_rate_val = 5;
+		break;
+
+	case SAMPLING_RATE_96KHZ:
+		sample_rate_val = 4;
+		break;
+
+	case SAMPLING_RATE_48KHZ:
+		sample_rate_val = 3;
+		break;
+
+	case SAMPLING_RATE_32KHZ:
+		sample_rate_val = 2;
+		break;
+
+	case SAMPLING_RATE_16KHZ:
+		sample_rate_val = 1;
+		break;
+
+	case SAMPLING_RATE_8KHZ:
+	default:
+		sample_rate_val = 0;
+		break;
+	}
+
+	return sample_rate_val;
+}
+
+static int pri_mi2s_sample_rate_get(struct snd_kcontrol *kcontrol,
+	struct snd_ctl_elem_value *ucontrol)
+{
+	ucontrol->value.integer.value[0] = mi2_get_sample_rate(pri_mi2s_sample_rate);
+	pr_debug("%s: pri_mi2s_sample_rate = %d\n", __func__,
+				pri_mi2s_sample_rate);
+
+	return 0;
+}
+
+static int sec_mi2s_sample_rate_get(struct snd_kcontrol *kcontrol,
+	struct snd_ctl_elem_value *ucontrol)
+{
+	ucontrol->value.integer.value[0] = mi2_get_sample_rate(sec_mi2s_sample_rate);
+	pr_debug("%s: sec_mi2s_sample_rate = %d\n", __func__,
+				sec_mi2s_sample_rate);
+
+	return 0;
+}
+
+static int tert_mi2s_sample_rate_get(struct snd_kcontrol *kcontrol,
+	struct snd_ctl_elem_value *ucontrol)
+{
+	ucontrol->value.integer.value[0] = mi2_get_sample_rate(tert_mi2s_sample_rate);
+	pr_debug("%s: tert_mi2s_sample_rate = %d\n", __func__,
+				tert_mi2s_sample_rate);
+
+	return 0;
+}
+
+static int quat_mi2s_sample_rate_get(struct snd_kcontrol *kcontrol,
+	struct snd_ctl_elem_value *ucontrol)
+{
+	ucontrol->value.integer.value[0] = mi2_get_sample_rate(quat_mi2s_sample_rate);
+	pr_debug("%s: quat_mi2s_sample_rate = %d\n", __func__,
+				quat_mi2s_sample_rate);
+	return 0;
+}
+
+static int usb_audio_tx_ch_get(struct snd_kcontrol *kcontrol,
+			       struct snd_ctl_elem_value *ucontrol)
+{
+	pr_debug("%s: usb_audio_tx_ch  = %d\n", __func__,
+		 usb_tx_cfg.channels);
+	ucontrol->value.integer.value[0] = usb_tx_cfg.channels - 1;
+	return 0;
+}
+
+static int usb_audio_tx_ch_put(struct snd_kcontrol *kcontrol,
+			       struct snd_ctl_elem_value *ucontrol)
+{
+	usb_tx_cfg.channels = ucontrol->value.integer.value[0] + 1;
+
+	pr_debug("%s: usb_audio_tx_ch = %d\n", __func__, usb_tx_cfg.channels);
+	return 1;
+}
+
+static int usb_audio_tx_sample_rate_get(struct snd_kcontrol *kcontrol,
+					struct snd_ctl_elem_value *ucontrol)
+{
+	int sample_rate_val = 0;
+
+	switch (usb_tx_cfg.sample_rate) {
+	case SAMPLING_RATE_192KHZ:
+		sample_rate_val = 10;
+		break;
+	case SAMPLING_RATE_176P4KHZ:
+		sample_rate_val = 9;
+		break;
+	case SAMPLING_RATE_96KHZ:
+		sample_rate_val = 8;
+		break;
+	case SAMPLING_RATE_88P2KHZ:
+		sample_rate_val = 7;
+		break;
+	case SAMPLING_RATE_48KHZ:
+		sample_rate_val = 6;
+		break;
+	case SAMPLING_RATE_44P1KHZ:
+		sample_rate_val = 5;
+		break;
+	case SAMPLING_RATE_32KHZ:
+		sample_rate_val = 4;
+		break;
+	case SAMPLING_RATE_22P05KHZ:
+		sample_rate_val = 3;
+		break;
+	case SAMPLING_RATE_16KHZ:
+		sample_rate_val = 2;
+		break;
+	case SAMPLING_RATE_11P025KHZ:
+		sample_rate_val = 1;
+		break;
+	case SAMPLING_RATE_8KHZ:
+		sample_rate_val = 0;
+		break;
+	default:
+		sample_rate_val = 6;
+		break;
+	}
+
+	ucontrol->value.integer.value[0] = sample_rate_val;
+	pr_debug("%s: usb_audio_tx_sample_rate = %d\n", __func__,
+		 usb_tx_cfg.sample_rate);
+	return 0;
+}
+
+static int usb_audio_tx_sample_rate_put(struct snd_kcontrol *kcontrol,
+					struct snd_ctl_elem_value *ucontrol)
+{
+	switch (ucontrol->value.integer.value[0]) {
+	case 10:
+		usb_tx_cfg.sample_rate = SAMPLING_RATE_192KHZ;
+		break;
+	case 9:
+		usb_tx_cfg.sample_rate = SAMPLING_RATE_176P4KHZ;
+		break;
+	case 8:
+		usb_tx_cfg.sample_rate = SAMPLING_RATE_96KHZ;
+		break;
+	case 7:
+		usb_tx_cfg.sample_rate = SAMPLING_RATE_88P2KHZ;
+		break;
+	case 6:
+		usb_tx_cfg.sample_rate = SAMPLING_RATE_48KHZ;
+		break;
+	case 5:
+		usb_tx_cfg.sample_rate = SAMPLING_RATE_44P1KHZ;
+		break;
+	case 4:
+		usb_tx_cfg.sample_rate = SAMPLING_RATE_32KHZ;
+		break;
+	case 3:
+		usb_tx_cfg.sample_rate = SAMPLING_RATE_22P05KHZ;
+		break;
+	case 2:
+		usb_tx_cfg.sample_rate = SAMPLING_RATE_16KHZ;
+		break;
+	case 1:
+		usb_tx_cfg.sample_rate = SAMPLING_RATE_11P025KHZ;
+		break;
+	case 0:
+		usb_tx_cfg.sample_rate = SAMPLING_RATE_8KHZ;
+		break;
+	default:
+		usb_tx_cfg.sample_rate = SAMPLING_RATE_48KHZ;
+		break;
+	}
+
+	pr_debug("%s: control value = %ld, usb_audio_tx_sample_rate = %d\n",
+		__func__, ucontrol->value.integer.value[0],
+		usb_tx_cfg.sample_rate);
+	return 0;
+}
+
+static int mi2s_set_sample_rate(int sample_rate_idx)
+{
+	int sample_rate;
+
+	switch (sample_rate_idx) {
+	case 0:
+		sample_rate = SAMPLING_RATE_8KHZ;
+		break;
+	case 1:
+		sample_rate = SAMPLING_RATE_16KHZ;
+		break;
+	case 2:
+		sample_rate = SAMPLING_RATE_32KHZ;
+		break;
+	case 3:
+		sample_rate = SAMPLING_RATE_48KHZ;
+		break;
+	case 4:
+		sample_rate = SAMPLING_RATE_96KHZ;
+		break;
+	case 5:
+		sample_rate = SAMPLING_RATE_192KHZ;
+		break;
+	default:
+		pr_warn("%s: sample_rate = %d not supported, using default\n",
+			__func__, sample_rate_idx);
+		sample_rate = SAMPLING_RATE_48KHZ;
+	}
+
+	return sample_rate;
+}
+
+static int pri_mi2s_sample_rate_put(struct snd_kcontrol *kcontrol,
+	struct snd_ctl_elem_value *ucontrol)
+{
+	pri_mi2s_sample_rate = mi2s_set_sample_rate(
+					     ucontrol->value.integer.value[0]);
+	pr_debug("%s: sample_rate = %d\n", __func__, pri_mi2s_sample_rate);
+
+	return 0;
+}
+
+static int sec_mi2s_sample_rate_put(struct snd_kcontrol *kcontrol,
+	struct snd_ctl_elem_value *ucontrol)
+{
+	sec_mi2s_sample_rate = mi2s_set_sample_rate(
+					     ucontrol->value.integer.value[0]);
+	pr_debug("%s: sample_rate = %d\n", __func__, sec_mi2s_sample_rate);
+
+	return 0;
+}
+
+static int tert_mi2s_sample_rate_put(struct snd_kcontrol *kcontrol,
+	struct snd_ctl_elem_value *ucontrol)
+{
+	tert_mi2s_sample_rate = mi2s_set_sample_rate(
+					     ucontrol->value.integer.value[0]);
+	pr_debug("%s: sample_rate = %d\n", __func__, tert_mi2s_sample_rate);
+
+	return 0;
+}
+
+static int usb_audio_tx_format_get(struct snd_kcontrol *kcontrol,
+				   struct snd_ctl_elem_value *ucontrol)
+{
+	switch (usb_tx_cfg.bit_format) {
+	case SNDRV_PCM_FORMAT_S24_3LE:
+		ucontrol->value.integer.value[0] = 2;
+		break;
+	case SNDRV_PCM_FORMAT_S24_LE:
+		ucontrol->value.integer.value[0] = 1;
+		break;
+	case SNDRV_PCM_FORMAT_S16_LE:
+	default:
+		ucontrol->value.integer.value[0] = 0;
+		break;
+	}
+
+	pr_debug("%s: usb_audio_tx_format = %d, ucontrol value = %ld\n",
+		 __func__, usb_tx_cfg.bit_format,
+		 ucontrol->value.integer.value[0]);
+	return 0;
+}
+
+static int usb_audio_tx_format_put(struct snd_kcontrol *kcontrol,
+				   struct snd_ctl_elem_value *ucontrol)
+{
+	int rc = 0;
+
+	switch (ucontrol->value.integer.value[0]) {
+	case 2:
+		usb_tx_cfg.bit_format = SNDRV_PCM_FORMAT_S24_3LE;
+		break;
+	case 1:
+		usb_tx_cfg.bit_format = SNDRV_PCM_FORMAT_S24_LE;
+		break;
+	case 0:
+	default:
+		usb_tx_cfg.bit_format = SNDRV_PCM_FORMAT_S16_LE;
+		break;
+	}
+	pr_debug("%s: usb_audio_tx_format = %d, ucontrol value = %ld\n",
+		 __func__, usb_tx_cfg.bit_format,
+		 ucontrol->value.integer.value[0]);
+
+	return rc;
+}
+
+static int quat_mi2s_sample_rate_put(struct snd_kcontrol *kcontrol,
+	struct snd_ctl_elem_value *ucontrol)
+{
+	quat_mi2s_sample_rate = mi2s_set_sample_rate(
+					     ucontrol->value.integer.value[0]);
+	pr_debug("%s: sample_rate = %d\n", __func__, quat_mi2s_sample_rate);
+
+	return 0;
+}
+
+static int mi2s_get_bit_format(int bit_format_idx)
+{
+	int bit_format;
+
+	switch (bit_format_idx) {
+	case SNDRV_PCM_FORMAT_S24_LE:
+		bit_format = 1;
+		break;
+
+	case SNDRV_PCM_FORMAT_S16_LE:
+	default:
+		bit_format = 0;
+		break;
+	}
+
+	return bit_format;
+}
+
+static int pri_mi2s_bit_format_get(struct snd_kcontrol *kcontrol,
+	struct snd_ctl_elem_value *ucontrol)
+{
+	ucontrol->value.integer.value[0] = mi2s_get_bit_format(
+							pri_mi2s_bit_format);
+
+	pr_debug("%s: pri_mi2s_bit_format = %d, ucontrol value = %ld\n",
+		 __func__, pri_mi2s_bit_format,
+			ucontrol->value.integer.value[0]);
+
+	return 0;
+}
+
+static int sec_mi2s_bit_format_get(struct snd_kcontrol *kcontrol,
+	struct snd_ctl_elem_value *ucontrol)
+{
+	ucontrol->value.integer.value[0] = mi2s_get_bit_format(
+							sec_mi2s_bit_format);
+
+	pr_debug("%s: sec_mi2s_bit_format = %d, ucontrol value = %ld\n",
+		 __func__, sec_mi2s_bit_format,
+			ucontrol->value.integer.value[0]);
+
+	return 0;
+}
+
+static int tert_mi2s_bit_format_get(struct snd_kcontrol *kcontrol,
+	struct snd_ctl_elem_value *ucontrol)
+{
+	ucontrol->value.integer.value[0] = mi2s_get_bit_format(
+							tert_mi2s_bit_format);
+
+	pr_debug("%s: tert_mi2s_bit_format = %d, ucontrol value = %ld\n",
+		 __func__, tert_mi2s_bit_format,
+			ucontrol->value.integer.value[0]);
+
+	return 0;
+}
+
+static int quat_mi2s_bit_format_get(struct snd_kcontrol *kcontrol,
+	struct snd_ctl_elem_value *ucontrol)
+{
+	ucontrol->value.integer.value[0] = mi2s_get_bit_format(
+							quat_mi2s_bit_format);
+
+	pr_debug("%s: quat_mi2s_bit_format = %d, ucontrol value = %ld\n",
+		 __func__, quat_mi2s_bit_format,
+			ucontrol->value.integer.value[0]);
+
+	return 0;
+}
+
+static int mi2s_put_bit_format(int bit_format_idx)
+{
+	int bit_format;
+
+	switch (bit_format_idx) {
+	case 0:
+		bit_format = SNDRV_PCM_FORMAT_S16_LE;
+		break;
+	case 1:
+		bit_format = SNDRV_PCM_FORMAT_S24_LE;
+		break;
+	default:
+		pr_warn("%s: bit_format = %d not supported, using default\n",
+			__func__, bit_format_idx);
+		bit_format = SNDRV_PCM_FORMAT_S16_LE;
+		break;
+	}
+
+	return bit_format;
+}
+
+static int pri_mi2s_bit_format_put(struct snd_kcontrol *kcontrol,
+	struct snd_ctl_elem_value *ucontrol)
+{
+	pri_mi2s_bit_format = mi2s_put_bit_format(ucontrol->value.integer.value[0]);
+	pr_debug("%s: bit_format = %d \n", __func__, pri_mi2s_bit_format);
+
+	return 0;
+}
+
+static int sec_mi2s_bit_format_put(struct snd_kcontrol *kcontrol,
+	struct snd_ctl_elem_value *ucontrol)
+{
+	sec_mi2s_bit_format = mi2s_put_bit_format(ucontrol->value.integer.value[0]);
+	pr_debug("%s: bit_format = %d \n", __func__, sec_mi2s_bit_format);
+
+	return 0;
+}
+
+static int tert_mi2s_bit_format_put(struct snd_kcontrol *kcontrol,
+	struct snd_ctl_elem_value *ucontrol)
+{
+	tert_mi2s_bit_format = mi2s_put_bit_format(ucontrol->value.integer.value[0]);
+	pr_debug("%s: bit_format = %d \n", __func__, tert_mi2s_bit_format);
+
+	return 0;
+}
+
+static int quat_mi2s_bit_format_put(struct snd_kcontrol *kcontrol,
+	struct snd_ctl_elem_value *ucontrol)
+{
+	quat_mi2s_bit_format = mi2s_put_bit_format(ucontrol->value.integer.value[0]);
+	pr_debug("%s: bit_format = %d \n", __func__, quat_mi2s_bit_format);
+
+	return 0;
+}
+
 static int msm8996_auxpcm_rate_get(struct snd_kcontrol *kcontrol,
 				      struct snd_ctl_elem_value *ucontrol)
 {
@@ -1294,6 +2619,2528 @@ static int msm_proxy_rx_ch_put(struct snd_kcontrol *kcontrol,
 	pr_debug("%s: msm_proxy_rx_ch = %d\n", __func__, msm_proxy_rx_ch);
 	return 1;
 }
+
+static int msm_pri_tdm_tx_0_ch_get(struct snd_kcontrol *kcontrol,
+				   struct snd_ctl_elem_value *ucontrol)
+{
+	pr_debug("%s: msm_pri_tdm_tx_0_ch = %d\n", __func__,
+			msm_pri_tdm_tx_0_ch);
+	ucontrol->value.integer.value[0] = msm_pri_tdm_tx_0_ch - 1;
+	return 0;
+}
+
+static int msm_pri_tdm_tx_0_ch_put(struct snd_kcontrol *kcontrol,
+				   struct snd_ctl_elem_value *ucontrol)
+{
+	msm_pri_tdm_tx_0_ch = ucontrol->value.integer.value[0] + 1;
+	pr_debug("%s: msm_pri_tdm_tx_0_ch = %d\n", __func__,
+			msm_pri_tdm_tx_0_ch);
+	return 0;
+}
+
+static int msm_pri_tdm_tx_1_ch_get(struct snd_kcontrol *kcontrol,
+				   struct snd_ctl_elem_value *ucontrol)
+{
+	pr_debug("%s: pri_tdm_tx_1_ch = %d\n", __func__,
+			msm_pri_tdm_tx_1_ch);
+	ucontrol->value.integer.value[0] = msm_pri_tdm_tx_1_ch - 1;
+	return 0;
+}
+
+static int msm_tert_mi2s_tx_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
+					    struct snd_pcm_hw_params *params)
+{
+	struct snd_interval *rate = hw_param_interval(params,
+					SNDRV_PCM_HW_PARAM_RATE);
+	struct snd_interval *channels = hw_param_interval(params,
+					SNDRV_PCM_HW_PARAM_CHANNELS);
+
+	param_set_mask(params, SNDRV_PCM_HW_PARAM_FORMAT,
+				   tert_mi2s_bit_format);
+	rate->min = rate->max = tert_mi2s_sample_rate;
+	/* TODO: Should we validate channels with sd_lines?
+	 * See msm_dai_q6_mi2s_hw_params() */
+	channels->min = channels->max = msm_tert_mi2s_tx_ch;
+
+	pr_debug("%s: format = %d, rate = %d, channels = %d\n",
+		  __func__, params_format(params), params_rate(params),
+		  msm_tert_mi2s_tx_ch);
+
+	return 0;
+}
+
+static int msm_slim_1_rx_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
+					    struct snd_pcm_hw_params *params)
+{
+	struct snd_interval *rate = hw_param_interval(params,
+					SNDRV_PCM_HW_PARAM_RATE);
+	struct snd_interval *channels = hw_param_interval(params,
+					SNDRV_PCM_HW_PARAM_CHANNELS);
+
+	param_set_mask(params, SNDRV_PCM_HW_PARAM_FORMAT,
+				   SNDRV_PCM_FORMAT_S16_LE);
+	rate->min = rate->max = SAMPLING_RATE_96KHZ;
+	channels->min = channels->max = 1;
+
+	 pr_debug("%s: format = %d, rate = %d, channels = %d\n",
+		  __func__, params_format(params), params_rate(params),
+		  1);
+
+	return 0;
+}
+
+static int msm_pri_tdm_tx_1_ch_put(struct snd_kcontrol *kcontrol,
+				   struct snd_ctl_elem_value *ucontrol)
+{
+	msm_pri_tdm_tx_1_ch = ucontrol->value.integer.value[0] + 1;
+	pr_debug("%s: msm_pri_tdm_tx_1_ch = %d\n", __func__,
+			msm_pri_tdm_tx_1_ch);
+	return 0;
+}
+
+static int msm_pri_tdm_tx_2_ch_get(struct snd_kcontrol *kcontrol,
+				   struct snd_ctl_elem_value *ucontrol)
+{
+	pr_debug("%s: msm_pri_tdm_tx_2_ch = %d\n", __func__,
+			msm_pri_tdm_tx_2_ch);
+	ucontrol->value.integer.value[0] = msm_pri_tdm_tx_2_ch - 1;
+	return 0;
+}
+
+static int msm_pri_tdm_tx_2_ch_put(struct snd_kcontrol *kcontrol,
+				   struct snd_ctl_elem_value *ucontrol)
+{
+	msm_pri_tdm_tx_2_ch = ucontrol->value.integer.value[0] + 1;
+	pr_debug("%s: msm_pri_tdm_tx_2_ch = %d\n", __func__,
+			msm_pri_tdm_tx_2_ch);
+	return 0;
+}
+static int msm_pri_tdm_tx_3_ch_get(struct snd_kcontrol *kcontrol,
+				   struct snd_ctl_elem_value *ucontrol)
+{
+	pr_debug("%s: msm_pri_tdm_tx_3_ch = %d\n", __func__,
+			msm_pri_tdm_tx_3_ch);
+	ucontrol->value.integer.value[0] = msm_pri_tdm_tx_3_ch - 1;
+	return 0;
+}
+
+static int msm_pri_tdm_tx_3_ch_put(struct snd_kcontrol *kcontrol,
+				   struct snd_ctl_elem_value *ucontrol)
+{
+	msm_pri_tdm_tx_3_ch = ucontrol->value.integer.value[0] + 1;
+	pr_debug("%s: msm_pri_tdm_tx_3_ch = %d\n", __func__,
+			msm_pri_tdm_tx_3_ch);
+	return 0;
+}
+
+static int msm_pri_tdm_rx_0_ch_get(struct snd_kcontrol *kcontrol,
+				   struct snd_ctl_elem_value *ucontrol)
+{
+	pr_debug("%s: msm_pri_tdm_rx_0_ch = %d\n", __func__,
+			msm_pri_tdm_rx_0_ch);
+	ucontrol->value.integer.value[0] = msm_pri_tdm_rx_0_ch - 1;
+	return 0;
+}
+
+static int msm_pri_tdm_rx_0_ch_put(struct snd_kcontrol *kcontrol,
+				   struct snd_ctl_elem_value *ucontrol)
+{
+	msm_pri_tdm_rx_0_ch = ucontrol->value.integer.value[0] + 1;
+	pr_debug("%s: msm_pri_tdm_rx_0_ch = %d\n", __func__,
+			msm_pri_tdm_rx_0_ch);
+	return 0;
+}
+
+static int msm_pri_tdm_rx_1_ch_get(struct snd_kcontrol *kcontrol,
+				   struct snd_ctl_elem_value *ucontrol)
+{
+	pr_debug("%s: msm_pri_tdm_rx_1_ch = %d\n", __func__,
+			msm_pri_tdm_rx_1_ch);
+	ucontrol->value.integer.value[0] = msm_pri_tdm_rx_1_ch - 1;
+	return 0;
+}
+
+static int msm_pri_tdm_rx_1_ch_put(struct snd_kcontrol *kcontrol,
+				   struct snd_ctl_elem_value *ucontrol)
+{
+	msm_pri_tdm_rx_1_ch = ucontrol->value.integer.value[0] + 1;
+	pr_debug("%s: msm_pri_tdm_rx_1_ch = %d\n", __func__,
+		msm_pri_tdm_rx_1_ch);
+	return 0;
+}
+
+static int msm_pri_tdm_rx_2_ch_get(struct snd_kcontrol *kcontrol,
+				   struct snd_ctl_elem_value *ucontrol)
+{
+	pr_debug("%s: msm_pri_tdm_rx_2_ch = %d\n", __func__,
+			msm_pri_tdm_rx_2_ch);
+	ucontrol->value.integer.value[0] = msm_pri_tdm_rx_2_ch - 1;
+	return 0;
+}
+
+
+static int msm_quat_mi2s_rx_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
+					    struct snd_pcm_hw_params *params)
+{
+	struct snd_interval *rate = hw_param_interval(params,
+					SNDRV_PCM_HW_PARAM_RATE);
+	struct snd_interval *channels = hw_param_interval(params,
+					SNDRV_PCM_HW_PARAM_CHANNELS);
+
+	param_set_mask(params, SNDRV_PCM_HW_PARAM_FORMAT,
+				   quat_mi2s_bit_format);
+	rate->min = rate->max = quat_mi2s_sample_rate;
+	/* TODO: Should we validate channels with sd_lines?
+	 * See msm_dai_q6_mi2s_hw_params() */
+	channels->min = channels->max = msm_quat_mi2s_rx_ch;
+
+	 pr_debug("%s: format = %d, rate = %d, channels = %d\n",
+		  __func__, params_format(params), params_rate(params),
+		  msm_quat_mi2s_rx_ch);
+
+	return 0;
+}
+
+static int msm_pri_tdm_rx_2_ch_put(struct snd_kcontrol *kcontrol,
+				   struct snd_ctl_elem_value *ucontrol)
+{
+	msm_pri_tdm_rx_2_ch = ucontrol->value.integer.value[0] + 1;
+	pr_debug("%s: msm_pri_tdm_rx_2_ch = %d\n", __func__,
+		msm_pri_tdm_rx_2_ch);
+	return 0;
+}
+
+static int msm_pri_tdm_rx_3_ch_get(struct snd_kcontrol *kcontrol,
+				   struct snd_ctl_elem_value *ucontrol)
+{
+	pr_debug("%s: msm_pri_tdm_rx_3_ch = %d\n", __func__,
+			msm_pri_tdm_rx_3_ch);
+	ucontrol->value.integer.value[0] = msm_pri_tdm_rx_3_ch - 1;
+	return 0;
+}
+
+static int msm_pri_tdm_rx_3_ch_put(struct snd_kcontrol *kcontrol,
+				   struct snd_ctl_elem_value *ucontrol)
+{
+	msm_pri_tdm_rx_3_ch = ucontrol->value.integer.value[0] + 1;
+	pr_debug("%s: msm_pri_tdm_rx_3_ch = %d\n", __func__,
+		msm_pri_tdm_rx_3_ch);
+	return 0;
+}
+
+static int msm_pri_tdm_rate_get(struct snd_kcontrol *kcontrol,
+				struct snd_ctl_elem_value *ucontrol)
+{
+	ucontrol->value.integer.value[0] = msm_pri_tdm_rate;
+	pr_debug("%s: msm_pri_tdm_rate = %d\n", __func__, msm_pri_tdm_rate);
+	return 0;
+}
+static int msm_pri_tdm_rate_put(struct snd_kcontrol *kcontrol,
+				struct snd_ctl_elem_value *ucontrol)
+{
+	switch (ucontrol->value.integer.value[0]) {
+	case 0:
+		msm_pri_tdm_rate = SAMPLING_RATE_8KHZ;
+		break;
+	case 1:
+		msm_pri_tdm_rate = SAMPLING_RATE_16KHZ;
+		break;
+	case 2:
+	default:
+		msm_pri_tdm_rate = SAMPLING_RATE_48KHZ;
+		break;
+	}
+	pr_debug("%s: msm_pri_tdm_rate = %d\n",
+		__func__, msm_pri_tdm_rate);
+	return 0;
+}
+
+static int msm_sec_tdm_rate_get(struct snd_kcontrol *kcontrol,
+				struct snd_ctl_elem_value *ucontrol)
+{
+	ucontrol->value.integer.value[0] = msm_sec_tdm_rate;
+	pr_debug("%s: msm_sec_tdm_rate = %d\n", __func__, msm_sec_tdm_rate);
+	return 0;
+}
+
+static int msm_sec_tdm_rate_put(struct snd_kcontrol *kcontrol,
+				struct snd_ctl_elem_value *ucontrol)
+{
+	switch (ucontrol->value.integer.value[0]) {
+	case 0:
+		msm_sec_tdm_rate = SAMPLING_RATE_8KHZ;
+		break;
+	case 1:
+		msm_sec_tdm_rate = SAMPLING_RATE_16KHZ;
+		break;
+	case 2:
+	default:
+		msm_sec_tdm_rate = SAMPLING_RATE_48KHZ;
+		break;
+	}
+	pr_debug("%s: msm_sec_tdm_rate = %d\n",
+			__func__, msm_sec_tdm_rate);
+	return 0;
+}
+
+static int msm_tert_tdm_rate_get(struct snd_kcontrol *kcontrol,
+				 struct snd_ctl_elem_value *ucontrol)
+{
+	ucontrol->value.integer.value[0] = msm_tert_tdm_rate;
+	pr_debug("%s: msm_tert_tdm_rate = %d\n", __func__, msm_tert_tdm_rate);
+	return 0;
+}
+
+static int msm_tert_tdm_rate_put(struct snd_kcontrol *kcontrol,
+				 struct snd_ctl_elem_value *ucontrol)
+{
+	switch (ucontrol->value.integer.value[0]) {
+	case 0:
+		msm_tert_tdm_rate = SAMPLING_RATE_8KHZ;
+		break;
+	case 1:
+		msm_tert_tdm_rate = SAMPLING_RATE_16KHZ;
+		break;
+	case 2:
+	default:
+		msm_tert_tdm_rate = SAMPLING_RATE_48KHZ;
+		break;
+	}
+	pr_debug("%s: msm_tert_tdm_rate = %d\n",
+			__func__, msm_tert_tdm_rate);
+	return 0;
+}
+
+static int msm_quat_mi2s_tx_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
+					    struct snd_pcm_hw_params *params)
+{
+	struct snd_interval *rate = hw_param_interval(params,
+					SNDRV_PCM_HW_PARAM_RATE);
+	struct snd_interval *channels = hw_param_interval(params,
+					SNDRV_PCM_HW_PARAM_CHANNELS);
+
+	param_set_mask(params, SNDRV_PCM_HW_PARAM_FORMAT,
+				   quat_mi2s_bit_format);
+	rate->min = rate->max = quat_mi2s_sample_rate;
+	/* TODO: Should we validate channels with sd_lines?
+	 * See msm_dai_q6_mi2s_hw_params() */
+	channels->min = channels->max = msm_quat_mi2s_tx_ch;
+
+	 pr_debug("%s: format = %d, rate = %d, channels = %d\n",
+		  __func__, params_format(params), params_rate(params),
+		  msm_quat_mi2s_tx_ch);
+
+	return 0;
+}
+
+static u32 msm8996_get_mi2s_bit_clock(int mi2s_bit_format, int sample_rate)
+{
+	u32 bit_clock = 0;
+
+	if (mi2s_bit_format == SNDRV_PCM_FORMAT_S24_LE) {
+		switch (sample_rate) {
+		case SAMPLING_RATE_192KHZ:
+			bit_clock = Q6AFE_LPASS_IBIT_CLK_12_P288_MHZ;
+			break;
+		case SAMPLING_RATE_96KHZ:
+			bit_clock = Q6AFE_LPASS_IBIT_CLK_6_P144_MHZ;
+			break;
+		case SAMPLING_RATE_48KHZ:
+			bit_clock = Q6AFE_LPASS_IBIT_CLK_3_P072_MHZ;
+			break;
+		case SAMPLING_RATE_32KHZ:
+			bit_clock = Q6AFE_LPASS_IBIT_CLK_2_P048_MHZ;
+			break;
+		case SAMPLING_RATE_16KHZ:
+			bit_clock = Q6AFE_LPASS_IBIT_CLK_1_P024_MHZ;
+			break;
+		case SAMPLING_RATE_8KHZ:
+			bit_clock = Q6AFE_LPASS_IBIT_CLK_512_KHZ;
+			break;
+		default:
+			bit_clock = Q6AFE_LPASS_IBIT_CLK_3_P072_MHZ;
+		}
+	} else {
+		/* bit clock is calculated based on 16 bit */
+		switch (sample_rate) {
+		case SAMPLING_RATE_192KHZ:
+			bit_clock = Q6AFE_LPASS_IBIT_CLK_6_P144_MHZ;
+			break;
+		case SAMPLING_RATE_96KHZ:
+			bit_clock = Q6AFE_LPASS_IBIT_CLK_3_P072_MHZ;
+			break;
+		case SAMPLING_RATE_48KHZ:
+			bit_clock = Q6AFE_LPASS_IBIT_CLK_1_P536_MHZ;
+			break;
+		case SAMPLING_RATE_32KHZ:
+			bit_clock = Q6AFE_LPASS_IBIT_CLK_1_P024_MHZ;
+			break;
+		case SAMPLING_RATE_16KHZ:
+			bit_clock = Q6AFE_LPASS_IBIT_CLK_512_KHZ;
+			break;
+		case SAMPLING_RATE_8KHZ:
+			bit_clock = Q6AFE_LPASS_IBIT_CLK_256_KHZ;
+			break;
+		default:
+			bit_clock = Q6AFE_LPASS_IBIT_CLK_1_P536_MHZ;
+			break;
+		}
+	}
+	pr_debug("%s: bit_width = %d, sample_rate = %d, bit_clock = %d\n",
+			__func__, mi2s_bit_format, sample_rate, bit_clock);
+	return bit_clock;
+}
+
+static int msm8996_mi2s_snd_startup(struct snd_pcm_substream *substream,
+			int port_id, struct msm_mi2s_data *msm_mi2s_data)
+{
+	int ret = 0;
+	u32 bit_clk = 0;
+	u32 dai_format = 0;
+	struct snd_soc_pcm_runtime *rtd = substream->private_data;
+	struct snd_soc_dai *cpu_dai = rtd->cpu_dai;
+	struct msm_mi2s_pdata *mi2s_pdata =
+			(struct msm_mi2s_pdata *) cpu_dai->dev->platform_data;
+	u32 ext_mclk_rate = (u32) mi2s_pdata->ext_mclk_rate;
+
+	pr_debug("%s: dai name %s %p substream = %s  stream = %d port_id = %d slave %d ext_mclk_rate %u\n",
+		 __func__, cpu_dai->name, cpu_dai->dev, substream->name,
+		 substream->stream, port_id, mi2s_pdata->slave, ext_mclk_rate);
+
+	if (atomic_inc_return(&msm_mi2s_data->mi2s_rsc_ref) == 1) {
+		bit_clk = msm8996_get_mi2s_bit_clock(*(msm_mi2s_data->bit_format),
+						*(msm_mi2s_data->sample_rate));
+		msm_mi2s_data->mi2s_clk.enable = 1;
+		msm_mi2s_data->mi2s_clk.clk_freq_in_hz = bit_clk;
+
+		if (!mi2s_pdata->slave) {
+			dai_format = SND_SOC_DAIFMT_CBS_CFS;
+
+			if (ext_mclk_rate) {
+				/* TBD: Need confirmation from HW team */
+				msm_mi2s_data->mi2s_mclk.enable = 1;
+				msm_mi2s_data->mi2s_mclk.clk_freq_in_hz = ext_mclk_rate;
+
+				pr_debug("%s: Enabling mclk, clk_freq_in_hz = %u\n",
+					__func__, msm_mi2s_data->mi2s_mclk.clk_freq_in_hz);
+
+				ret = afe_set_lpass_clock_v2(port_id,
+						    &msm_mi2s_data->mi2s_mclk);
+				if (ret < 0) {
+					pr_err("%s: afe lpass mclk failed, err:%d\n",
+						__func__, ret);
+					goto err;
+				}
+			}
+		} else {
+			/* Adding plus 1 will change Q6AFE_LPASS_CLK_ID_xxx_MI2S_IBIT
+			 * to Q6AFE_LPASS_CLK_ID_xxx_MI2S_EBIT */
+			msm_mi2s_data->mi2s_clk.clk_id += 1;
+			dai_format = SND_SOC_DAIFMT_CBM_CFM;
+		}
+
+		pr_debug("%s: Enabling bit-clock, clk_freq_in_hz = %u\n",
+				__func__, msm_mi2s_data->mi2s_clk.clk_freq_in_hz);
+
+		ret = afe_set_lpass_clock_v2(port_id, &msm_mi2s_data->mi2s_clk);
+		if (ret < 0) {
+			pr_err("%s: afe lpass clock failed, err:%d\n", __func__, ret);
+			goto err;
+		}
+
+		ret = snd_soc_dai_set_fmt(cpu_dai, dai_format);
+		if (ret < 0)
+			pr_err("%s: set fmt cpu dai failed, err:%d\n", __func__, ret);
+
+	}
+err:
+	return ret;
+}
+
+static int msm8996_pri_mi2s_snd_startup(struct snd_pcm_substream *substream)
+{
+	return msm8996_mi2s_snd_startup(substream, AFE_PORT_ID_PRIMARY_MI2S_RX,
+					&msm_pri_mi2s_data);
+}
+
+static int msm8996_sec_mi2s_snd_startup(struct snd_pcm_substream *substream)
+{
+	return msm8996_mi2s_snd_startup(substream, AFE_PORT_ID_SECONDARY_MI2S_RX,
+					&msm_sec_mi2s_data);
+}
+
+static int msm8996_tert_mi2s_snd_startup(struct snd_pcm_substream *substream)
+{
+	return msm8996_mi2s_snd_startup(substream, AFE_PORT_ID_TERTIARY_MI2S_RX,
+					&msm_tert_mi2s_data);
+}
+
+static int msm8996_quat_mi2s_snd_startup(struct snd_pcm_substream *substream)
+{
+	return msm8996_mi2s_snd_startup(substream, AFE_PORT_ID_QUATERNARY_MI2S_RX,
+					&msm_quat_mi2s_data);
+}
+
+static void msm8996_mi2s_snd_shutdown(struct snd_pcm_substream *substream,
+			int port_id, struct msm_mi2s_data *msm_mi2s_data)
+{
+	struct snd_soc_pcm_runtime *rtd = substream->private_data;
+	struct snd_soc_dai *cpu_dai = rtd->cpu_dai;
+	struct msm_mi2s_pdata *mi2s_pdata =
+			(struct msm_mi2s_pdata *) cpu_dai->dev->platform_data;
+	int ret = 0;
+
+	pr_debug("%s: dai name %s %p  substream = %s  stream = %d port_id = %d\n",
+		 __func__, cpu_dai->name, cpu_dai->dev, substream->name,
+		 substream->stream, port_id);
+
+	if (atomic_dec_return(&msm_mi2s_data->mi2s_rsc_ref) == 0) {
+		msm_mi2s_data->mi2s_clk.enable = 0;
+		pr_debug("%s: Disabling bit-clk\n", __func__);
+		ret = afe_set_lpass_clock_v2(port_id, &msm_mi2s_data->mi2s_clk);
+		if (ret < 0)
+			pr_err("%s: afe lpass clock failed, err:%d\n",
+				__func__, ret);
+
+		/* Need to decrement it to restore original value */
+		if (mi2s_pdata->slave)
+			msm_mi2s_data->mi2s_clk.clk_id -= 1;
+
+		if (!mi2s_pdata->slave && mi2s_pdata->ext_mclk_rate) {
+			msm_mi2s_data->mi2s_mclk.enable = 0;
+			pr_debug("%s: Disabling mclk\n", __func__);
+			ret = afe_set_lpass_clock_v2(port_id,
+					&msm_mi2s_data->mi2s_mclk);
+			if (ret < 0)
+				pr_err("%s: afe lpass clock failed, err:%d\n",
+					__func__, ret);
+		}
+	}
+}
+
+static void msm8996_pri_mi2s_snd_shutdown(struct snd_pcm_substream *substream)
+{
+	msm8996_mi2s_snd_shutdown(substream, AFE_PORT_ID_PRIMARY_MI2S_RX,
+					&msm_pri_mi2s_data);
+}
+
+static void msm8996_sec_mi2s_snd_shutdown(struct snd_pcm_substream *substream)
+{
+	msm8996_mi2s_snd_shutdown(substream, AFE_PORT_ID_SECONDARY_MI2S_RX,
+					&msm_sec_mi2s_data);
+}
+
+static void msm8996_tert_mi2s_snd_shutdown(struct snd_pcm_substream *substream)
+{
+	msm8996_mi2s_snd_shutdown(substream, AFE_PORT_ID_TERTIARY_MI2S_RX,
+					&msm_tert_mi2s_data);
+}
+
+static void msm8996_quat_mi2s_snd_shutdown(struct snd_pcm_substream *substream)
+{
+	msm8996_mi2s_snd_shutdown(substream, AFE_PORT_ID_QUATERNARY_MI2S_RX,
+					&msm_quat_mi2s_data);
+}
+
+static struct snd_soc_ops msm8996_pri_mi2s_be_ops = {
+	.startup = msm8996_pri_mi2s_snd_startup,
+	.shutdown = msm8996_pri_mi2s_snd_shutdown,
+};
+
+static struct snd_soc_ops msm8996_sec_mi2s_be_ops = {
+	.startup = msm8996_sec_mi2s_snd_startup,
+	.shutdown = msm8996_sec_mi2s_snd_shutdown,
+};
+
+static struct snd_soc_ops msm8996_tert_mi2s_be_ops = {
+	.startup = msm8996_tert_mi2s_snd_startup,
+	.shutdown = msm8996_tert_mi2s_snd_shutdown,
+};
+
+static struct snd_soc_ops msm8996_quat_mi2s_be_ops = {
+	.startup = msm8996_quat_mi2s_snd_startup,
+	.shutdown = msm8996_quat_mi2s_snd_shutdown,
+};
+
+static const struct soc_enum msm8996_mi2s_snd_enum[] = {
+	SOC_ENUM_SINGLE_EXT(2, mi2s_bit_format_text),
+	SOC_ENUM_SINGLE_EXT(6, mi2s_sample_rate_text),
+	SOC_ENUM_SINGLE_EXT(4, pri_mi2s_rx_ch_text),
+	SOC_ENUM_SINGLE_EXT(4, pri_mi2s_tx_ch_text),
+	SOC_ENUM_SINGLE_EXT(4, sec_mi2s_rx_ch_text),
+	SOC_ENUM_SINGLE_EXT(4, sec_mi2s_tx_ch_text),
+	SOC_ENUM_SINGLE_EXT(4, tert_mi2s_rx_ch_text),
+	SOC_ENUM_SINGLE_EXT(4, tert_mi2s_tx_ch_text),
+	SOC_ENUM_SINGLE_EXT(8, quat_mi2s_rx_ch_text),
+	SOC_ENUM_SINGLE_EXT(8, quat_mi2s_tx_ch_text),
+};
+
+static const struct soc_enum speaker_id_enum =
+				SOC_ENUM_SINGLE_EXT(4, speaker_id_text);
+
+static int msm_speaker_id_get(struct snd_kcontrol *kcontrol,
+				struct snd_ctl_elem_value *ucontrol)
+{
+	ucontrol->value.integer.value[0] = msm_get_speaker_id(speaker_id_gpio);
+	pr_debug("%s: speaker id = %ld\n", __func__,
+		ucontrol->value.integer.value[0]);
+	return 0;
+}
+
+static int msm_version_get(struct snd_kcontrol *kcontrol,
+				struct snd_ctl_elem_value *ucontrol)
+{
+	ucontrol->value.integer.value[0] = get_hw_version();
+	pr_debug("%s: hardware version = 0x%x\n", __func__, get_hw_version());
+	return 0;
+}
+
+static int msm_quat_tdm_rate_get(struct snd_kcontrol *kcontrol,
+				 struct snd_ctl_elem_value *ucontrol)
+{
+	ucontrol->value.integer.value[0] = msm_quat_tdm_rate;
+	pr_debug("%s: msm_quat_tdm_rate = %d\n", __func__, msm_quat_tdm_rate);
+	return 0;
+}
+static int msm_quat_tdm_rate_put(struct snd_kcontrol *kcontrol,
+				 struct snd_ctl_elem_value *ucontrol)
+{
+	switch (ucontrol->value.integer.value[0]) {
+	case 0:
+		msm_quat_tdm_rate = SAMPLING_RATE_8KHZ;
+		break;
+	case 1:
+		msm_quat_tdm_rate = SAMPLING_RATE_16KHZ;
+		break;
+	case 2:
+	default:
+		msm_quat_tdm_rate = SAMPLING_RATE_48KHZ;
+		break;
+	}
+	pr_debug("%s: msm_quat_tdm_rate = %d\n",
+			__func__, msm_quat_tdm_rate);
+	return 0;
+}
+
+static int msm_pri_tdm_slot_width_get(struct snd_kcontrol *kcontrol,
+				      struct snd_ctl_elem_value *ucontrol)
+{
+	ucontrol->value.integer.value[0] = msm_pri_tdm_slot_width;
+	pr_debug("%s: msm_pri_tdm_slot_width = %d\n",
+		__func__, msm_pri_tdm_slot_width);
+	return 0;
+}
+
+static int msm_pri_tdm_slot_width_put(struct snd_kcontrol *kcontrol,
+				      struct snd_ctl_elem_value *ucontrol)
+{
+	switch (ucontrol->value.integer.value[0]) {
+	case 0:
+		msm_pri_tdm_slot_width = 16;
+		break;
+	case 1:
+		msm_pri_tdm_slot_width = 24;
+		break;
+	case 2:
+	default:
+		msm_pri_tdm_slot_width = 32;
+		break;
+	}
+	pr_debug("%s: msm_pri_tdm_slot_width= %d\n",
+			__func__, msm_pri_tdm_slot_width);
+	return 0;
+}
+
+static int msm_sec_tdm_slot_width_get(struct snd_kcontrol *kcontrol,
+				      struct snd_ctl_elem_value *ucontrol)
+{
+	ucontrol->value.integer.value[0] = msm_sec_tdm_slot_width;
+	pr_debug("%s: msm_sec_tdm_slot_width = %d\n",
+		__func__, msm_sec_tdm_slot_width);
+	return 0;
+}
+
+static int msm_sec_tdm_slot_width_put(struct snd_kcontrol *kcontrol,
+				      struct snd_ctl_elem_value *ucontrol)
+{
+	switch (ucontrol->value.integer.value[0]) {
+	case 0:
+		msm_sec_tdm_slot_width = 16;
+		break;
+	case 1:
+		msm_sec_tdm_slot_width = 24;
+		break;
+	case 2:
+	default:
+		msm_sec_tdm_slot_width = 32;
+		break;
+	}
+	pr_debug("%s: msm_sec_tdm_slot_width= %d\n",
+			__func__, msm_sec_tdm_slot_width);
+	return 0;
+}
+
+static int msm_tert_tdm_slot_width_get(struct snd_kcontrol *kcontrol,
+				       struct snd_ctl_elem_value *ucontrol)
+{
+	ucontrol->value.integer.value[0] = msm_tert_tdm_slot_width;
+	pr_debug("%s: msm_tert_tdm_slot_width = %d\n",
+		__func__, msm_tert_tdm_slot_width);
+	return 0;
+}
+
+static int msm_tert_tdm_slot_width_put(struct snd_kcontrol *kcontrol,
+				       struct snd_ctl_elem_value *ucontrol)
+{
+	switch (ucontrol->value.integer.value[0]) {
+	case 0:
+		msm_tert_tdm_slot_width = 16;
+		break;
+	case 1:
+		msm_tert_tdm_slot_width = 24;
+		break;
+	case 2:
+	default:
+		msm_tert_tdm_slot_width = 32;
+		break;
+	}
+	pr_debug("%s: msm_tert_tdm_slot_width= %d\n",
+			__func__, msm_tert_tdm_slot_width);
+	return 0;
+}
+
+static int msm_quat_tdm_slot_width_get(struct snd_kcontrol *kcontrol,
+				       struct snd_ctl_elem_value *ucontrol)
+{
+	ucontrol->value.integer.value[0] = msm_quat_tdm_slot_width;
+	pr_debug("%s: msm_quat_tdm_slot_width = %d\n",
+	__func__, msm_quat_tdm_slot_width);
+	return 0;
+}
+
+static int msm_quat_tdm_slot_width_put(struct snd_kcontrol *kcontrol,
+				       struct snd_ctl_elem_value *ucontrol)
+{
+	switch (ucontrol->value.integer.value[0]) {
+	case 0:
+		msm_quat_tdm_slot_width = 16;
+		break;
+	case 1:
+		msm_quat_tdm_slot_width = 24;
+		break;
+	case 2:
+	default:
+		msm_quat_tdm_slot_width = 32;
+		break;
+	}
+	pr_debug("%s: msm_quat_tdm_slot_width= %d\n",
+		__func__, msm_quat_tdm_slot_width);
+	return 0;
+}
+
+
+static int msm_pri_tdm_slot_num_get(struct snd_kcontrol *kcontrol,
+				    struct snd_ctl_elem_value *ucontrol)
+{
+	switch (msm_pri_tdm_slot_num) {
+	case 1:
+		ucontrol->value.integer.value[0] = 0;
+		break;
+	case 2:
+		ucontrol->value.integer.value[0] = 1;
+		break;
+	case 4:
+		ucontrol->value.integer.value[0] = 2;
+		break;
+	case 8:
+		ucontrol->value.integer.value[0] = 3;
+		break;
+	case 16:
+		ucontrol->value.integer.value[0] = 4;
+		break;
+	case 32:
+	default:
+		ucontrol->value.integer.value[0] = 5;
+		break;
+	}
+
+	pr_debug("%s: msm_pri_tdm_slot_num = %d\n",
+		__func__, msm_pri_tdm_slot_num);
+	return 0;
+}
+
+static int msm_pri_tdm_slot_num_put(struct snd_kcontrol *kcontrol,
+				    struct snd_ctl_elem_value *ucontrol)
+{
+	switch (ucontrol->value.integer.value[0]) {
+	case 0:
+		msm_pri_tdm_slot_num = 1;
+		break;
+	case 1:
+		msm_pri_tdm_slot_num = 2;
+		break;
+	case 2:
+		msm_pri_tdm_slot_num = 4;
+		break;
+	case 3:
+		msm_pri_tdm_slot_num = 8;
+		break;
+	case 4:
+		msm_pri_tdm_slot_num = 16;
+		break;
+	case 5:
+		msm_pri_tdm_slot_num = 32;
+		break;
+	default:
+		msm_pri_tdm_slot_num = 8;
+		break;
+	}
+	pr_debug("%s: msm_pri_tdm_slot_num = %d\n",
+			__func__,  msm_pri_tdm_slot_num);
+	return 0;
+}
+
+static int msm_sec_tdm_slot_num_get(struct snd_kcontrol *kcontrol,
+				    struct snd_ctl_elem_value *ucontrol)
+{
+	switch (msm_sec_tdm_slot_num) {
+	case 1:
+		ucontrol->value.integer.value[0] = 0;
+		break;
+	case 2:
+		ucontrol->value.integer.value[0] = 1;
+		break;
+	case 4:
+		ucontrol->value.integer.value[0] = 2;
+		break;
+	case 8:
+		ucontrol->value.integer.value[0] = 3;
+		break;
+	case 16:
+		ucontrol->value.integer.value[0] = 4;
+		break;
+	case 32:
+	default:
+		ucontrol->value.integer.value[0] = 5;
+		break;
+	}
+
+	pr_debug("%s: msm_sec_tdm_slot_num = %d\n",
+			__func__, msm_sec_tdm_slot_num);
+	return 0;
+}
+
+static int msm_sec_tdm_slot_num_put(struct snd_kcontrol *kcontrol,
+				    struct snd_ctl_elem_value *ucontrol)
+{
+	switch (ucontrol->value.integer.value[0]) {
+	case 0:
+		msm_sec_tdm_slot_num = 1;
+		break;
+	case 1:
+		msm_sec_tdm_slot_num = 2;
+		break;
+	case 2:
+		msm_sec_tdm_slot_num = 4;
+		break;
+	case 3:
+		msm_sec_tdm_slot_num = 8;
+		break;
+	case 4:
+		msm_sec_tdm_slot_num = 16;
+		break;
+	case 5:
+		msm_sec_tdm_slot_num = 32;
+		break;
+	default:
+		msm_sec_tdm_slot_num = 8;
+		break;
+	}
+	pr_debug("%s: msm_sec_tdm_slot_num = %d\n",
+				__func__,  msm_sec_tdm_slot_num);
+	return 0;
+}
+
+static int msm_tert_tdm_slot_num_get(struct snd_kcontrol *kcontrol,
+				     struct snd_ctl_elem_value *ucontrol)
+{
+	switch (msm_tert_tdm_slot_num) {
+	case 1:
+		ucontrol->value.integer.value[0] = 0;
+		break;
+	case 2:
+		ucontrol->value.integer.value[0] = 1;
+		break;
+	case 4:
+		ucontrol->value.integer.value[0] = 2;
+		break;
+	case 8:
+		ucontrol->value.integer.value[0] = 3;
+		break;
+	case 16:
+		ucontrol->value.integer.value[0] = 4;
+		break;
+	case 32:
+	default:
+		ucontrol->value.integer.value[0] = 5;
+		break;
+	}
+
+	pr_debug("%s: msm_tert_tdm_slot_num = %d\n",
+			__func__, msm_tert_tdm_slot_num);
+	return 0;
+}
+
+static int msm_tert_tdm_slot_num_put(struct snd_kcontrol *kcontrol,
+				     struct snd_ctl_elem_value *ucontrol)
+{
+	switch (ucontrol->value.integer.value[0]) {
+	case 0:
+		msm_tert_tdm_slot_num = 1;
+		break;
+	case 1:
+		msm_tert_tdm_slot_num = 2;
+		break;
+	case 2:
+		msm_tert_tdm_slot_num = 4;
+		break;
+	case 3:
+		msm_tert_tdm_slot_num = 8;
+		break;
+	case 4:
+		msm_tert_tdm_slot_num = 16;
+		break;
+	case 5:
+		msm_tert_tdm_slot_num = 32;
+		break;
+	default:
+		msm_tert_tdm_slot_num = 8;
+		break;
+	}
+	pr_debug("%s: msm_tert_tdm_slot_num = %d\n",
+			__func__,  msm_tert_tdm_slot_num);
+	return 0;
+}
+
+static int msm_quat_tdm_slot_num_get(struct snd_kcontrol *kcontrol,
+				     struct snd_ctl_elem_value *ucontrol)
+{
+	switch (msm_quat_tdm_slot_num) {
+	case 1:
+		ucontrol->value.integer.value[0] = 0;
+		break;
+	case 2:
+		ucontrol->value.integer.value[0] = 1;
+		break;
+	case 4:
+		ucontrol->value.integer.value[0] = 2;
+		break;
+	case 8:
+		ucontrol->value.integer.value[0] = 3;
+		break;
+	case 16:
+		ucontrol->value.integer.value[0] = 4;
+		break;
+	case 32:
+	default:
+		ucontrol->value.integer.value[0] = 5;
+		break;
+	}
+
+	pr_debug("%s: msm_quat_tdm_slot_num = %d\n",
+				__func__, msm_quat_tdm_slot_num);
+	return 0;
+}
+static int msm_quat_tdm_slot_num_put(struct snd_kcontrol *kcontrol,
+				   struct snd_ctl_elem_value *ucontrol)
+{
+	switch (ucontrol->value.integer.value[0]) {
+	case 0:
+		msm_quat_tdm_slot_num = 1;
+		break;
+	case 1:
+		msm_quat_tdm_slot_num = 2;
+		break;
+	case 2:
+		msm_quat_tdm_slot_num = 4;
+		break;
+	case 3:
+		msm_quat_tdm_slot_num = 8;
+		break;
+	case 4:
+		msm_quat_tdm_slot_num = 16;
+		break;
+	case 5:
+		msm_quat_tdm_slot_num = 32;
+		break;
+	default:
+		msm_quat_tdm_slot_num = 8;
+		break;
+	}
+	pr_debug("%s: msm_quat_tdm_slot_num = %d\n",
+			__func__,  msm_quat_tdm_slot_num);
+	return 0;
+}
+
+static int msm_tdm_slot_mapping_get(struct snd_kcontrol *kcontrol,
+				    struct snd_ctl_elem_value *ucontrol)
+{
+	struct soc_multi_mixer_control *mc =
+		(struct soc_multi_mixer_control *)kcontrol->private_value;
+	unsigned int *slot_offset;
+	int i;
+
+	if (mc->shift >= TDM_MAX) {
+		pr_err("%s invalid port index %d\n", __func__, mc->shift);
+		return -EINVAL;
+	}
+
+	slot_offset = tdm_slot_offset[mc->shift];
+	for (i = 0; i < TDM_SLOT_OFFSET_MAX; i++) {
+		ucontrol->value.integer.value[i] = slot_offset[i];
+		pr_debug("%s port index %d offset %d value %d\n",
+				__func__, mc->shift, i, slot_offset[i]);
+	}
+
+	return 0;
+}
+
+static int msm_tdm_slot_mapping_put(struct snd_kcontrol *kcontrol,
+				    struct snd_ctl_elem_value *ucontrol)
+{
+	struct soc_multi_mixer_control *mc =
+		(struct soc_multi_mixer_control *)kcontrol->private_value;
+	unsigned int *slot_offset;
+	int i;
+
+	if (mc->shift >= TDM_MAX) {
+		pr_err("%s invalid port index %d\n", __func__, mc->shift);
+		return -EINVAL;
+	}
+
+	slot_offset = tdm_slot_offset[mc->shift];
+
+	for (i = 0; i < TDM_SLOT_OFFSET_MAX; i++) {
+		slot_offset[i] = ucontrol->value.integer.value[i];
+		pr_debug("%s port index %d offset %d value %d\n",
+				__func__, mc->shift, i, slot_offset[i]);
+	}
+
+	return 0;
+}
+
+static int msm_sec_tdm_rx_0_ch_get(struct snd_kcontrol *kcontrol,
+				   struct snd_ctl_elem_value *ucontrol)
+{
+	pr_debug("%s: msm_sec_tdm_rx_0_ch = %d\n", __func__,
+			msm_sec_tdm_rx_0_ch);
+	ucontrol->value.integer.value[0] = msm_sec_tdm_rx_0_ch - 1;
+	return 0;
+}
+
+static int msm_sec_tdm_rx_0_ch_put(struct snd_kcontrol *kcontrol,
+				   struct snd_ctl_elem_value *ucontrol)
+{
+	msm_sec_tdm_rx_0_ch = ucontrol->value.integer.value[0] + 1;
+	pr_debug("%s: msm_sec_tdm_rx_0_ch = %d\n", __func__,
+		msm_sec_tdm_rx_0_ch);
+	return 0;
+}
+
+static int msm_sec_tdm_rx_1_ch_get(struct snd_kcontrol *kcontrol,
+				   struct snd_ctl_elem_value *ucontrol)
+{
+	pr_debug("%s: msm_sec_tdm_rx_1_ch = %d\n", __func__,
+		msm_sec_tdm_rx_1_ch);
+	ucontrol->value.integer.value[0] = msm_sec_tdm_rx_1_ch - 1;
+	return 0;
+}
+
+static int msm_sec_tdm_rx_1_ch_put(struct snd_kcontrol *kcontrol,
+				   struct snd_ctl_elem_value *ucontrol)
+{
+	msm_sec_tdm_rx_1_ch = ucontrol->value.integer.value[0] + 1;
+	pr_debug("%s: msm_sec_tdm_rx_1_ch = %d\n", __func__,
+		msm_sec_tdm_rx_1_ch);
+	return 0;
+}
+
+static int msm_sec_tdm_rx_2_ch_get(struct snd_kcontrol *kcontrol,
+				   struct snd_ctl_elem_value *ucontrol)
+{
+	pr_debug("%s: msm_sec_tdm_rx_2_ch = %d\n", __func__,
+			msm_sec_tdm_rx_2_ch);
+	ucontrol->value.integer.value[0] = msm_sec_tdm_rx_2_ch - 1;
+	return 0;
+}
+
+static int msm_sec_tdm_rx_2_ch_put(struct snd_kcontrol *kcontrol,
+				   struct snd_ctl_elem_value *ucontrol)
+{
+	msm_sec_tdm_rx_2_ch = ucontrol->value.integer.value[0] + 1;
+	pr_debug("%s: msm_sec_tdm_rx_2_ch = %d\n", __func__,
+			msm_sec_tdm_rx_2_ch);
+	return 0;
+}
+
+static int msm_sec_tdm_rx_3_ch_get(struct snd_kcontrol *kcontrol,
+				   struct snd_ctl_elem_value *ucontrol)
+{
+	pr_debug("%s: msm_sec_tdm_rx_3_ch = %d\n", __func__,
+			msm_sec_tdm_rx_3_ch);
+	ucontrol->value.integer.value[0] = msm_sec_tdm_rx_3_ch - 1;
+	return 0;
+}
+
+static int msm_sec_tdm_rx_3_ch_put(struct snd_kcontrol *kcontrol,
+				   struct snd_ctl_elem_value *ucontrol)
+{
+	msm_sec_tdm_rx_3_ch = ucontrol->value.integer.value[0] + 1;
+	pr_debug("%s: msm_sec_tdm_rx_3_ch = %d\n", __func__,
+			msm_sec_tdm_rx_3_ch);
+	return 0;
+}
+
+static int msm_sec_tdm_tx_0_ch_get(struct snd_kcontrol *kcontrol,
+				   struct snd_ctl_elem_value *ucontrol)
+{
+	pr_debug("%s: msm_sec_tdm_tx_0_ch = %d\n", __func__,
+			msm_sec_tdm_tx_0_ch);
+	ucontrol->value.integer.value[0] = msm_sec_tdm_tx_0_ch - 1;
+	return 0;
+}
+
+static int msm_sec_tdm_tx_0_ch_put(struct snd_kcontrol *kcontrol,
+				   struct snd_ctl_elem_value *ucontrol)
+{
+	msm_sec_tdm_tx_0_ch = ucontrol->value.integer.value[0] + 1;
+	pr_debug("%s: msm_sec_tdm_tx_0_ch = %d\n", __func__,
+			msm_sec_tdm_tx_0_ch);
+	return 0;
+}
+
+static int msm_sec_tdm_tx_1_ch_get(struct snd_kcontrol *kcontrol,
+				   struct snd_ctl_elem_value *ucontrol)
+{
+	pr_debug("%s: msm_sec_tdm_tx_1_ch = %d\n", __func__,
+				msm_sec_tdm_tx_1_ch);
+	ucontrol->value.integer.value[0] = msm_sec_tdm_tx_1_ch - 1;
+	return 0;
+}
+
+static int msm_sec_tdm_tx_1_ch_put(struct snd_kcontrol *kcontrol,
+				   struct snd_ctl_elem_value *ucontrol)
+{
+	msm_sec_tdm_tx_1_ch = ucontrol->value.integer.value[0] + 1;
+	pr_debug("%s: msm_sec_tdm_tx_1_ch = %d\n", __func__,
+		msm_sec_tdm_tx_1_ch);
+	return 0;
+}
+static int msm_sec_tdm_tx_2_ch_get(struct snd_kcontrol *kcontrol,
+				   struct snd_ctl_elem_value *ucontrol)
+{
+	pr_debug("%s: msm_sec_tdm_tx_2_ch = %d\n", __func__,
+			msm_sec_tdm_tx_2_ch);
+	ucontrol->value.integer.value[0] = msm_sec_tdm_tx_2_ch - 1;
+	return 0;
+}
+
+static int msm_sec_tdm_tx_2_ch_put(struct snd_kcontrol *kcontrol,
+				   struct snd_ctl_elem_value *ucontrol)
+{
+	msm_sec_tdm_tx_2_ch = ucontrol->value.integer.value[0] + 1;
+	pr_debug("%s: msm_sec_tdm_tx_2_ch = %d\n", __func__,
+			msm_sec_tdm_tx_2_ch);
+	return 0;
+}
+
+static int msm_sec_tdm_tx_3_ch_get(struct snd_kcontrol *kcontrol,
+				   struct snd_ctl_elem_value *ucontrol)
+{
+	pr_debug("%s: msm_sec_tdm_tx_3_ch = %d\n", __func__,
+		msm_sec_tdm_tx_3_ch);
+	ucontrol->value.integer.value[0] = msm_sec_tdm_tx_3_ch - 1;
+	return 0;
+}
+
+static int msm_sec_tdm_tx_3_ch_put(struct snd_kcontrol *kcontrol,
+				   struct snd_ctl_elem_value *ucontrol)
+{
+	msm_sec_tdm_tx_3_ch = ucontrol->value.integer.value[0] + 1;
+	pr_debug("%s: msm_sec_tdm_tx_3_ch = %d\n", __func__,
+			msm_sec_tdm_tx_3_ch);
+	return 0;
+}
+
+static int msm_tert_tdm_rx_0_ch_get(struct snd_kcontrol *kcontrol,
+				    struct snd_ctl_elem_value *ucontrol)
+{
+	pr_debug("%s: msm_tert_tdm_rx_0_ch = %d\n", __func__,
+			msm_tert_tdm_rx_0_ch);
+	ucontrol->value.integer.value[0] = msm_tert_tdm_rx_0_ch - 1;
+	return 0;
+}
+
+static int msm_tert_tdm_rx_0_ch_put(struct snd_kcontrol *kcontrol,
+				    struct snd_ctl_elem_value *ucontrol)
+{
+	msm_tert_tdm_rx_0_ch = ucontrol->value.integer.value[0] + 1;
+	pr_debug("%s: msm_tert_tdm_rx_0_ch = %d\n", __func__,
+			msm_tert_tdm_rx_0_ch);
+	return 0;
+}
+static int msm_tert_tdm_rx_1_ch_get(struct snd_kcontrol *kcontrol,
+				    struct snd_ctl_elem_value *ucontrol)
+{
+	pr_debug("%s: msm_tert_tdm_rx_1_ch = %d\n", __func__,
+			msm_tert_tdm_rx_1_ch);
+	ucontrol->value.integer.value[0] = msm_tert_tdm_rx_1_ch - 1;
+	return 0;
+}
+
+static int msm_tert_tdm_rx_1_ch_put(struct snd_kcontrol *kcontrol,
+				   struct snd_ctl_elem_value *ucontrol)
+{
+	msm_tert_tdm_rx_1_ch = ucontrol->value.integer.value[0] + 1;
+	pr_debug("%s: msm_tert_tdm_rx_1_ch = %d\n", __func__,
+			msm_tert_tdm_rx_1_ch);
+	return 0;
+}
+
+static int msm_tert_tdm_rx_2_ch_get(struct snd_kcontrol *kcontrol,
+				    struct snd_ctl_elem_value *ucontrol)
+{
+	pr_debug("%s: msm_tert_tdm_rx_2_ch = %d\n", __func__,
+			msm_tert_tdm_rx_2_ch);
+	ucontrol->value.integer.value[0] = msm_tert_tdm_rx_2_ch - 1;
+	return 0;
+}
+
+static int msm_tert_tdm_rx_2_ch_put(struct snd_kcontrol *kcontrol,
+				    struct snd_ctl_elem_value *ucontrol)
+{
+	msm_tert_tdm_rx_2_ch = ucontrol->value.integer.value[0] + 1;
+	pr_debug("%s: msm_tert_tdm_rx_2_ch = %d\n", __func__,
+			msm_tert_tdm_rx_2_ch);
+	return 0;
+}
+
+static int msm_tert_tdm_rx_3_ch_get(struct snd_kcontrol *kcontrol,
+				    struct snd_ctl_elem_value *ucontrol)
+{
+	pr_debug("%s: msm_tert_tdm_rx_3_ch = %d\n", __func__,
+			msm_tert_tdm_rx_3_ch);
+	ucontrol->value.integer.value[0] = msm_tert_tdm_rx_3_ch - 1;
+	return 0;
+}
+
+static int msm_tert_tdm_rx_3_ch_put(struct snd_kcontrol *kcontrol,
+				    struct snd_ctl_elem_value *ucontrol)
+{
+	msm_tert_tdm_rx_3_ch = ucontrol->value.integer.value[0] + 1;
+	pr_debug("%s: msm_tert_tdm_rx_3_ch = %d\n", __func__,
+			msm_tert_tdm_rx_3_ch);
+	return 0;
+}
+
+static int msm_tert_tdm_tx_0_ch_get(struct snd_kcontrol *kcontrol,
+				    struct snd_ctl_elem_value *ucontrol)
+{
+	pr_debug("%s: msm_tert_tdm_tx_0_ch = %d\n", __func__,
+			msm_tert_tdm_tx_0_ch);
+	ucontrol->value.integer.value[0] = msm_tert_tdm_tx_0_ch - 1;
+	return 0;
+}
+
+static int msm_tert_tdm_tx_0_ch_put(struct snd_kcontrol *kcontrol,
+				    struct snd_ctl_elem_value *ucontrol)
+{
+	msm_tert_tdm_tx_0_ch = ucontrol->value.integer.value[0] + 1;
+	pr_debug("%s: msm_tert_tdm_tx_0_ch = %d\n", __func__,
+			msm_tert_tdm_tx_0_ch);
+	return 0;
+}
+
+static int msm_tert_tdm_tx_1_ch_get(struct snd_kcontrol *kcontrol,
+				    struct snd_ctl_elem_value *ucontrol)
+{
+	pr_debug("%s: msm_tert_tdm_tx_1_ch = %d\n", __func__,
+			msm_tert_tdm_tx_1_ch);
+	ucontrol->value.integer.value[0] = msm_tert_tdm_tx_1_ch - 1;
+	return 0;
+}
+
+static int msm_tert_tdm_tx_1_ch_put(struct snd_kcontrol *kcontrol,
+				    struct snd_ctl_elem_value *ucontrol)
+{
+	msm_tert_tdm_tx_1_ch = ucontrol->value.integer.value[0] + 1;
+	pr_debug("%s: msm_tert_tdm_tx_1_ch = %d\n", __func__,
+			msm_tert_tdm_tx_1_ch);
+	return 0;
+}
+
+static int msm_tert_tdm_tx_2_ch_get(struct snd_kcontrol *kcontrol,
+				    struct snd_ctl_elem_value *ucontrol)
+{
+	pr_debug("%s: msm_tert_tdm_tx_2_ch = %d\n", __func__,
+			msm_tert_tdm_tx_2_ch);
+	ucontrol->value.integer.value[0] = msm_tert_tdm_tx_2_ch - 1;
+	return 0;
+}
+
+static int msm_tert_tdm_tx_2_ch_put(struct snd_kcontrol *kcontrol,
+				    struct snd_ctl_elem_value *ucontrol)
+{
+	msm_tert_tdm_tx_2_ch = ucontrol->value.integer.value[0] + 1;
+	pr_debug("%s: msm_tert_tdm_tx_2_ch = %d\n", __func__,
+			msm_tert_tdm_tx_2_ch);
+	return 0;
+}
+
+static int msm_tert_tdm_tx_3_ch_get(struct snd_kcontrol *kcontrol,
+				    struct snd_ctl_elem_value *ucontrol)
+{
+	pr_debug("%s: msm_tert_tdm_tx_3_ch = %d\n", __func__,
+			msm_tert_tdm_tx_3_ch);
+	ucontrol->value.integer.value[0] = msm_tert_tdm_tx_3_ch - 1;
+	return 0;
+}
+
+static int msm_tert_tdm_tx_3_ch_put(struct snd_kcontrol *kcontrol,
+				    struct snd_ctl_elem_value *ucontrol)
+{
+	msm_tert_tdm_tx_3_ch = ucontrol->value.integer.value[0] + 1;
+	pr_debug("%s: msm_tert_tdm_tx_3_ch = %d\n", __func__,
+			msm_tert_tdm_tx_3_ch);
+	return 0;
+}
+
+static int msm_quat_tdm_rx_0_ch_get(struct snd_kcontrol *kcontrol,
+				    struct snd_ctl_elem_value *ucontrol)
+{
+	pr_debug("%s: msm_quat_tdm_rx_0_ch = %d\n", __func__,
+			msm_quat_tdm_rx_0_ch);
+	ucontrol->value.integer.value[0] = msm_quat_tdm_rx_0_ch - 1;
+	return 0;
+}
+
+static int msm_quat_tdm_rx_0_ch_put(struct snd_kcontrol *kcontrol,
+				    struct snd_ctl_elem_value *ucontrol)
+{
+	msm_quat_tdm_rx_0_ch = ucontrol->value.integer.value[0] + 1;
+	pr_debug("%s: msm_quat_tdm_rx_0_ch = %d\n", __func__,
+			msm_quat_tdm_rx_0_ch);
+	return 0;
+}
+
+static int msm_quat_tdm_rx_1_ch_get(struct snd_kcontrol *kcontrol,
+				    struct snd_ctl_elem_value *ucontrol)
+{
+	pr_debug("%s: msm_quat_tdm_rx_1_ch = %d\n", __func__,
+			msm_quat_tdm_rx_1_ch);
+	ucontrol->value.integer.value[0] = msm_quat_tdm_rx_1_ch - 1;
+	return 0;
+}
+
+static int msm_quat_tdm_rx_1_ch_put(struct snd_kcontrol *kcontrol,
+				    struct snd_ctl_elem_value *ucontrol)
+{
+	msm_quat_tdm_rx_1_ch = ucontrol->value.integer.value[0] + 1;
+	pr_debug("%s: msm_quat_tdm_rx_1_ch = %d\n", __func__,
+			msm_quat_tdm_rx_1_ch);
+	return 0;
+}
+
+static int msm_quat_tdm_rx_2_ch_get(struct snd_kcontrol *kcontrol,
+				    struct snd_ctl_elem_value *ucontrol)
+{
+	pr_debug("%s: msm_quat_tdm_rx_2_ch = %d\n", __func__,
+			msm_quat_tdm_rx_2_ch);
+	ucontrol->value.integer.value[0] = msm_quat_tdm_rx_2_ch - 1;
+	return 0;
+}
+
+static int msm_quat_tdm_rx_2_ch_put(struct snd_kcontrol *kcontrol,
+				    struct snd_ctl_elem_value *ucontrol)
+{
+	msm_quat_tdm_rx_2_ch = ucontrol->value.integer.value[0] + 1;
+	pr_debug("%s: msm_quat_tdm_rx_2_ch = %d\n", __func__,
+			msm_quat_tdm_rx_2_ch);
+	return 0;
+}
+
+static int msm_quat_tdm_rx_3_ch_get(struct snd_kcontrol *kcontrol,
+				    struct snd_ctl_elem_value *ucontrol)
+{
+	pr_debug("%s: msm_quat_tdm_rx_3_ch = %d\n", __func__,
+			msm_quat_tdm_rx_3_ch);
+	ucontrol->value.integer.value[0] = msm_quat_tdm_rx_3_ch - 1;
+	return 0;
+}
+
+static int msm_quat_tdm_rx_3_ch_put(struct snd_kcontrol *kcontrol,
+				    struct snd_ctl_elem_value *ucontrol)
+{
+	msm_quat_tdm_rx_3_ch = ucontrol->value.integer.value[0] + 1;
+	pr_debug("%s: msm_quat_tdm_rx_3_ch = %d\n", __func__,
+			msm_quat_tdm_rx_3_ch);
+	return 0;
+}
+static int msm_quat_tdm_tx_0_ch_get(struct snd_kcontrol *kcontrol,
+				    struct snd_ctl_elem_value *ucontrol)
+{
+	pr_debug("%s: msm_quat_tdm_tx_0_ch = %d\n", __func__,
+			msm_quat_tdm_tx_0_ch);
+	ucontrol->value.integer.value[0] = msm_quat_tdm_tx_0_ch - 1;
+	return 0;
+}
+
+static int msm_quat_tdm_tx_0_ch_put(struct snd_kcontrol *kcontrol,
+				    struct snd_ctl_elem_value *ucontrol)
+{
+	msm_quat_tdm_tx_0_ch = ucontrol->value.integer.value[0] + 1;
+	pr_debug("%s: msm_quat_tdm_tx_0_ch = %d\n", __func__,
+			msm_quat_tdm_tx_0_ch);
+	return 0;
+}
+
+static int msm_quat_tdm_tx_1_ch_get(struct snd_kcontrol *kcontrol,
+				    struct snd_ctl_elem_value *ucontrol)
+{
+	pr_debug("%s: msm_quat_tdm_tx_1_ch = %d\n", __func__,
+			msm_quat_tdm_tx_1_ch);
+	ucontrol->value.integer.value[0] = msm_quat_tdm_tx_1_ch - 1;
+	return 0;
+}
+
+static int msm_quat_tdm_tx_1_ch_put(struct snd_kcontrol *kcontrol,
+				    struct snd_ctl_elem_value *ucontrol)
+{
+	msm_quat_tdm_tx_1_ch = ucontrol->value.integer.value[0] + 1;
+	pr_debug("%s: msm_quat_tdm_tx_1_ch = %d\n", __func__,
+			msm_quat_tdm_tx_1_ch);
+	return 0;
+}
+
+static int msm_quat_tdm_tx_2_ch_get(struct snd_kcontrol *kcontrol,
+				    struct snd_ctl_elem_value *ucontrol)
+{
+	pr_debug("%s: msm_quat_tdm_tx_2_ch = %d\n", __func__,
+			msm_quat_tdm_tx_2_ch);
+	ucontrol->value.integer.value[0] = msm_quat_tdm_tx_2_ch - 1;
+	return 0;
+}
+
+static int msm_quat_tdm_tx_2_ch_put(struct snd_kcontrol *kcontrol,
+				    struct snd_ctl_elem_value *ucontrol)
+{
+	msm_quat_tdm_tx_2_ch = ucontrol->value.integer.value[0] + 1;
+	pr_debug("%s: msm_quat_tdm_tx_2_ch = %d\n", __func__,
+			msm_quat_tdm_tx_2_ch);
+	return 0;
+}
+
+static int msm_quat_tdm_tx_3_ch_get(struct snd_kcontrol *kcontrol,
+				    struct snd_ctl_elem_value *ucontrol)
+{
+	pr_debug("%s: msm_quat_tdm_tx_3_ch = %d\n", __func__,
+			msm_quat_tdm_tx_3_ch);
+	ucontrol->value.integer.value[0] = msm_quat_tdm_tx_3_ch - 1;
+	return 0;
+}
+
+static int msm_quat_tdm_tx_3_ch_put(struct snd_kcontrol *kcontrol,
+				    struct snd_ctl_elem_value *ucontrol)
+{
+	msm_quat_tdm_tx_3_ch = ucontrol->value.integer.value[0] + 1;
+	pr_debug("%s: msm_quat_tdm_tx_3_ch = %d\n", __func__,
+			msm_quat_tdm_tx_3_ch);
+	return 0;
+}
+
+static int msm_pri_tdm_tx_0_bit_format_get(struct snd_kcontrol *kcontrol,
+					   struct snd_ctl_elem_value *ucontrol)
+{
+	switch (msm_pri_tdm_tx_0_bit_format) {
+	case SNDRV_PCM_FORMAT_S24_LE:
+		ucontrol->value.integer.value[0] = 1;
+		break;
+	case SNDRV_PCM_FORMAT_S16_LE:
+	default:
+		ucontrol->value.integer.value[0] = 0;
+		break;
+	}
+	pr_debug("%s: msm_pri_tdm_tx_0_bit_format = %ld\n",
+			__func__, ucontrol->value.integer.value[0]);
+	return 0;
+}
+
+static int msm_pri_tdm_tx_0_bit_format_put(struct snd_kcontrol *kcontrol,
+					   struct snd_ctl_elem_value *ucontrol)
+{
+	switch (ucontrol->value.integer.value[0]) {
+	case 1:
+		msm_pri_tdm_tx_0_bit_format = SNDRV_PCM_FORMAT_S24_LE;
+		break;
+	case 0:
+	default:
+		msm_pri_tdm_tx_0_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+		break;
+	}
+	pr_debug("%s: msm_pri_tdm_tx_0_bit_format = %d\n",
+			__func__, msm_pri_tdm_tx_0_bit_format);
+	return 0;
+}
+
+static int msm_pri_tdm_tx_1_bit_format_get(struct snd_kcontrol *kcontrol,
+					   struct snd_ctl_elem_value *ucontrol)
+{
+	switch (msm_pri_tdm_tx_1_bit_format) {
+	case SNDRV_PCM_FORMAT_S24_LE:
+		ucontrol->value.integer.value[0] = 1;
+		break;
+	case SNDRV_PCM_FORMAT_S16_LE:
+	default:
+		ucontrol->value.integer.value[0] = 0;
+		break;
+	}
+	pr_debug("%s: msm_pri_tdm_tx_1_bit_format = %ld\n",
+			__func__, ucontrol->value.integer.value[0]);
+	return 0;
+}
+
+static int msm_pri_tdm_tx_1_bit_format_put(struct snd_kcontrol *kcontrol,
+					   struct snd_ctl_elem_value *ucontrol)
+{
+	switch (ucontrol->value.integer.value[0]) {
+	case 1:
+		msm_pri_tdm_tx_1_bit_format = SNDRV_PCM_FORMAT_S24_LE;
+		break;
+	case 0:
+	default:
+		msm_pri_tdm_tx_1_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+		break;
+	}
+	pr_debug("%s: msm_pri_tdm_tx_1_bit_format = %d\n",
+			__func__, msm_pri_tdm_tx_1_bit_format);
+	return 0;
+}
+
+static int msm_pri_tdm_tx_2_bit_format_get(struct snd_kcontrol *kcontrol,
+					   struct snd_ctl_elem_value *ucontrol)
+{
+	switch (msm_pri_tdm_tx_2_bit_format) {
+	case SNDRV_PCM_FORMAT_S24_LE:
+		ucontrol->value.integer.value[0] = 1;
+		break;
+	case SNDRV_PCM_FORMAT_S16_LE:
+	default:
+		ucontrol->value.integer.value[0] = 0;
+		break;
+	}
+	pr_debug("%s: msm_pri_tdm_tx_2_bit_format = %ld\n",
+			__func__, ucontrol->value.integer.value[0]);
+	return 0;
+}
+
+static int msm_pri_tdm_tx_2_bit_format_put(struct snd_kcontrol *kcontrol,
+					   struct snd_ctl_elem_value *ucontrol)
+{
+	switch (ucontrol->value.integer.value[0]) {
+	case 1:
+		msm_pri_tdm_tx_2_bit_format = SNDRV_PCM_FORMAT_S24_LE;
+		break;
+	case 0:
+	default:
+		msm_pri_tdm_tx_2_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+		break;
+	}
+	pr_debug("%s: msm_pri_tdm_tx_2_bit_format = %d\n",
+			__func__, msm_pri_tdm_tx_2_bit_format);
+	return 0;
+}
+
+static int msm_pri_tdm_tx_3_bit_format_get(struct snd_kcontrol *kcontrol,
+					   struct snd_ctl_elem_value *ucontrol)
+{
+	switch (msm_pri_tdm_tx_3_bit_format) {
+	case SNDRV_PCM_FORMAT_S24_LE:
+		ucontrol->value.integer.value[0] = 1;
+		break;
+	case SNDRV_PCM_FORMAT_S16_LE:
+	default:
+		ucontrol->value.integer.value[0] = 0;
+		break;
+	}
+	pr_debug("%s: msm_pri_tdm_tx_3_bit_format = %ld\n",
+			__func__, ucontrol->value.integer.value[0]);
+	return 0;
+}
+
+static int msm_pri_tdm_tx_3_bit_format_put(struct snd_kcontrol *kcontrol,
+					   struct snd_ctl_elem_value *ucontrol)
+{
+	switch (ucontrol->value.integer.value[0]) {
+	case 1:
+		msm_pri_tdm_tx_3_bit_format = SNDRV_PCM_FORMAT_S24_LE;
+		break;
+	case 0:
+	default:
+		msm_pri_tdm_tx_3_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+		break;
+	}
+	pr_debug("%s: msm_pri_tdm_tx_3_bit_format = %d\n",
+			__func__, msm_pri_tdm_tx_3_bit_format);
+	return 0;
+}
+
+static int msm_pri_tdm_rx_0_bit_format_get(struct snd_kcontrol *kcontrol,
+					   struct snd_ctl_elem_value *ucontrol)
+{
+	switch (msm_pri_tdm_rx_0_bit_format) {
+	case SNDRV_PCM_FORMAT_S24_LE:
+		ucontrol->value.integer.value[0] = 1;
+		break;
+	case SNDRV_PCM_FORMAT_S16_LE:
+	default:
+		ucontrol->value.integer.value[0] = 0;
+		break;
+	}
+	pr_debug("%s: msm_pri_tdm_rx_0_bit_format = %ld\n",
+			__func__, ucontrol->value.integer.value[0]);
+	return 0;
+}
+
+static int msm_pri_tdm_rx_0_bit_format_put(struct snd_kcontrol *kcontrol,
+					   struct snd_ctl_elem_value *ucontrol)
+{
+	switch (ucontrol->value.integer.value[0]) {
+	case 1:
+		msm_pri_tdm_rx_0_bit_format = SNDRV_PCM_FORMAT_S24_LE;
+		break;
+	case 0:
+	default:
+		msm_pri_tdm_rx_0_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+		break;
+	}
+	pr_debug("%s: msm_pri_tdm_rx_0_bit_format = %d\n",
+			__func__, msm_pri_tdm_rx_0_bit_format);
+	return 0;
+}
+
+static int msm_pri_tdm_rx_1_bit_format_get(struct snd_kcontrol *kcontrol,
+					   struct snd_ctl_elem_value *ucontrol)
+{
+	switch (msm_pri_tdm_rx_1_bit_format) {
+	case SNDRV_PCM_FORMAT_S24_LE:
+		ucontrol->value.integer.value[0] = 1;
+		break;
+	case SNDRV_PCM_FORMAT_S16_LE:
+	default:
+		ucontrol->value.integer.value[0] = 0;
+		break;
+	}
+	pr_debug("%s: msm_pri_tdm_rx_1_bit_format = %ld\n",
+			__func__, ucontrol->value.integer.value[0]);
+	return 0;
+}
+
+static int msm_pri_tdm_rx_1_bit_format_put(struct snd_kcontrol *kcontrol,
+					   struct snd_ctl_elem_value *ucontrol)
+{
+	switch (ucontrol->value.integer.value[0]) {
+	case 1:
+		msm_pri_tdm_rx_1_bit_format = SNDRV_PCM_FORMAT_S24_LE;
+		break;
+	case 0:
+	default:
+		msm_pri_tdm_rx_1_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+		break;
+	}
+	pr_debug("%s: msm_pri_tdm_rx_1_bit_format = %d\n",
+			__func__, msm_pri_tdm_rx_1_bit_format);
+	return 0;
+}
+
+static int msm_pri_tdm_rx_2_bit_format_get(struct snd_kcontrol *kcontrol,
+					   struct snd_ctl_elem_value *ucontrol)
+{
+	switch (msm_pri_tdm_rx_2_bit_format) {
+	case SNDRV_PCM_FORMAT_S24_LE:
+		ucontrol->value.integer.value[0] = 1;
+		break;
+	case SNDRV_PCM_FORMAT_S16_LE:
+	default:
+		ucontrol->value.integer.value[0] = 0;
+		break;
+	}
+	pr_debug("%s: msm_pri_tdm_rx_2_bit_format = %ld\n",
+			__func__, ucontrol->value.integer.value[0]);
+	return 0;
+}
+
+static int msm_pri_tdm_rx_2_bit_format_put(struct snd_kcontrol *kcontrol,
+					   struct snd_ctl_elem_value *ucontrol)
+{
+	switch (ucontrol->value.integer.value[0]) {
+	case 1:
+		msm_pri_tdm_rx_2_bit_format = SNDRV_PCM_FORMAT_S24_LE;
+		break;
+	case 0:
+	default:
+		msm_pri_tdm_rx_2_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+		break;
+	}
+	pr_debug("%s: msm_pri_tdm_rx_2_bit_format = %d\n",
+			__func__, msm_pri_tdm_rx_2_bit_format);
+	return 0;
+}
+
+static int msm_pri_tdm_rx_3_bit_format_get(struct snd_kcontrol *kcontrol,
+					struct snd_ctl_elem_value *ucontrol)
+{
+	switch (msm_pri_tdm_rx_3_bit_format) {
+	case SNDRV_PCM_FORMAT_S24_LE:
+		ucontrol->value.integer.value[0] = 1;
+		break;
+	case SNDRV_PCM_FORMAT_S16_LE:
+	default:
+		ucontrol->value.integer.value[0] = 0;
+		break;
+	}
+	pr_debug("%s: msm_pri_tdm_rx_3_bit_format = %ld\n",
+			__func__, ucontrol->value.integer.value[0]);
+	return 0;
+}
+
+static int msm_pri_tdm_rx_3_bit_format_put(struct snd_kcontrol *kcontrol,
+					struct snd_ctl_elem_value *ucontrol)
+{
+	switch (ucontrol->value.integer.value[0]) {
+	case 1:
+		msm_pri_tdm_rx_3_bit_format = SNDRV_PCM_FORMAT_S24_LE;
+		break;
+	case 0:
+	default:
+		msm_pri_tdm_rx_3_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+		break;
+	}
+	pr_debug("%s: msm_pri_tdm_rx_3_bit_format = %d\n",
+			__func__, msm_pri_tdm_rx_3_bit_format);
+	return 0;
+}
+
+static int msm_sec_tdm_rx_0_bit_format_get(struct snd_kcontrol *kcontrol,
+					struct snd_ctl_elem_value *ucontrol)
+{
+	switch (msm_sec_tdm_rx_0_bit_format) {
+	case SNDRV_PCM_FORMAT_S24_LE:
+		ucontrol->value.integer.value[0] = 1;
+		break;
+	case SNDRV_PCM_FORMAT_S16_LE:
+	default:
+		ucontrol->value.integer.value[0] = 0;
+		break;
+	}
+	pr_debug("%s: msm_sec_tdm_rx_0_bit_format = %ld\n",
+			__func__, ucontrol->value.integer.value[0]);
+	return 0;
+}
+
+static int msm_sec_tdm_rx_0_bit_format_put(struct snd_kcontrol *kcontrol,
+					   struct snd_ctl_elem_value *ucontrol)
+{
+	switch (ucontrol->value.integer.value[0]) {
+	case 1:
+		msm_sec_tdm_rx_0_bit_format = SNDRV_PCM_FORMAT_S24_LE;
+		break;
+	case 0:
+	default:
+		msm_sec_tdm_rx_0_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+		break;
+	}
+	pr_debug("%s: msm_sec_tdm_rx_0_bit_format = %d\n",
+			__func__, msm_sec_tdm_rx_0_bit_format);
+	return 0;
+}
+
+static int msm_sec_tdm_rx_1_bit_format_get(struct snd_kcontrol *kcontrol,
+					   struct snd_ctl_elem_value *ucontrol)
+{
+	switch (msm_sec_tdm_rx_1_bit_format) {
+	case SNDRV_PCM_FORMAT_S24_LE:
+		ucontrol->value.integer.value[0] = 1;
+		break;
+	case SNDRV_PCM_FORMAT_S16_LE:
+	default:
+		ucontrol->value.integer.value[0] = 0;
+		break;
+	}
+	pr_debug("%s: msm_sec_tdm_rx_1_bit_format = %ld\n",
+			__func__, ucontrol->value.integer.value[0]);
+	return 0;
+}
+
+static int msm_sec_tdm_rx_1_bit_format_put(struct snd_kcontrol *kcontrol,
+					   struct snd_ctl_elem_value *ucontrol)
+{
+	switch (ucontrol->value.integer.value[0]) {
+	case 1:
+		msm_sec_tdm_rx_1_bit_format = SNDRV_PCM_FORMAT_S24_LE;
+		break;
+	case 0:
+	default:
+		msm_sec_tdm_rx_1_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+		break;
+	}
+	pr_debug("%s: msm_sec_tdm_rx_1_bit_format = %d\n",
+			__func__, msm_sec_tdm_rx_1_bit_format);
+	return 0;
+}
+
+static int msm_sec_tdm_rx_2_bit_format_get(struct snd_kcontrol *kcontrol,
+					   struct snd_ctl_elem_value *ucontrol)
+{
+	switch (msm_sec_tdm_rx_2_bit_format) {
+	case SNDRV_PCM_FORMAT_S24_LE:
+		ucontrol->value.integer.value[0] = 1;
+		break;
+	case SNDRV_PCM_FORMAT_S16_LE:
+	default:
+		ucontrol->value.integer.value[0] = 0;
+		break;
+	}
+	pr_debug("%s: msm_sec_tdm_rx_2_bit_format = %ld\n",
+			__func__, ucontrol->value.integer.value[0]);
+	return 0;
+}
+
+static int msm_sec_tdm_rx_2_bit_format_put(struct snd_kcontrol *kcontrol,
+					   struct snd_ctl_elem_value *ucontrol)
+{
+	switch (ucontrol->value.integer.value[0]) {
+	case 1:
+		msm_sec_tdm_rx_2_bit_format = SNDRV_PCM_FORMAT_S24_LE;
+		break;
+	case 0:
+	default:
+		msm_sec_tdm_rx_2_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+		break;
+	}
+	pr_debug("%s: msm_sec_tdm_rx_2_bit_format = %d\n",
+			__func__, msm_sec_tdm_rx_2_bit_format);
+	return 0;
+}
+
+static int msm_sec_tdm_rx_3_bit_format_get(struct snd_kcontrol *kcontrol,
+					   struct snd_ctl_elem_value *ucontrol)
+{
+	switch (msm_sec_tdm_rx_3_bit_format) {
+	case SNDRV_PCM_FORMAT_S24_LE:
+		ucontrol->value.integer.value[0] = 1;
+		break;
+	case SNDRV_PCM_FORMAT_S16_LE:
+	default:
+		ucontrol->value.integer.value[0] = 0;
+		break;
+	}
+	pr_debug("%s: msm_sec_tdm_rx_3_bit_format = %ld\n",
+			__func__, ucontrol->value.integer.value[0]);
+	return 0;
+}
+
+static int msm_sec_tdm_rx_3_bit_format_put(struct snd_kcontrol *kcontrol,
+					   struct snd_ctl_elem_value *ucontrol)
+{
+	switch (ucontrol->value.integer.value[0]) {
+	case 1:
+		msm_sec_tdm_rx_3_bit_format = SNDRV_PCM_FORMAT_S24_LE;
+		break;
+	case 0:
+	default:
+		msm_sec_tdm_rx_3_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+		break;
+	}
+	pr_debug("%s: msm_sec_tdm_rx_3_bit_format = %d\n",
+			__func__, msm_sec_tdm_rx_3_bit_format);
+	return 0;
+}
+
+static int msm_sec_tdm_tx_0_bit_format_get(struct snd_kcontrol *kcontrol,
+					   struct snd_ctl_elem_value *ucontrol)
+{
+	switch (msm_sec_tdm_tx_0_bit_format) {
+	case SNDRV_PCM_FORMAT_S24_LE:
+		ucontrol->value.integer.value[0] = 1;
+		break;
+	case SNDRV_PCM_FORMAT_S16_LE:
+	default:
+		ucontrol->value.integer.value[0] = 0;
+		break;
+	}
+	pr_debug("%s: msm_sec_tdm_tx_0_bit_format = %ld\n",
+			__func__, ucontrol->value.integer.value[0]);
+	return 0;
+}
+
+static int msm_sec_tdm_tx_0_bit_format_put(struct snd_kcontrol *kcontrol,
+					   struct snd_ctl_elem_value *ucontrol)
+{
+	switch (ucontrol->value.integer.value[0]) {
+	case 1:
+		msm_sec_tdm_tx_0_bit_format = SNDRV_PCM_FORMAT_S24_LE;
+		break;
+	case 0:
+	default:
+		msm_sec_tdm_tx_0_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+		break;
+	}
+	pr_debug("%s: msm_sec_tdm_tx_0_bit_format = %d\n",
+			__func__, msm_sec_tdm_tx_0_bit_format);
+	return 0;
+}
+
+static int msm_sec_tdm_tx_1_bit_format_get(struct snd_kcontrol *kcontrol,
+					   struct snd_ctl_elem_value *ucontrol)
+{
+	switch (msm_sec_tdm_tx_1_bit_format) {
+	case SNDRV_PCM_FORMAT_S24_LE:
+		ucontrol->value.integer.value[0] = 1;
+		break;
+	case SNDRV_PCM_FORMAT_S16_LE:
+	default:
+		ucontrol->value.integer.value[0] = 0;
+		break;
+	}
+	pr_debug("%s: msm_sec_tdm_tx_1_bit_format = %ld\n",
+			__func__, ucontrol->value.integer.value[0]);
+	return 0;
+}
+
+static int msm_sec_tdm_tx_1_bit_format_put(struct snd_kcontrol *kcontrol,
+					   struct snd_ctl_elem_value *ucontrol)
+{
+	switch (ucontrol->value.integer.value[0]) {
+	case 1:
+		msm_sec_tdm_tx_1_bit_format = SNDRV_PCM_FORMAT_S24_LE;
+		break;
+	case 0:
+	default:
+		msm_sec_tdm_tx_1_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+		break;
+	}
+	pr_debug("%s: msm_sec_tdm_tx_1_bit_format = %d\n",
+			__func__, msm_sec_tdm_tx_1_bit_format);
+	return 0;
+}
+
+static int msm_sec_tdm_tx_2_bit_format_get(struct snd_kcontrol *kcontrol,
+					   struct snd_ctl_elem_value *ucontrol)
+{
+	switch (msm_sec_tdm_tx_2_bit_format) {
+	case SNDRV_PCM_FORMAT_S24_LE:
+		ucontrol->value.integer.value[0] = 1;
+		break;
+	case SNDRV_PCM_FORMAT_S16_LE:
+	default:
+		ucontrol->value.integer.value[0] = 0;
+		break;
+	}
+	pr_debug("%s: msm_sec_tdm_tx_2_bit_format = %ld\n",
+			__func__, ucontrol->value.integer.value[0]);
+	return 0;
+}
+static int msm_sec_tdm_tx_2_bit_format_put(struct snd_kcontrol *kcontrol,
+					   struct snd_ctl_elem_value *ucontrol)
+{
+	switch (ucontrol->value.integer.value[0]) {
+	case 1:
+		msm_sec_tdm_tx_2_bit_format = SNDRV_PCM_FORMAT_S24_LE;
+		break;
+	case 0:
+	default:
+		msm_sec_tdm_tx_2_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+		break;
+	}
+	pr_debug("%s: msm_sec_tdm_tx_2_bit_format = %d\n",
+			__func__, msm_sec_tdm_tx_2_bit_format);
+	return 0;
+}
+
+static int msm_sec_tdm_tx_3_bit_format_get(struct snd_kcontrol *kcontrol,
+					   struct snd_ctl_elem_value *ucontrol)
+{
+	switch (msm_sec_tdm_tx_3_bit_format) {
+	case SNDRV_PCM_FORMAT_S24_LE:
+		ucontrol->value.integer.value[0] = 1;
+		break;
+	case SNDRV_PCM_FORMAT_S16_LE:
+	default:
+		ucontrol->value.integer.value[0] = 0;
+		break;
+	}
+	pr_debug("%s: msm_sec_tdm_tx_3_bit_format = %ld\n",
+			__func__, ucontrol->value.integer.value[0]);
+	return 0;
+}
+
+static int msm_sec_tdm_tx_3_bit_format_put(struct snd_kcontrol *kcontrol,
+					   struct snd_ctl_elem_value *ucontrol)
+{
+	switch (ucontrol->value.integer.value[0]) {
+	case 1:
+		msm_sec_tdm_tx_3_bit_format = SNDRV_PCM_FORMAT_S24_LE;
+		break;
+	case 0:
+	default:
+		msm_sec_tdm_tx_3_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+		break;
+	}
+	pr_debug("%s: msm_sec_tdm_tx_3_bit_format = %d\n",
+			__func__, msm_sec_tdm_tx_3_bit_format);
+	return 0;
+}
+
+static int msm_tert_tdm_rx_0_bit_format_get(struct snd_kcontrol *kcontrol,
+					    struct snd_ctl_elem_value *ucontrol)
+{
+	switch (msm_tert_tdm_rx_0_bit_format) {
+	case SNDRV_PCM_FORMAT_S24_LE:
+		ucontrol->value.integer.value[0] = 1;
+		break;
+	case SNDRV_PCM_FORMAT_S16_LE:
+	default:
+		ucontrol->value.integer.value[0] = 0;
+		break;
+	}
+	pr_debug("%s: msm_tert_tdm_rx_0_bit_format = %ld\n",
+			__func__, ucontrol->value.integer.value[0]);
+	return 0;
+}
+
+static int msm_tert_tdm_rx_0_bit_format_put(struct snd_kcontrol *kcontrol,
+					    struct snd_ctl_elem_value *ucontrol)
+{
+	switch (ucontrol->value.integer.value[0]) {
+	case 1:
+		msm_tert_tdm_rx_0_bit_format = SNDRV_PCM_FORMAT_S24_LE;
+		break;
+	case 0:
+	default:
+		msm_tert_tdm_rx_0_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+		break;
+	}
+	pr_debug("%s: msm_tert_tdm_rx_0_bit_format = %d\n",
+			__func__, msm_tert_tdm_rx_0_bit_format);
+	return 0;
+}
+
+static int msm_tert_tdm_rx_1_bit_format_get(struct snd_kcontrol *kcontrol,
+					    struct snd_ctl_elem_value *ucontrol)
+{
+	switch (msm_tert_tdm_rx_1_bit_format) {
+	case SNDRV_PCM_FORMAT_S24_LE:
+		ucontrol->value.integer.value[0] = 1;
+		break;
+	case SNDRV_PCM_FORMAT_S16_LE:
+	default:
+		ucontrol->value.integer.value[0] = 0;
+		break;
+	}
+	pr_debug("%s: msm_tert_tdm_rx_1_bit_format = %ld\n",
+			__func__, ucontrol->value.integer.value[0]);
+	return 0;
+}
+
+static int msm_tert_tdm_rx_1_bit_format_put(struct snd_kcontrol *kcontrol,
+					    struct snd_ctl_elem_value *ucontrol)
+{
+	switch (ucontrol->value.integer.value[0]) {
+	case 1:
+		msm_tert_tdm_rx_1_bit_format = SNDRV_PCM_FORMAT_S24_LE;
+		break;
+	case 0:
+	default:
+		msm_tert_tdm_rx_1_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+		break;
+	}
+	pr_debug("%s: msm_tert_tdm_rx_1_bit_format = %d\n",
+			__func__, msm_tert_tdm_rx_1_bit_format);
+	return 0;
+}
+
+static int msm_tert_tdm_rx_2_bit_format_get(struct snd_kcontrol *kcontrol,
+					    struct snd_ctl_elem_value *ucontrol)
+{
+	switch (msm_tert_tdm_rx_2_bit_format) {
+	case SNDRV_PCM_FORMAT_S24_LE:
+		ucontrol->value.integer.value[0] = 1;
+		break;
+	case SNDRV_PCM_FORMAT_S16_LE:
+	default:
+		ucontrol->value.integer.value[0] = 0;
+		break;
+	}
+	pr_debug("%s: msm_tert_tdm_rx_2_bit_format = %ld\n",
+			__func__, ucontrol->value.integer.value[0]);
+	return 0;
+}
+
+static int msm_tert_tdm_rx_2_bit_format_put(struct snd_kcontrol *kcontrol,
+					    struct snd_ctl_elem_value *ucontrol)
+{
+	switch (ucontrol->value.integer.value[0]) {
+	case 1:
+		msm_tert_tdm_rx_2_bit_format = SNDRV_PCM_FORMAT_S24_LE;
+		break;
+	case 0:
+	default:
+		msm_tert_tdm_rx_2_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+		break;
+	}
+	pr_debug("%s: msm_tert_tdm_rx_2_bit_format = %d\n",
+			__func__, msm_tert_tdm_rx_2_bit_format);
+	return 0;
+}
+
+static int msm_tert_tdm_rx_3_bit_format_get(struct snd_kcontrol *kcontrol,
+					    struct snd_ctl_elem_value *ucontrol)
+{
+	switch (msm_tert_tdm_rx_3_bit_format) {
+	case SNDRV_PCM_FORMAT_S24_LE:
+		ucontrol->value.integer.value[0] = 1;
+		break;
+	case SNDRV_PCM_FORMAT_S16_LE:
+	default:
+		ucontrol->value.integer.value[0] = 0;
+		break;
+	}
+	pr_debug("%s: msm_tert_tdm_rx_3_bit_format = %ld\n",
+			__func__, ucontrol->value.integer.value[0]);
+	return 0;
+}
+
+static int msm_tert_tdm_rx_3_bit_format_put(struct snd_kcontrol *kcontrol,
+					    struct snd_ctl_elem_value *ucontrol)
+{
+	switch (ucontrol->value.integer.value[0]) {
+	case 1:
+		msm_tert_tdm_rx_3_bit_format = SNDRV_PCM_FORMAT_S24_LE;
+		break;
+	case 0:
+	default:
+		msm_tert_tdm_rx_3_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+		break;
+	}
+	pr_debug("%s: msm_tert_tdm_rx_3_bit_format = %d\n",
+			__func__, msm_tert_tdm_rx_3_bit_format);
+	return 0;
+}
+
+static int msm_tert_tdm_tx_0_bit_format_get(struct snd_kcontrol *kcontrol,
+					    struct snd_ctl_elem_value *ucontrol)
+{
+	switch (msm_tert_tdm_tx_0_bit_format) {
+	case SNDRV_PCM_FORMAT_S24_LE:
+		ucontrol->value.integer.value[0] = 1;
+		break;
+	case SNDRV_PCM_FORMAT_S16_LE:
+	default:
+		ucontrol->value.integer.value[0] = 0;
+		break;
+	}
+	pr_debug("%s: msm_tert_tdm_tx_0_bit_format = %ld\n",
+			__func__, ucontrol->value.integer.value[0]);
+	return 0;
+}
+
+static int msm_tert_tdm_tx_0_bit_format_put(struct snd_kcontrol *kcontrol,
+					    struct snd_ctl_elem_value *ucontrol)
+{
+	switch (ucontrol->value.integer.value[0]) {
+	case 1:
+		msm_tert_tdm_tx_0_bit_format = SNDRV_PCM_FORMAT_S24_LE;
+		break;
+	case 0:
+	default:
+		msm_tert_tdm_tx_0_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+		break;
+	}
+	pr_debug("%s: msm_tert_tdm_tx_0_bit_format = %d\n",
+			__func__, msm_tert_tdm_tx_0_bit_format);
+	return 0;
+}
+
+static int msm_tert_tdm_tx_1_bit_format_get(struct snd_kcontrol *kcontrol,
+					    struct snd_ctl_elem_value *ucontrol)
+{
+	switch (msm_tert_tdm_tx_1_bit_format) {
+	case SNDRV_PCM_FORMAT_S24_LE:
+		ucontrol->value.integer.value[0] = 1;
+		break;
+	case SNDRV_PCM_FORMAT_S16_LE:
+	default:
+		ucontrol->value.integer.value[0] = 0;
+		break;
+	}
+	pr_debug("%s: msm_tert_tdm_tx_1_bit_format = %ld\n",
+			__func__, ucontrol->value.integer.value[0]);
+	return 0;
+}
+
+static int msm_tert_tdm_tx_1_bit_format_put(struct snd_kcontrol *kcontrol,
+					    struct snd_ctl_elem_value *ucontrol)
+{
+	switch (ucontrol->value.integer.value[0]) {
+	case 1:
+		msm_tert_tdm_tx_1_bit_format = SNDRV_PCM_FORMAT_S24_LE;
+		break;
+	case 0:
+	default:
+		msm_tert_tdm_tx_1_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+		break;
+	}
+	pr_debug("%s: msm_tert_tdm_tx_1_bit_format = %d\n",
+			__func__, msm_tert_tdm_tx_1_bit_format);
+	return 0;
+}
+
+static int msm_tert_tdm_tx_2_bit_format_get(struct snd_kcontrol *kcontrol,
+					    struct snd_ctl_elem_value *ucontrol)
+{
+	switch (msm_tert_tdm_tx_2_bit_format) {
+	case SNDRV_PCM_FORMAT_S24_LE:
+		ucontrol->value.integer.value[0] = 1;
+		break;
+	case SNDRV_PCM_FORMAT_S16_LE:
+	default:
+		ucontrol->value.integer.value[0] = 0;
+		break;
+	}
+	pr_debug("%s: msm_tert_tdm_tx_2_bit_format = %ld\n",
+			__func__, ucontrol->value.integer.value[0]);
+	return 0;
+}
+
+static int msm_tert_tdm_tx_2_bit_format_put(struct snd_kcontrol *kcontrol,
+					    struct snd_ctl_elem_value *ucontrol)
+{
+	switch (ucontrol->value.integer.value[0]) {
+	case 1:
+		msm_tert_tdm_tx_2_bit_format = SNDRV_PCM_FORMAT_S24_LE;
+		break;
+	case 0:
+	default:
+		msm_tert_tdm_tx_2_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+		break;
+	}
+	pr_debug("%s: msm_tert_tdm_tx_2_bit_format = %d\n",
+			__func__, msm_tert_tdm_tx_2_bit_format);
+	return 0;
+}
+
+static int msm_tert_tdm_tx_3_bit_format_get(struct snd_kcontrol *kcontrol,
+					    struct snd_ctl_elem_value *ucontrol)
+{
+	switch (msm_tert_tdm_tx_3_bit_format) {
+	case SNDRV_PCM_FORMAT_S24_LE:
+		ucontrol->value.integer.value[0] = 1;
+		break;
+	case SNDRV_PCM_FORMAT_S16_LE:
+	default:
+		ucontrol->value.integer.value[0] = 0;
+		break;
+	}
+	pr_debug("%s: msm_tert_tdm_tx_3_bit_format = %ld\n",
+			__func__, ucontrol->value.integer.value[0]);
+	return 0;
+}
+
+static int msm_tert_tdm_tx_3_bit_format_put(struct snd_kcontrol *kcontrol,
+					    struct snd_ctl_elem_value *ucontrol)
+{
+	switch (ucontrol->value.integer.value[0]) {
+	case 1:
+		msm_tert_tdm_tx_3_bit_format = SNDRV_PCM_FORMAT_S24_LE;
+		break;
+	case 0:
+	default:
+		msm_tert_tdm_tx_3_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+		break;
+	}
+	pr_debug("%s: msm_tert_tdm_tx_3_bit_format = %d\n",
+			__func__, msm_tert_tdm_tx_3_bit_format);
+	return 0;
+}
+
+static int msm_quat_tdm_rx_0_bit_format_get(struct snd_kcontrol *kcontrol,
+					    struct snd_ctl_elem_value *ucontrol)
+{
+	switch (msm_quat_tdm_rx_0_bit_format) {
+	case SNDRV_PCM_FORMAT_S24_LE:
+		ucontrol->value.integer.value[0] = 1;
+		break;
+	case SNDRV_PCM_FORMAT_S16_LE:
+	default:
+		ucontrol->value.integer.value[0] = 0;
+		break;
+	}
+	pr_debug("%s: msm_quat_tdm_rx_0_bit_format = %ld\n",
+			__func__, ucontrol->value.integer.value[0]);
+	return 0;
+}
+
+static int msm_quat_tdm_rx_0_bit_format_put(struct snd_kcontrol *kcontrol,
+					    struct snd_ctl_elem_value *ucontrol)
+{
+	switch (ucontrol->value.integer.value[0]) {
+	case 1:
+		msm_quat_tdm_rx_0_bit_format = SNDRV_PCM_FORMAT_S24_LE;
+		break;
+	case 0:
+	default:
+		msm_quat_tdm_rx_0_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+		break;
+	}
+	pr_debug("%s: msm_quat_tdm_rx_0_bit_format = %d\n",
+			__func__, msm_quat_tdm_rx_0_bit_format);
+	return 0;
+}
+
+static int msm_quat_tdm_rx_1_bit_format_get(struct snd_kcontrol *kcontrol,
+					    struct snd_ctl_elem_value *ucontrol)
+{
+	switch (msm_quat_tdm_rx_1_bit_format) {
+	case SNDRV_PCM_FORMAT_S24_LE:
+		ucontrol->value.integer.value[0] = 1;
+		break;
+	case SNDRV_PCM_FORMAT_S16_LE:
+	default:
+		ucontrol->value.integer.value[0] = 0;
+		break;
+	}
+	pr_debug("%s: msm_quat_tdm_rx_1_bit_format = %ld\n",
+			__func__, ucontrol->value.integer.value[0]);
+	return 0;
+}
+static int msm_quat_tdm_rx_1_bit_format_put(struct snd_kcontrol *kcontrol,
+					struct snd_ctl_elem_value *ucontrol)
+{
+	switch (ucontrol->value.integer.value[0]) {
+	case 1:
+		msm_quat_tdm_rx_1_bit_format = SNDRV_PCM_FORMAT_S24_LE;
+		break;
+	case 0:
+	default:
+		msm_quat_tdm_rx_1_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+		break;
+	}
+	pr_debug("%s: msm_quat_tdm_rx_1_bit_format = %d\n",
+			__func__, msm_quat_tdm_rx_1_bit_format);
+	return 0;
+}
+
+static int msm_quat_tdm_rx_2_bit_format_get(struct snd_kcontrol *kcontrol,
+					    struct snd_ctl_elem_value *ucontrol)
+{
+	switch (msm_quat_tdm_rx_2_bit_format) {
+	case SNDRV_PCM_FORMAT_S24_LE:
+		ucontrol->value.integer.value[0] = 1;
+		break;
+	case SNDRV_PCM_FORMAT_S16_LE:
+	default:
+		ucontrol->value.integer.value[0] = 0;
+		break;
+	}
+	pr_debug("%s: msm_quat_tdm_rx_2_bit_format = %ld\n",
+			__func__, ucontrol->value.integer.value[0]);
+	return 0;
+}
+
+static int msm_quat_tdm_rx_2_bit_format_put(struct snd_kcontrol *kcontrol,
+					    struct snd_ctl_elem_value *ucontrol)
+{
+	switch (ucontrol->value.integer.value[0]) {
+	case 1:
+		msm_quat_tdm_rx_2_bit_format = SNDRV_PCM_FORMAT_S24_LE;
+		break;
+	case 0:
+	default:
+		msm_quat_tdm_rx_2_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+		break;
+	}
+	pr_debug("%s: msm_quat_tdm_rx_2_bit_format = %d\n",
+			__func__, msm_quat_tdm_rx_2_bit_format);
+	return 0;
+}
+
+static int msm_quat_tdm_rx_3_bit_format_get(struct snd_kcontrol *kcontrol,
+					    struct snd_ctl_elem_value *ucontrol)
+{
+	switch (msm_quat_tdm_rx_3_bit_format) {
+	case SNDRV_PCM_FORMAT_S24_LE:
+		ucontrol->value.integer.value[0] = 1;
+		break;
+	case SNDRV_PCM_FORMAT_S16_LE:
+	default:
+		ucontrol->value.integer.value[0] = 0;
+		break;
+	}
+	pr_debug("%s: msm_quat_tdm_rx_3_bit_format = %ld\n",
+			__func__, ucontrol->value.integer.value[0]);
+	return 0;
+}
+
+static int msm_quat_tdm_rx_3_bit_format_put(struct snd_kcontrol *kcontrol,
+					    struct snd_ctl_elem_value *ucontrol)
+{
+	switch (ucontrol->value.integer.value[0]) {
+	case 1:
+		msm_quat_tdm_rx_3_bit_format = SNDRV_PCM_FORMAT_S24_LE;
+		break;
+	case 0:
+	default:
+		msm_quat_tdm_rx_3_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+		break;
+	}
+	pr_debug("%s: msm_quat_tdm_rx_3_bit_format = %d\n",
+			__func__, msm_quat_tdm_rx_3_bit_format);
+	return 0;
+}
+
+static int msm_quat_tdm_tx_0_bit_format_get(struct snd_kcontrol *kcontrol,
+					    struct snd_ctl_elem_value *ucontrol)
+{
+	switch (msm_quat_tdm_tx_0_bit_format) {
+	case SNDRV_PCM_FORMAT_S24_LE:
+		ucontrol->value.integer.value[0] = 1;
+		break;
+	case SNDRV_PCM_FORMAT_S16_LE:
+	default:
+		ucontrol->value.integer.value[0] = 0;
+		break;
+	}
+	pr_debug("%s: msm_quat_tdm_tx_0_bit_format = %ld\n",
+			__func__, ucontrol->value.integer.value[0]);
+	return 0;
+}
+static int msm_quat_tdm_tx_0_bit_format_put(struct snd_kcontrol *kcontrol,
+					    struct snd_ctl_elem_value *ucontrol)
+{
+	switch (ucontrol->value.integer.value[0]) {
+	case 1:
+		msm_quat_tdm_tx_0_bit_format = SNDRV_PCM_FORMAT_S24_LE;
+		break;
+	case 0:
+	default:
+		msm_quat_tdm_tx_0_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+		break;
+	}
+	pr_debug("%s: msm_quat_tdm_tx_0_bit_format = %d\n",
+			__func__, msm_quat_tdm_tx_0_bit_format);
+	return 0;
+}
+
+static int msm_quat_tdm_tx_1_bit_format_get(struct snd_kcontrol *kcontrol,
+					    struct snd_ctl_elem_value *ucontrol)
+{
+	switch (msm_quat_tdm_tx_1_bit_format) {
+	case SNDRV_PCM_FORMAT_S24_LE:
+		ucontrol->value.integer.value[0] = 1;
+		break;
+	case SNDRV_PCM_FORMAT_S16_LE:
+	default:
+		ucontrol->value.integer.value[0] = 0;
+		break;
+	}
+	pr_debug("%s: msm_quat_tdm_tx_1_bit_format = %ld\n",
+			__func__, ucontrol->value.integer.value[0]);
+	return 0;
+}
+
+static int msm_quat_tdm_tx_1_bit_format_put(struct snd_kcontrol *kcontrol,
+					    struct snd_ctl_elem_value *ucontrol)
+{
+	switch (ucontrol->value.integer.value[0]) {
+	case 1:
+		msm_quat_tdm_tx_1_bit_format = SNDRV_PCM_FORMAT_S24_LE;
+		break;
+	case 0:
+	default:
+		msm_quat_tdm_tx_1_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+		break;
+	}
+	pr_debug("%s: msm_quat_tdm_tx_1_bit_format = %d\n",
+			__func__, msm_quat_tdm_tx_1_bit_format);
+	return 0;
+}
+static int msm_quat_tdm_tx_2_bit_format_get(struct snd_kcontrol *kcontrol,
+					    struct snd_ctl_elem_value *ucontrol)
+{
+	switch (msm_quat_tdm_tx_2_bit_format) {
+	case SNDRV_PCM_FORMAT_S24_LE:
+		ucontrol->value.integer.value[0] = 1;
+		break;
+	case SNDRV_PCM_FORMAT_S16_LE:
+	default:
+		ucontrol->value.integer.value[0] = 0;
+		break;
+	}
+	pr_debug("%s: msm_quat_tdm_tx_2_bit_format = %ld\n",
+			__func__, ucontrol->value.integer.value[0]);
+	return 0;
+}
+
+static int msm_quat_tdm_tx_2_bit_format_put(struct snd_kcontrol *kcontrol,
+					    struct snd_ctl_elem_value *ucontrol)
+{
+	switch (ucontrol->value.integer.value[0]) {
+	case 1:
+		msm_quat_tdm_tx_2_bit_format = SNDRV_PCM_FORMAT_S24_LE;
+		break;
+	case 0:
+	default:
+		msm_quat_tdm_tx_2_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+		break;
+	}
+	pr_debug("%s: msm_quat_tdm_tx_2_bit_format = %d\n",
+			__func__, msm_quat_tdm_tx_2_bit_format);
+	return 0;
+}
+
+static int msm_quat_tdm_tx_3_bit_format_get(struct snd_kcontrol *kcontrol,
+					    struct snd_ctl_elem_value *ucontrol)
+{
+	switch (msm_quat_tdm_tx_3_bit_format) {
+	case SNDRV_PCM_FORMAT_S24_LE:
+		ucontrol->value.integer.value[0] = 1;
+		break;
+	case SNDRV_PCM_FORMAT_S16_LE:
+	default:
+		ucontrol->value.integer.value[0] = 0;
+		break;
+	}
+	pr_debug("%s: msm_quat_tdm_tx_3_bit_format = %ld\n",
+			__func__, ucontrol->value.integer.value[0]);
+	return 0;
+}
+static int msm_quat_tdm_tx_3_bit_format_put(struct snd_kcontrol *kcontrol,
+					    struct snd_ctl_elem_value *ucontrol)
+{
+	switch (ucontrol->value.integer.value[0]) {
+	case 1:
+		msm_quat_tdm_tx_3_bit_format = SNDRV_PCM_FORMAT_S24_LE;
+		break;
+	case 0:
+	default:
+		msm_quat_tdm_tx_3_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+		break;
+	}
+	pr_debug("%s: msm_quat_tdm_tx_3_bit_format = %d\n",
+			__func__, msm_quat_tdm_tx_3_bit_format);
+	return 0;
+}
+
 
 static int msm_auxpcm_be_params_fixup(struct snd_soc_pcm_runtime *rtd,
 				      struct snd_pcm_hw_params *params)
@@ -1358,21 +5205,7 @@ static int msm8996_hdmi_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
 	return 0;
 }
 
-static int msm_tx_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
-				     struct snd_pcm_hw_params *params)
-{
-	struct snd_interval *rate = hw_param_interval(params,
-					SNDRV_PCM_HW_PARAM_RATE);
-	struct snd_interval *channels = hw_param_interval(params,
-					SNDRV_PCM_HW_PARAM_CHANNELS);
-
-	pr_debug("%s: channel:%d\n", __func__, msm_tert_mi2s_tx_ch);
-	rate->min = rate->max = SAMPLING_RATE_48KHZ;
-	channels->min = channels->max = msm_tert_mi2s_tx_ch;
-	return 0;
-}
-
-static int msm8996_mi2s_snd_startup(struct snd_pcm_substream *substream)
+static int legacy_msm8996_mi2s_snd_startup(struct snd_pcm_substream *substream)
 {
 	int ret = 0;
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
@@ -1395,7 +5228,7 @@ err:
 	return ret;
 }
 
-static void msm8996_mi2s_snd_shutdown(struct snd_pcm_substream *substream)
+static void legacy_msm8996_mi2s_snd_shutdown(struct snd_pcm_substream *substream)
 {
 	int ret = 0;
 
@@ -1409,9 +5242,9 @@ static void msm8996_mi2s_snd_shutdown(struct snd_pcm_substream *substream)
 		pr_err("%s: afe lpass clock failed, err:%d\n", __func__, ret);
 }
 
-static struct snd_soc_ops msm8996_mi2s_be_ops = {
-	.startup = msm8996_mi2s_snd_startup,
-	.shutdown = msm8996_mi2s_snd_shutdown,
+static struct snd_soc_ops legacy_msm8996_mi2s_be_ops = {
+	.startup = legacy_msm8996_mi2s_snd_startup,
+	.shutdown = legacy_msm8996_mi2s_snd_shutdown,
 };
 
 static int msm_slim_5_rx_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
@@ -1450,6 +5283,116 @@ static int msm_slim_6_rx_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
 	pr_debug("%s: format = %d, rate = %d, channels = %d\n",
 		 __func__, params_format(params), params_rate(params),
 		 msm_slim_6_rx_ch);
+
+	return 0;
+}
+
+static int msm_pri_mi2s_rx_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
+					    struct snd_pcm_hw_params *params)
+{
+	struct snd_interval *rate = hw_param_interval(params,
+					SNDRV_PCM_HW_PARAM_RATE);
+	struct snd_interval *channels = hw_param_interval(params,
+					SNDRV_PCM_HW_PARAM_CHANNELS);
+
+	param_set_mask(params, SNDRV_PCM_HW_PARAM_FORMAT,
+				   pri_mi2s_bit_format);
+	rate->min = rate->max = pri_mi2s_sample_rate;
+	/* TODO: Should we validate channels with sd_lines?
+	 * See msm_dai_q6_mi2s_hw_params() */
+	channels->min = channels->max = msm_pri_mi2s_rx_ch;
+
+	 pr_debug("%s: format = %d, rate = %d, channels = %d\n",
+		  __func__, params_format(params), params_rate(params),
+		  msm_pri_mi2s_rx_ch);
+
+	return 0;
+}
+
+static int msm_pri_mi2s_tx_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
+					    struct snd_pcm_hw_params *params)
+{
+	struct snd_interval *rate = hw_param_interval(params,
+					SNDRV_PCM_HW_PARAM_RATE);
+	struct snd_interval *channels = hw_param_interval(params,
+					SNDRV_PCM_HW_PARAM_CHANNELS);
+
+	param_set_mask(params, SNDRV_PCM_HW_PARAM_FORMAT,
+				   pri_mi2s_bit_format);
+	rate->min = rate->max = pri_mi2s_sample_rate;
+	/* TODO: Should we validate channels with sd_lines?
+	 * See msm_dai_q6_mi2s_hw_params() */
+	channels->min = channels->max = msm_pri_mi2s_tx_ch;
+
+	 pr_debug("%s: format = %d, rate = %d, channels = %d\n",
+		  __func__, params_format(params), params_rate(params),
+		  msm_pri_mi2s_tx_ch);
+
+	return 0;
+}
+
+static int msm_sec_mi2s_rx_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
+					    struct snd_pcm_hw_params *params)
+{
+	struct snd_interval *rate = hw_param_interval(params,
+					SNDRV_PCM_HW_PARAM_RATE);
+	struct snd_interval *channels = hw_param_interval(params,
+					SNDRV_PCM_HW_PARAM_CHANNELS);
+
+	param_set_mask(params, SNDRV_PCM_HW_PARAM_FORMAT,
+				   sec_mi2s_bit_format);
+	rate->min = rate->max = sec_mi2s_sample_rate;
+	/* TODO: Should we validate channels with sd_lines?
+	 * See msm_dai_q6_mi2s_hw_params() */
+	channels->min = channels->max = msm_sec_mi2s_rx_ch;
+
+	 pr_debug("%s: format = %d, rate = %d, channels = %d\n",
+		  __func__, params_format(params), params_rate(params),
+		  msm_sec_mi2s_rx_ch);
+
+	return 0;
+}
+
+static int msm_sec_mi2s_tx_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
+					    struct snd_pcm_hw_params *params)
+{
+	struct snd_interval *rate = hw_param_interval(params,
+					SNDRV_PCM_HW_PARAM_RATE);
+	struct snd_interval *channels = hw_param_interval(params,
+					SNDRV_PCM_HW_PARAM_CHANNELS);
+
+	param_set_mask(params, SNDRV_PCM_HW_PARAM_FORMAT,
+				   sec_mi2s_bit_format);
+	rate->min = rate->max = sec_mi2s_sample_rate;
+	/* TODO: Should we validate channels with sd_lines?
+	 * See msm_dai_q6_mi2s_hw_params() */
+	channels->min = channels->max = msm_sec_mi2s_tx_ch;
+
+	 pr_debug("%s: format = %d, rate = %d, channels = %d\n",
+		  __func__, params_format(params), params_rate(params),
+		  msm_sec_mi2s_tx_ch);
+
+	return 0;
+}
+
+static int msm_tert_mi2s_rx_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
+					    struct snd_pcm_hw_params *params)
+{
+	struct snd_interval *rate = hw_param_interval(params,
+					SNDRV_PCM_HW_PARAM_RATE);
+	struct snd_interval *channels = hw_param_interval(params,
+					SNDRV_PCM_HW_PARAM_CHANNELS);
+
+	param_set_mask(params, SNDRV_PCM_HW_PARAM_FORMAT,
+				   tert_mi2s_bit_format);
+	rate->min = rate->max = tert_mi2s_sample_rate;
+	/* TODO: Should we validate channels with sd_lines?
+	 * See msm_dai_q6_mi2s_hw_params() */
+	channels->min = channels->max = msm_tert_mi2s_rx_ch;
+
+	 pr_debug("%s: format = %d, rate = %d, channels = %d\n",
+		  __func__, params_format(params), params_rate(params),
+		  msm_tert_mi2s_rx_ch);
 
 	return 0;
 }
@@ -1557,13 +5500,712 @@ static int msm_slim_5_tx_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
 static int msm_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
 				  struct snd_pcm_hw_params *params)
 {
+	struct snd_soc_dai_link *dai_link = rtd->dai_link;
 	struct snd_interval *rate = hw_param_interval(params,
 					SNDRV_PCM_HW_PARAM_RATE);
+	struct snd_interval *channels = hw_param_interval(params,
+					SNDRV_PCM_HW_PARAM_CHANNELS);
 
-	pr_debug("%s:\n", __func__);
-	rate->min = rate->max = SAMPLING_RATE_48KHZ;
+	pr_debug("%s: format = %d, rate = %d\n",
+			__func__, params_format(params), params_rate(params));
+
+	switch (dai_link->be_id) {
+	case MSM_BACKEND_DAI_USB_RX:
+		param_set_mask(params, SNDRV_PCM_HW_PARAM_FORMAT,
+				usb_rx_cfg.bit_format);
+		rate->min = rate->max = usb_rx_cfg.sample_rate;
+		channels->min = channels->max = usb_rx_cfg.channels;
+		break;
+
+	case MSM_BACKEND_DAI_USB_TX:
+		param_set_mask(params, SNDRV_PCM_HW_PARAM_FORMAT,
+				usb_tx_cfg.bit_format);
+		rate->min = rate->max = usb_tx_cfg.sample_rate;
+		channels->min = channels->max = usb_tx_cfg.channels;
+		break;
+
+	default:
+		rate->min = rate->max = SAMPLING_RATE_48KHZ;
+		break;
+	}
 	return 0;
 }
+static int msm_tdm_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
+					struct snd_pcm_hw_params *params)
+{
+	struct snd_soc_dai *cpu_dai = rtd->cpu_dai;
+	struct snd_interval *rate = hw_param_interval(params,
+				   SNDRV_PCM_HW_PARAM_RATE);
+	struct snd_interval *channels = hw_param_interval(params,
+				   SNDRV_PCM_HW_PARAM_CHANNELS);
+
+	rate->min = rate->max = SAMPLING_RATE_48KHZ;
+
+	switch (cpu_dai->id) {
+	case AFE_PORT_ID_PRIMARY_TDM_TX:
+		channels->min = channels->max = msm_pri_tdm_tx_0_ch;
+		param_set_mask(params, SNDRV_PCM_HW_PARAM_FORMAT,
+				msm_pri_tdm_tx_0_bit_format);
+		rate->min = rate->max = msm_pri_tdm_rate;
+		break;
+	case AFE_PORT_ID_PRIMARY_TDM_TX_1:
+		channels->min = channels->max = msm_pri_tdm_tx_1_ch;
+		param_set_mask(params, SNDRV_PCM_HW_PARAM_FORMAT,
+		msm_pri_tdm_tx_1_bit_format);
+		rate->min = rate->max = msm_pri_tdm_rate;
+		break;
+	case AFE_PORT_ID_PRIMARY_TDM_TX_2:
+		channels->min = channels->max = msm_pri_tdm_tx_2_ch;
+		param_set_mask(params, SNDRV_PCM_HW_PARAM_FORMAT,
+				msm_pri_tdm_tx_2_bit_format);
+		rate->min = rate->max = msm_pri_tdm_rate;
+		break;
+	case AFE_PORT_ID_PRIMARY_TDM_TX_3:
+		channels->min = channels->max = msm_pri_tdm_tx_3_ch;
+		param_set_mask(params, SNDRV_PCM_HW_PARAM_FORMAT,
+				msm_pri_tdm_tx_3_bit_format);
+		rate->min = rate->max = msm_pri_tdm_rate;
+		break;
+	case AFE_PORT_ID_PRIMARY_TDM_RX:
+		channels->min = channels->max = msm_pri_tdm_rx_0_ch;
+		param_set_mask(params, SNDRV_PCM_HW_PARAM_FORMAT,
+		msm_pri_tdm_rx_0_bit_format);
+		rate->min = rate->max = msm_pri_tdm_rate;
+		break;
+	case AFE_PORT_ID_PRIMARY_TDM_RX_1:
+		channels->min = channels->max = msm_pri_tdm_rx_1_ch;
+		param_set_mask(params, SNDRV_PCM_HW_PARAM_FORMAT,
+				msm_pri_tdm_rx_1_bit_format);
+		rate->min = rate->max = msm_pri_tdm_rate;
+		break;
+	case AFE_PORT_ID_PRIMARY_TDM_RX_2:
+		channels->min = channels->max = msm_pri_tdm_rx_2_ch;
+		param_set_mask(params, SNDRV_PCM_HW_PARAM_FORMAT,
+				msm_pri_tdm_rx_2_bit_format);
+		rate->min = rate->max = msm_pri_tdm_rate;
+		break;
+	case AFE_PORT_ID_PRIMARY_TDM_RX_3:
+		channels->min = channels->max = msm_pri_tdm_rx_3_ch;
+		param_set_mask(params, SNDRV_PCM_HW_PARAM_FORMAT,
+				msm_pri_tdm_rx_3_bit_format);
+		rate->min = rate->max = msm_pri_tdm_rate;
+		break;
+	case AFE_PORT_ID_SECONDARY_TDM_RX:
+		channels->min = channels->max = msm_sec_tdm_rx_0_ch;
+		param_set_mask(params, SNDRV_PCM_HW_PARAM_FORMAT,
+				msm_sec_tdm_rx_0_bit_format);
+		rate->min = rate->max = msm_sec_tdm_rate;
+		break;
+	case AFE_PORT_ID_SECONDARY_TDM_RX_1:
+		channels->min = channels->max = msm_sec_tdm_rx_1_ch;
+		param_set_mask(params, SNDRV_PCM_HW_PARAM_FORMAT,
+				msm_sec_tdm_rx_1_bit_format);
+		rate->min = rate->max = msm_sec_tdm_rate;
+		break;
+	case AFE_PORT_ID_SECONDARY_TDM_RX_2:
+		channels->min = channels->max = msm_sec_tdm_rx_2_ch;
+		param_set_mask(params, SNDRV_PCM_HW_PARAM_FORMAT,
+				msm_sec_tdm_rx_2_bit_format);
+		rate->min = rate->max = msm_sec_tdm_rate;
+		break;
+	case AFE_PORT_ID_SECONDARY_TDM_RX_3:
+		channels->min = channels->max = msm_sec_tdm_rx_3_ch;
+		param_set_mask(params, SNDRV_PCM_HW_PARAM_FORMAT,
+				msm_sec_tdm_rx_3_bit_format);
+		rate->min = rate->max = msm_sec_tdm_rate;
+		break;
+	case AFE_PORT_ID_SECONDARY_TDM_TX:
+		channels->min = channels->max = msm_sec_tdm_tx_0_ch;
+		param_set_mask(params, SNDRV_PCM_HW_PARAM_FORMAT,
+				msm_sec_tdm_tx_0_bit_format);
+		rate->min = rate->max = msm_sec_tdm_rate;
+		break;
+	case AFE_PORT_ID_SECONDARY_TDM_TX_1:
+		channels->min = channels->max = msm_sec_tdm_tx_1_ch;
+		param_set_mask(params, SNDRV_PCM_HW_PARAM_FORMAT,
+				msm_sec_tdm_tx_1_bit_format);
+		rate->min = rate->max = msm_sec_tdm_rate;
+		break;
+	case AFE_PORT_ID_SECONDARY_TDM_TX_2:
+		channels->min = channels->max = msm_sec_tdm_tx_2_ch;
+		param_set_mask(params, SNDRV_PCM_HW_PARAM_FORMAT,
+				msm_sec_tdm_tx_2_bit_format);
+		rate->min = rate->max = msm_sec_tdm_rate;
+		break;
+	case AFE_PORT_ID_SECONDARY_TDM_TX_3:
+		channels->min = channels->max = msm_sec_tdm_tx_3_ch;
+		param_set_mask(params, SNDRV_PCM_HW_PARAM_FORMAT,
+				msm_sec_tdm_tx_3_bit_format);
+		rate->min = rate->max = msm_sec_tdm_rate;
+		break;
+	case AFE_PORT_ID_TERTIARY_TDM_RX:
+		channels->min = channels->max = msm_tert_tdm_rx_0_ch;
+		param_set_mask(params, SNDRV_PCM_HW_PARAM_FORMAT,
+				msm_tert_tdm_rx_0_bit_format);
+		rate->min = rate->max = msm_tert_tdm_rate;
+		break;
+	case AFE_PORT_ID_TERTIARY_TDM_RX_1:
+		channels->min = channels->max = msm_tert_tdm_rx_1_ch;
+		param_set_mask(params, SNDRV_PCM_HW_PARAM_FORMAT,
+				msm_tert_tdm_rx_1_bit_format);
+		rate->min = rate->max = msm_tert_tdm_rate;
+		break;
+	case AFE_PORT_ID_TERTIARY_TDM_RX_2:
+		channels->min = channels->max = msm_tert_tdm_rx_2_ch;
+		param_set_mask(params, SNDRV_PCM_HW_PARAM_FORMAT,
+				msm_tert_tdm_rx_2_bit_format);
+		rate->min = rate->max = msm_tert_tdm_rate;
+		break;
+	case AFE_PORT_ID_TERTIARY_TDM_RX_3:
+		channels->min = channels->max = msm_tert_tdm_rx_3_ch;
+		param_set_mask(params, SNDRV_PCM_HW_PARAM_FORMAT,
+				msm_tert_tdm_rx_3_bit_format);
+		rate->min = rate->max = msm_tert_tdm_rate;
+		break;
+	case AFE_PORT_ID_TERTIARY_TDM_TX:
+		channels->min = channels->max = msm_tert_tdm_tx_0_ch;
+		param_set_mask(params, SNDRV_PCM_HW_PARAM_FORMAT,
+				msm_tert_tdm_tx_0_bit_format);
+		rate->min = rate->max = msm_tert_tdm_rate;
+		break;
+	case AFE_PORT_ID_TERTIARY_TDM_TX_1:
+		channels->min = channels->max = msm_tert_tdm_tx_1_ch;
+		param_set_mask(params, SNDRV_PCM_HW_PARAM_FORMAT,
+				msm_tert_tdm_tx_1_bit_format);
+		rate->min = rate->max = msm_tert_tdm_rate;
+		break;
+	case AFE_PORT_ID_TERTIARY_TDM_TX_2:
+		channels->min = channels->max = msm_tert_tdm_tx_2_ch;
+		param_set_mask(params, SNDRV_PCM_HW_PARAM_FORMAT,
+				msm_tert_tdm_tx_2_bit_format);
+		rate->min = rate->max = msm_tert_tdm_rate;
+		break;
+	case AFE_PORT_ID_TERTIARY_TDM_TX_3:
+		channels->min = channels->max = msm_tert_tdm_tx_3_ch;
+		param_set_mask(params, SNDRV_PCM_HW_PARAM_FORMAT,
+				msm_tert_tdm_tx_3_bit_format);
+		rate->min = rate->max = msm_tert_tdm_rate;
+		break;
+	case AFE_PORT_ID_QUATERNARY_TDM_RX:
+		channels->min = channels->max = msm_quat_tdm_rx_0_ch;
+		param_set_mask(params, SNDRV_PCM_HW_PARAM_FORMAT,
+				msm_quat_tdm_rx_0_bit_format);
+		rate->min = rate->max = msm_quat_tdm_rate;
+		break;
+	case AFE_PORT_ID_QUATERNARY_TDM_RX_1:
+		channels->min = channels->max = msm_quat_tdm_rx_1_ch;
+		param_set_mask(params, SNDRV_PCM_HW_PARAM_FORMAT,
+				msm_quat_tdm_rx_1_bit_format);
+		rate->min = rate->max = msm_quat_tdm_rate;
+		break;
+	case AFE_PORT_ID_QUATERNARY_TDM_RX_2:
+		channels->min = channels->max = msm_quat_tdm_rx_2_ch;
+		param_set_mask(params, SNDRV_PCM_HW_PARAM_FORMAT,
+				msm_quat_tdm_rx_2_bit_format);
+		rate->min = rate->max = msm_quat_tdm_rate;
+		break;
+	case AFE_PORT_ID_QUATERNARY_TDM_RX_3:
+		channels->min = channels->max = msm_quat_tdm_rx_3_ch;
+		param_set_mask(params, SNDRV_PCM_HW_PARAM_FORMAT,
+				msm_quat_tdm_rx_3_bit_format);
+		rate->min = rate->max = msm_quat_tdm_rate;
+		break;
+	case AFE_PORT_ID_QUATERNARY_TDM_TX:
+		channels->min = channels->max = msm_quat_tdm_tx_0_ch;
+		param_set_mask(params, SNDRV_PCM_HW_PARAM_FORMAT,
+				msm_quat_tdm_tx_0_bit_format);
+		rate->min = rate->max = msm_quat_tdm_rate;
+		break;
+	case AFE_PORT_ID_QUATERNARY_TDM_TX_1:
+		channels->min = channels->max = msm_quat_tdm_tx_1_ch;
+		param_set_mask(params, SNDRV_PCM_HW_PARAM_FORMAT,
+				msm_quat_tdm_tx_1_bit_format);
+		rate->min = rate->max = msm_quat_tdm_rate;
+		break;
+	case AFE_PORT_ID_QUATERNARY_TDM_TX_2:
+		channels->min = channels->max = msm_quat_tdm_tx_2_ch;
+		param_set_mask(params, SNDRV_PCM_HW_PARAM_FORMAT,
+		msm_quat_tdm_tx_2_bit_format);
+		rate->min = rate->max = msm_quat_tdm_rate;
+		break;
+	case AFE_PORT_ID_QUATERNARY_TDM_TX_3:
+		channels->min = channels->max = msm_quat_tdm_tx_3_ch;
+		param_set_mask(params, SNDRV_PCM_HW_PARAM_FORMAT,
+				msm_quat_tdm_tx_3_bit_format);
+		rate->min = rate->max = msm_quat_tdm_rate;
+		break;
+	default:
+		pr_err("%s: dai id 0x%x not supported\n",
+				__func__, cpu_dai->id);
+	return -EINVAL;
+	}
+
+	pr_debug("%s: dai id = 0x%x channels = %d rate = %d format = 0x%x\n",
+			__func__, cpu_dai->id, channels->max, rate->max,
+			params_format(params));
+
+	return 0;
+}
+
+static unsigned int tdm_param_set_slot_mask(int slots)
+{
+	unsigned int slot_mask = 0;
+	unsigned int i = 0;
+
+	if ((slots != 16) && (slots != 8)) {
+		pr_err("%s: invalid slot number %d\n", __func__, slots);
+		return -EINVAL;
+	}
+
+	for (i = 0; i < slots ; i++)
+		slot_mask |= 1 << i;
+	return slot_mask;
+}
+
+static int msm8996_tdm_snd_hw_params(struct snd_pcm_substream *substream,
+					struct snd_pcm_hw_params *params)
+{
+	struct snd_soc_pcm_runtime *rtd = substream->private_data;
+	struct snd_soc_dai *cpu_dai = rtd->cpu_dai;
+	int ret = 0;
+	int channels, slot_width, slots, rate;
+	unsigned int slot_mask;
+	unsigned int *slot_offset;
+	int offset_channels = 0;
+	int i;
+	int clk_freq;
+
+	pr_debug("%s: dai id = 0x%x\n", __func__, cpu_dai->id);
+
+	rate = params_rate(params);
+	channels = params_channels(params);
+	if (channels < 1 || channels > 8) {
+		pr_err("%s: invalid param channels %d\n",
+			__func__, channels);
+		return -EINVAL;
+	}
+
+	switch (params_format(params)) {
+	case SNDRV_PCM_FORMAT_S32_LE:
+	case SNDRV_PCM_FORMAT_S24_LE:
+	case SNDRV_PCM_FORMAT_S16_LE:
+		/*
+		* up to 8 channel HW configuration should
+		* use 32 bit slot width for max support of
+		* stream bit width. (slot_width > bit_width)
+		*/
+		slot_width = msm_tdm_slot_width;
+		break;
+	default:
+		pr_err("%s: invalid param format 0x%x\n",
+			__func__, params_format(params));
+		return -EINVAL;
+	}
+
+	slots = msm_tdm_num_slots;
+
+	switch (cpu_dai->id) {
+	case AFE_PORT_ID_PRIMARY_TDM_RX:
+		slots = msm_pri_tdm_slot_num;
+		slot_width = msm_pri_tdm_slot_width;
+		slot_offset = tdm_slot_offset[PRIMARY_TDM_RX_0];
+		break;
+	case AFE_PORT_ID_PRIMARY_TDM_RX_1:
+		slots = msm_pri_tdm_slot_num;
+		slot_width = msm_pri_tdm_slot_width;
+		slot_offset = tdm_slot_offset[PRIMARY_TDM_RX_1];
+		break;
+	case AFE_PORT_ID_PRIMARY_TDM_RX_2:
+		slots = msm_pri_tdm_slot_num;
+		slot_width = msm_pri_tdm_slot_width;
+		slot_offset = tdm_slot_offset[PRIMARY_TDM_RX_2];
+		break;
+	case AFE_PORT_ID_PRIMARY_TDM_RX_3:
+		slots = msm_pri_tdm_slot_num;
+		slot_width = msm_pri_tdm_slot_width;
+		slot_offset = tdm_slot_offset[PRIMARY_TDM_RX_3];
+		break;
+	case AFE_PORT_ID_PRIMARY_TDM_RX_4:
+		slots = msm_pri_tdm_slot_num;
+		slot_width = msm_pri_tdm_slot_width;
+		slot_offset = tdm_slot_offset[PRIMARY_TDM_RX_4];
+		break;
+	case AFE_PORT_ID_PRIMARY_TDM_RX_5:
+		slots = msm_pri_tdm_slot_num;
+		slot_width = msm_pri_tdm_slot_width;
+		slot_offset = tdm_slot_offset[PRIMARY_TDM_RX_5];
+		break;
+	case AFE_PORT_ID_PRIMARY_TDM_RX_6:
+		slots = msm_pri_tdm_slot_num;
+		slot_width = msm_pri_tdm_slot_width;
+		slot_offset = tdm_slot_offset[PRIMARY_TDM_RX_6];
+		break;
+	case AFE_PORT_ID_PRIMARY_TDM_RX_7:
+		slots = msm_pri_tdm_slot_num;
+		slot_width = msm_pri_tdm_slot_width;
+		slot_offset = tdm_slot_offset[PRIMARY_TDM_RX_7];
+		break;
+	case AFE_PORT_ID_PRIMARY_TDM_TX:
+		slots = msm_pri_tdm_slot_num;
+		slot_width = msm_pri_tdm_slot_width;
+		slot_offset = tdm_slot_offset[PRIMARY_TDM_TX_0];
+		break;
+	case AFE_PORT_ID_PRIMARY_TDM_TX_1:
+		slots = msm_pri_tdm_slot_num;
+		slot_width = msm_pri_tdm_slot_width;
+		slot_offset = tdm_slot_offset[PRIMARY_TDM_TX_1];
+		break;
+	case AFE_PORT_ID_PRIMARY_TDM_TX_2:
+		slots = msm_pri_tdm_slot_num;
+		slot_width = msm_pri_tdm_slot_width;
+		slot_offset = tdm_slot_offset[PRIMARY_TDM_TX_2];
+		break;
+	case AFE_PORT_ID_PRIMARY_TDM_TX_3:
+		slots = msm_pri_tdm_slot_num;
+		slot_width = msm_pri_tdm_slot_width;
+		slot_offset = tdm_slot_offset[PRIMARY_TDM_TX_3];
+		break;
+	case AFE_PORT_ID_PRIMARY_TDM_TX_4:
+		slots = msm_pri_tdm_slot_num;
+		slot_width = msm_pri_tdm_slot_width;
+		slot_offset = tdm_slot_offset[PRIMARY_TDM_TX_4];
+		break;
+	case AFE_PORT_ID_PRIMARY_TDM_TX_5:
+		slots = msm_pri_tdm_slot_num;
+		slot_width = msm_pri_tdm_slot_width;
+		slot_offset = tdm_slot_offset[PRIMARY_TDM_TX_5];
+		break;
+	case AFE_PORT_ID_PRIMARY_TDM_TX_6:
+		slots = msm_pri_tdm_slot_num;
+		slot_width = msm_pri_tdm_slot_width;
+		slot_offset = tdm_slot_offset[PRIMARY_TDM_TX_6];
+		break;
+	case AFE_PORT_ID_PRIMARY_TDM_TX_7:
+		slots = msm_pri_tdm_slot_num;
+		slot_width = msm_pri_tdm_slot_width;
+		slot_offset = tdm_slot_offset[PRIMARY_TDM_TX_7];
+		break;
+	case AFE_PORT_ID_SECONDARY_TDM_RX:
+		slots = msm_sec_tdm_slot_num;
+		slot_width = msm_sec_tdm_slot_width;
+		slot_offset = tdm_slot_offset[SECONDARY_TDM_RX_0];
+		break;
+	case AFE_PORT_ID_SECONDARY_TDM_RX_1:
+		slots = msm_sec_tdm_slot_num;
+		slot_width = msm_sec_tdm_slot_width;
+		slot_offset = tdm_slot_offset[SECONDARY_TDM_RX_1];
+		break;
+	case AFE_PORT_ID_SECONDARY_TDM_RX_2:
+		slots = msm_sec_tdm_slot_num;
+		slot_width = msm_sec_tdm_slot_width;
+		slot_offset = tdm_slot_offset[SECONDARY_TDM_RX_2];
+		break;
+	case AFE_PORT_ID_SECONDARY_TDM_RX_3:
+		slots = msm_sec_tdm_slot_num;
+		slot_width = msm_sec_tdm_slot_width;
+		slot_offset = tdm_slot_offset[SECONDARY_TDM_RX_3];
+		break;
+	case AFE_PORT_ID_SECONDARY_TDM_RX_4:
+		slots = msm_sec_tdm_slot_num;
+		slot_width = msm_sec_tdm_slot_width;
+		slot_offset = tdm_slot_offset[SECONDARY_TDM_RX_4];
+		break;
+	case AFE_PORT_ID_SECONDARY_TDM_RX_5:
+		slots = msm_sec_tdm_slot_num;
+		slot_width = msm_sec_tdm_slot_width;
+		slot_offset = tdm_slot_offset[SECONDARY_TDM_RX_5];
+		break;
+	case AFE_PORT_ID_SECONDARY_TDM_RX_6:
+		slots = msm_sec_tdm_slot_num;
+		slot_width = msm_sec_tdm_slot_width;
+		slot_offset = tdm_slot_offset[SECONDARY_TDM_RX_6];
+		break;
+	case AFE_PORT_ID_SECONDARY_TDM_RX_7:
+		slots = msm_sec_tdm_slot_num;
+		slot_width = msm_sec_tdm_slot_width;
+		slot_offset = tdm_slot_offset[SECONDARY_TDM_RX_7];
+		break;
+	case AFE_PORT_ID_SECONDARY_TDM_TX:
+		slots = msm_sec_tdm_slot_num;
+		slot_width = msm_sec_tdm_slot_width;
+		slot_offset = tdm_slot_offset[SECONDARY_TDM_TX_0];
+		break;
+	case AFE_PORT_ID_SECONDARY_TDM_TX_1:
+		slots = msm_sec_tdm_slot_num;
+		slot_width = msm_sec_tdm_slot_width;
+		slot_offset = tdm_slot_offset[SECONDARY_TDM_TX_1];
+		break;
+	case AFE_PORT_ID_SECONDARY_TDM_TX_2:
+		slots = msm_sec_tdm_slot_num;
+		slot_width = msm_sec_tdm_slot_width;
+		slot_offset = tdm_slot_offset[SECONDARY_TDM_TX_2];
+		break;
+	case AFE_PORT_ID_SECONDARY_TDM_TX_3:
+		slots = msm_sec_tdm_slot_num;
+		slot_width = msm_sec_tdm_slot_width;
+		slot_offset = tdm_slot_offset[SECONDARY_TDM_TX_3];
+		break;
+	case AFE_PORT_ID_SECONDARY_TDM_TX_4:
+		slots = msm_sec_tdm_slot_num;
+		slot_width = msm_sec_tdm_slot_width;
+		slot_offset = tdm_slot_offset[SECONDARY_TDM_TX_4];
+		break;
+	case AFE_PORT_ID_SECONDARY_TDM_TX_5:
+		slots = msm_sec_tdm_slot_num;
+		slot_width = msm_sec_tdm_slot_width;
+		slot_offset = tdm_slot_offset[SECONDARY_TDM_TX_5];
+		break;
+	case AFE_PORT_ID_SECONDARY_TDM_TX_6:
+		slots = msm_sec_tdm_slot_num;
+		slot_width = msm_sec_tdm_slot_width;
+		slot_offset = tdm_slot_offset[SECONDARY_TDM_TX_6];
+		break;
+	case AFE_PORT_ID_SECONDARY_TDM_TX_7:
+		slots = msm_sec_tdm_slot_num;
+		slot_width = msm_sec_tdm_slot_width;
+		slot_offset = tdm_slot_offset[SECONDARY_TDM_TX_7];
+		break;
+	case AFE_PORT_ID_TERTIARY_TDM_RX:
+		slots = msm_tert_tdm_slot_num;
+		slot_width = msm_tert_tdm_slot_width;
+		slot_offset = tdm_slot_offset[TERTIARY_TDM_RX_0];
+		break;
+	case AFE_PORT_ID_TERTIARY_TDM_RX_1:
+		slots = msm_tert_tdm_slot_num;
+		slot_width = msm_tert_tdm_slot_width;
+		slot_offset = tdm_slot_offset[TERTIARY_TDM_RX_1];
+		break;
+	case AFE_PORT_ID_TERTIARY_TDM_RX_2:
+		slots = msm_tert_tdm_slot_num;
+		slot_width = msm_tert_tdm_slot_width;
+		slot_offset = tdm_slot_offset[TERTIARY_TDM_RX_2];
+		break;
+	case AFE_PORT_ID_TERTIARY_TDM_RX_3:
+		slots = msm_tert_tdm_slot_num;
+		slot_width = msm_tert_tdm_slot_width;
+		slot_offset = tdm_slot_offset[TERTIARY_TDM_RX_3];
+		break;
+	case AFE_PORT_ID_TERTIARY_TDM_RX_4:
+		slots = msm_tert_tdm_slot_num;
+		slot_width = msm_tert_tdm_slot_width;
+		slot_offset = tdm_slot_offset[TERTIARY_TDM_RX_4];
+		break;
+	case AFE_PORT_ID_TERTIARY_TDM_RX_5:
+		slots = msm_tert_tdm_slot_num;
+		slot_width = msm_tert_tdm_slot_width;
+		slot_offset = tdm_slot_offset[TERTIARY_TDM_RX_5];
+		break;
+	case AFE_PORT_ID_TERTIARY_TDM_RX_6:
+		slots = msm_tert_tdm_slot_num;
+		slot_width = msm_tert_tdm_slot_width;
+		slot_offset = tdm_slot_offset[TERTIARY_TDM_RX_6];
+		break;
+	case AFE_PORT_ID_TERTIARY_TDM_RX_7:
+		slots = msm_tert_tdm_slot_num;
+		slot_width = msm_tert_tdm_slot_width;
+		slot_offset = tdm_slot_offset[TERTIARY_TDM_RX_7];
+		break;
+	case AFE_PORT_ID_TERTIARY_TDM_TX:
+		slots = msm_tert_tdm_slot_num;
+		slot_width = msm_tert_tdm_slot_width;
+		slot_offset = tdm_slot_offset[TERTIARY_TDM_TX_0];
+		break;
+	case AFE_PORT_ID_TERTIARY_TDM_TX_1:
+		slots = msm_tert_tdm_slot_num;
+		slot_width = msm_tert_tdm_slot_width;
+		slot_offset = tdm_slot_offset[TERTIARY_TDM_TX_1];
+		break;
+	case AFE_PORT_ID_TERTIARY_TDM_TX_2:
+		slots = msm_tert_tdm_slot_num;
+		slot_width = msm_tert_tdm_slot_width;
+		slot_offset = tdm_slot_offset[TERTIARY_TDM_TX_2];
+		break;
+	case AFE_PORT_ID_TERTIARY_TDM_TX_3:
+		slots = msm_tert_tdm_slot_num;
+		slot_width = msm_tert_tdm_slot_width;
+		slot_offset = tdm_slot_offset[TERTIARY_TDM_TX_3];
+		break;
+	case AFE_PORT_ID_TERTIARY_TDM_TX_4:
+		slots = msm_tert_tdm_slot_num;
+		slot_width = msm_tert_tdm_slot_width;
+		slot_offset = tdm_slot_offset[TERTIARY_TDM_TX_4];
+		break;
+	case AFE_PORT_ID_TERTIARY_TDM_TX_5:
+		slots = msm_tert_tdm_slot_num;
+		slot_width = msm_tert_tdm_slot_width;
+		slot_offset = tdm_slot_offset[TERTIARY_TDM_TX_5];
+		break;
+	case AFE_PORT_ID_TERTIARY_TDM_TX_6:
+		slots = msm_tert_tdm_slot_num;
+		slot_width = msm_tert_tdm_slot_width;
+		slot_offset = tdm_slot_offset[TERTIARY_TDM_TX_6];
+		break;
+	case AFE_PORT_ID_TERTIARY_TDM_TX_7:
+		slots = msm_tert_tdm_slot_num;
+		slot_width = msm_tert_tdm_slot_width;
+		slot_offset = tdm_slot_offset[TERTIARY_TDM_TX_7];
+		break;
+	case AFE_PORT_ID_QUATERNARY_TDM_RX:
+		slots = msm_quat_tdm_slot_num;
+		slot_width = msm_quat_tdm_slot_width;
+		slot_offset = tdm_slot_offset[QUATERNARY_TDM_RX_0];
+		break;
+	case AFE_PORT_ID_QUATERNARY_TDM_RX_1:
+		slots = msm_quat_tdm_slot_num;
+		slot_width = msm_quat_tdm_slot_width;
+		slot_offset = tdm_slot_offset[QUATERNARY_TDM_RX_1];
+		break;
+	case AFE_PORT_ID_QUATERNARY_TDM_RX_2:
+		slots = msm_quat_tdm_slot_num;
+		slot_width = msm_quat_tdm_slot_width;
+		slot_offset = tdm_slot_offset[QUATERNARY_TDM_RX_2];
+		break;
+	case AFE_PORT_ID_QUATERNARY_TDM_RX_3:
+		slots = msm_quat_tdm_slot_num;
+		slot_width = msm_quat_tdm_slot_width;
+		slot_offset = tdm_slot_offset[QUATERNARY_TDM_RX_3];
+		break;
+	case AFE_PORT_ID_QUATERNARY_TDM_RX_4:
+		slots = msm_quat_tdm_slot_num;
+		slot_width = msm_quat_tdm_slot_width;
+		slot_offset = tdm_slot_offset[QUATERNARY_TDM_RX_4];
+		break;
+	case AFE_PORT_ID_QUATERNARY_TDM_RX_5:
+		slots = msm_quat_tdm_slot_num;
+		slot_width = msm_quat_tdm_slot_width;
+		slot_offset = tdm_slot_offset[QUATERNARY_TDM_RX_5];
+		break;
+	case AFE_PORT_ID_QUATERNARY_TDM_RX_6:
+		slots = msm_quat_tdm_slot_num;
+		slot_width = msm_quat_tdm_slot_width;
+		slot_offset = tdm_slot_offset[QUATERNARY_TDM_RX_6];
+		break;
+	case AFE_PORT_ID_QUATERNARY_TDM_RX_7:
+		slots = msm_quat_tdm_slot_num;
+		slot_width = msm_quat_tdm_slot_width;
+		slot_offset = tdm_slot_offset[QUATERNARY_TDM_RX_7];
+		break;
+	case AFE_PORT_ID_QUATERNARY_TDM_TX:
+		slots = msm_quat_tdm_slot_num;
+		slot_width = msm_quat_tdm_slot_width;
+		slot_offset = tdm_slot_offset[QUATERNARY_TDM_TX_0];
+		break;
+	case AFE_PORT_ID_QUATERNARY_TDM_TX_1:
+		slots = msm_quat_tdm_slot_num;
+		slot_width = msm_quat_tdm_slot_width;
+		slot_offset = tdm_slot_offset[QUATERNARY_TDM_TX_1];
+		break;
+	case AFE_PORT_ID_QUATERNARY_TDM_TX_2:
+		slots = msm_quat_tdm_slot_num;
+		slot_width = msm_quat_tdm_slot_width;
+		slot_offset = tdm_slot_offset[QUATERNARY_TDM_TX_2];
+		break;
+	case AFE_PORT_ID_QUATERNARY_TDM_TX_3:
+		slots = msm_quat_tdm_slot_num;
+		slot_width = msm_quat_tdm_slot_width;
+		slot_offset = tdm_slot_offset[QUATERNARY_TDM_TX_3];
+		break;
+	case AFE_PORT_ID_QUATERNARY_TDM_TX_4:
+		slots = msm_quat_tdm_slot_num;
+		slot_width = msm_quat_tdm_slot_width;
+		slot_offset = tdm_slot_offset[QUATERNARY_TDM_TX_4];
+		break;
+	case AFE_PORT_ID_QUATERNARY_TDM_TX_5:
+		slots = msm_quat_tdm_slot_num;
+		slot_width = msm_quat_tdm_slot_width;
+		slot_offset = tdm_slot_offset[QUATERNARY_TDM_TX_5];
+		break;
+	case AFE_PORT_ID_QUATERNARY_TDM_TX_6:
+		slots = msm_quat_tdm_slot_num;
+		slot_width = msm_quat_tdm_slot_width;
+		slot_offset = tdm_slot_offset[QUATERNARY_TDM_TX_6];
+		break;
+	case AFE_PORT_ID_QUATERNARY_TDM_TX_7:
+		slots = msm_quat_tdm_slot_num;
+		slot_width = msm_quat_tdm_slot_width;
+		slot_offset = tdm_slot_offset[QUATERNARY_TDM_TX_7];
+		break;
+	default:
+		pr_err("%s: dai id 0x%x not supported\n",
+				__func__, cpu_dai->id);
+		return -EINVAL;
+	}
+
+	for (i = 0; i < TDM_SLOT_OFFSET_MAX; i++) {
+		if (slot_offset[i] != AFE_SLOT_MAPPING_OFFSET_INVALID)
+			offset_channels++;
+		else
+			break;
+	}
+
+	if (offset_channels == 0) {
+		pr_err("%s: slot offset not supported, offset_channels %d\n",
+			__func__, offset_channels);
+		return -EINVAL;
+	}
+
+	if (channels > offset_channels) {
+		pr_err("%s: channels %d exceed offset_channels %d\n",
+			__func__, channels, offset_channels);
+		return -EINVAL;
+	}
+
+	slot_mask = tdm_param_set_slot_mask(slots);
+	if (!slot_mask) {
+		pr_err("%s: invalid slot_mask 0x%x\n",
+			__func__, slot_mask);
+		return -EINVAL;
+	}
+
+	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
+		ret = snd_soc_dai_set_tdm_slot(cpu_dai, 0, slot_mask,
+				slots, slot_width);
+		if (ret < 0) {
+			pr_err("%s: failed to set tdm slot, err:%d\n",
+				__func__, ret);
+			goto end;
+		}
+
+		ret = snd_soc_dai_set_channel_map(cpu_dai,
+			0, NULL, channels, slot_offset);
+		if (ret < 0) {
+			pr_err("%s: failed to set channel map, err:%d\n",
+				__func__, ret);
+			goto end;
+		}
+	} else {
+		ret = snd_soc_dai_set_tdm_slot(cpu_dai, slot_mask, 0,
+					slots, slot_width);
+		if (ret < 0) {
+			pr_err("%s: failed to set tdm slot, err:%d\n",
+				   __func__, ret);
+			goto end;
+		}
+
+		ret = snd_soc_dai_set_channel_map(cpu_dai,
+					channels, slot_offset, 0, NULL);
+		if (ret < 0) {
+			pr_err("%s: failed to set channel map, err:%d\n",
+				   __func__, ret);
+			goto end;
+		}
+	}
+
+	clk_freq = rate * slot_width * slots;
+	ret = snd_soc_dai_set_sysclk(cpu_dai, 0, clk_freq, SND_SOC_CLOCK_OUT);
+	if (ret < 0) {
+		pr_err("%s: failed to set tdm clk, err:%d\n",
+				__func__, ret);
+	}
+
+end:
+	return ret;
+}
+
+static struct snd_soc_ops msm8996_tdm_be_ops = {
+	.hw_params = msm8996_tdm_snd_hw_params,
+};
+
 
 static const struct soc_enum msm_snd_enum[] = {
 	SOC_ENUM_SINGLE_EXT(2, spk_function),
@@ -1586,6 +6228,14 @@ static const struct soc_enum msm_snd_enum[] = {
 	SOC_ENUM_SINGLE_EXT(ARRAY_SIZE(slim6_rx_bit_format_text),
 			    slim6_rx_bit_format_text),
 	SOC_ENUM_SINGLE_EXT(2, slim6_rx_ch_text),
+	SOC_ENUM_SINGLE_EXT(ARRAY_SIZE(tdm_ch_text), tdm_ch_text),
+	SOC_ENUM_SINGLE_EXT(ARRAY_SIZE(tdm_bit_format_text),
+				tdm_bit_format_text),
+	SOC_ENUM_SINGLE_EXT(ARRAY_SIZE(tdm_rate_text), tdm_rate_text),
+	SOC_ENUM_SINGLE_EXT(ARRAY_SIZE(tdm_slot_num_text),
+				tdm_slot_num_text),
+	SOC_ENUM_SINGLE_EXT(ARRAY_SIZE(tdm_slot_width_text),
+				tdm_slot_width_text),
 };
 
 static const struct snd_kcontrol_new msm_snd_controls[] = {
@@ -1632,6 +6282,500 @@ static const struct snd_kcontrol_new msm_snd_controls[] = {
 			msm8996_hifi_put),
 	SOC_ENUM_EXT("VI_FEED_TX Channels", msm_snd_enum[12],
 			msm_vi_feed_tx_ch_get, msm_vi_feed_tx_ch_put),
+	SOC_ENUM_EXT("PRI_MI2S BitWidth", msm8996_mi2s_snd_enum[0],
+			pri_mi2s_bit_format_get, pri_mi2s_bit_format_put),
+	SOC_ENUM_EXT("SEC_MI2S BitWidth", msm8996_mi2s_snd_enum[0],
+			sec_mi2s_bit_format_get, sec_mi2s_bit_format_put),
+	SOC_ENUM_EXT("TERT_MI2S BitWidth", msm8996_mi2s_snd_enum[0],
+			tert_mi2s_bit_format_get, tert_mi2s_bit_format_put),
+	SOC_ENUM_EXT("QUAT_MI2S BitWidth", msm8996_mi2s_snd_enum[0],
+			quat_mi2s_bit_format_get, quat_mi2s_bit_format_put),
+	SOC_ENUM_EXT("PRI_MI2S SampleRate", msm8996_mi2s_snd_enum[1],
+			pri_mi2s_sample_rate_get, pri_mi2s_sample_rate_put),
+	SOC_ENUM_EXT("SEC_MI2S SampleRate", msm8996_mi2s_snd_enum[1],
+			sec_mi2s_sample_rate_get, sec_mi2s_sample_rate_put),
+	SOC_ENUM_EXT("TERT_MI2S SampleRate", msm8996_mi2s_snd_enum[1],
+			tert_mi2s_sample_rate_get, tert_mi2s_sample_rate_put),
+	SOC_ENUM_EXT("QUAT_MI2S SampleRate", msm8996_mi2s_snd_enum[1],
+			quat_mi2s_sample_rate_get, quat_mi2s_sample_rate_put),
+	SOC_ENUM_EXT("PRI_MI2S_RX Channels", msm8996_mi2s_snd_enum[2],
+			msm_pri_mi2s_rx_ch_get, msm_pri_mi2s_rx_ch_put),
+	SOC_ENUM_EXT("PRI_MI2S_TX Channels", msm8996_mi2s_snd_enum[3],
+			msm_pri_mi2s_tx_ch_get, msm_pri_mi2s_tx_ch_put),
+	SOC_ENUM_EXT("SEC_MI2S_RX Channels", msm8996_mi2s_snd_enum[4],
+			msm_sec_mi2s_rx_ch_get, msm_sec_mi2s_rx_ch_put),
+	SOC_ENUM_EXT("SEC_MI2S_TX Channels", msm8996_mi2s_snd_enum[5],
+			msm_sec_mi2s_tx_ch_get, msm_sec_mi2s_tx_ch_put),
+	SOC_ENUM_EXT("TERT_MI2S_RX Channels", msm8996_mi2s_snd_enum[6],
+			msm_tert_mi2s_rx_ch_get, msm_tert_mi2s_rx_ch_put),
+	SOC_ENUM_EXT("TERT_MI2S_TX Channels", msm8996_mi2s_snd_enum[7],
+			msm_tert_mi2s_tx_ch_get, msm_tert_mi2s_tx_ch_put),
+	SOC_ENUM_EXT("QUAT_MI2S_RX Channels", msm8996_mi2s_snd_enum[8],
+			msm_quat_mi2s_rx_ch_get, msm_quat_mi2s_rx_ch_put),
+	SOC_ENUM_EXT("QUAT_MI2S_TX Channels", msm8996_mi2s_snd_enum[9],
+			msm_quat_mi2s_tx_ch_get, msm_quat_mi2s_tx_ch_put),
+	SOC_ENUM_EXT("Speaker ID", speaker_id_enum, msm_speaker_id_get, NULL),
+	SOC_SINGLE_EXT("Version", 0, 0, UINT_MAX, 0, msm_version_get, NULL),
+	SOC_ENUM_EXT("USB_AUDIO_RX Channels", usb_rx_chs,
+			usb_audio_rx_ch_get, usb_audio_rx_ch_put),
+	SOC_ENUM_EXT("USB_AUDIO_TX Channels", usb_tx_chs,
+			usb_audio_tx_ch_get, usb_audio_tx_ch_put),
+	SOC_ENUM_EXT("USB_AUDIO_RX SampleRate", usb_rx_sample_rate,
+			usb_audio_rx_sample_rate_get,
+			usb_audio_rx_sample_rate_put),
+	SOC_ENUM_EXT("USB_AUDIO_TX SampleRate", usb_tx_sample_rate,
+			usb_audio_tx_sample_rate_get,
+			usb_audio_tx_sample_rate_put),
+	SOC_ENUM_EXT("USB_AUDIO_RX Format", usb_rx_format,
+			usb_audio_rx_format_get, usb_audio_rx_format_put),
+	SOC_ENUM_EXT("USB_AUDIO_TX Format", usb_tx_format,
+			usb_audio_tx_format_get, usb_audio_tx_format_put),
+	SOC_ENUM_EXT("PRI_TDM_TX_0 Channels", msm_snd_enum[16],
+			msm_pri_tdm_tx_0_ch_get, msm_pri_tdm_tx_0_ch_put),
+	SOC_ENUM_EXT("PRI_TDM_TX_1 Channels", msm_snd_enum[16],
+			msm_pri_tdm_tx_1_ch_get, msm_pri_tdm_tx_1_ch_put),
+	SOC_ENUM_EXT("PRI_TDM_TX_2 Channels", msm_snd_enum[16],
+			msm_pri_tdm_tx_2_ch_get, msm_pri_tdm_tx_2_ch_put),
+	SOC_ENUM_EXT("PRI_TDM_TX_3 Channels", msm_snd_enum[16],
+			msm_pri_tdm_tx_3_ch_get, msm_pri_tdm_tx_3_ch_put),
+	SOC_ENUM_EXT("PRI_TDM_RX_0 Channels", msm_snd_enum[16],
+			msm_pri_tdm_rx_0_ch_get, msm_pri_tdm_rx_0_ch_put),
+	SOC_ENUM_EXT("PRI_TDM_RX_1 Channels", msm_snd_enum[16],
+			msm_pri_tdm_rx_1_ch_get, msm_pri_tdm_rx_1_ch_put),
+	SOC_ENUM_EXT("PRI_TDM_RX_2 Channels", msm_snd_enum[16],
+			msm_pri_tdm_rx_2_ch_get, msm_pri_tdm_rx_2_ch_put),
+	SOC_ENUM_EXT("PRI_TDM_RX_3 Channels", msm_snd_enum[16],
+			msm_pri_tdm_rx_3_ch_get, msm_pri_tdm_rx_3_ch_put),
+	SOC_ENUM_EXT("SEC_TDM_RX_0 Channels", msm_snd_enum[16],
+			msm_sec_tdm_rx_0_ch_get, msm_sec_tdm_rx_0_ch_put),
+	SOC_ENUM_EXT("SEC_TDM_RX_1 Channels", msm_snd_enum[16],
+			msm_sec_tdm_rx_1_ch_get, msm_sec_tdm_rx_1_ch_put),
+	SOC_ENUM_EXT("SEC_TDM_RX_2 Channels", msm_snd_enum[16],
+			msm_sec_tdm_rx_2_ch_get, msm_sec_tdm_rx_2_ch_put),
+	SOC_ENUM_EXT("SEC_TDM_RX_3 Channels", msm_snd_enum[16],
+			msm_sec_tdm_rx_3_ch_get, msm_sec_tdm_rx_3_ch_put),
+	SOC_ENUM_EXT("SEC_TDM_TX_0 Channels", msm_snd_enum[16],
+			msm_sec_tdm_tx_0_ch_get, msm_sec_tdm_tx_0_ch_put),
+	SOC_ENUM_EXT("SEC_TDM_TX_1 Channels", msm_snd_enum[16],
+			msm_sec_tdm_tx_1_ch_get, msm_sec_tdm_tx_1_ch_put),
+	SOC_ENUM_EXT("SEC_TDM_TX_2 Channels", msm_snd_enum[16],
+			msm_sec_tdm_tx_2_ch_get, msm_sec_tdm_tx_2_ch_put),
+	SOC_ENUM_EXT("SEC_TDM_TX_3 Channels", msm_snd_enum[16],
+			msm_sec_tdm_tx_3_ch_get, msm_sec_tdm_tx_3_ch_put),
+	SOC_ENUM_EXT("TERT_TDM_RX_0 Channels", msm_snd_enum[16],
+			msm_tert_tdm_rx_0_ch_get, msm_tert_tdm_rx_0_ch_put),
+	SOC_ENUM_EXT("TERT_TDM_RX_1 Channels", msm_snd_enum[16],
+			msm_tert_tdm_rx_1_ch_get, msm_tert_tdm_rx_1_ch_put),
+	SOC_ENUM_EXT("TERT_TDM_RX_2 Channels", msm_snd_enum[16],
+			msm_tert_tdm_rx_2_ch_get, msm_tert_tdm_rx_2_ch_put),
+	SOC_ENUM_EXT("TERT_TDM_RX_3 Channels", msm_snd_enum[16],
+			msm_tert_tdm_rx_3_ch_get, msm_tert_tdm_rx_3_ch_put),
+	SOC_ENUM_EXT("TERT_TDM_TX_0 Channels", msm_snd_enum[16],
+			msm_tert_tdm_tx_0_ch_get, msm_tert_tdm_tx_0_ch_put),
+	SOC_ENUM_EXT("TERT_TDM_TX_1 Channels", msm_snd_enum[16],
+			msm_tert_tdm_tx_1_ch_get, msm_tert_tdm_tx_1_ch_put),
+	SOC_ENUM_EXT("TERT_TDM_TX_2 Channels", msm_snd_enum[16],
+			msm_tert_tdm_tx_2_ch_get, msm_tert_tdm_tx_2_ch_put),
+	SOC_ENUM_EXT("TERT_TDM_TX_3 Channels", msm_snd_enum[16],
+			msm_tert_tdm_tx_3_ch_get, msm_tert_tdm_tx_3_ch_put),
+	SOC_ENUM_EXT("QUAT_TDM_RX_0 Channels", msm_snd_enum[16],
+			msm_quat_tdm_rx_0_ch_get, msm_quat_tdm_rx_0_ch_put),
+	SOC_ENUM_EXT("QUAT_TDM_RX_1 Channels", msm_snd_enum[16],
+			msm_quat_tdm_rx_1_ch_get, msm_quat_tdm_rx_1_ch_put),
+	SOC_ENUM_EXT("QUAT_TDM_RX_2 Channels", msm_snd_enum[16],
+			msm_quat_tdm_rx_2_ch_get, msm_quat_tdm_rx_2_ch_put),
+	SOC_ENUM_EXT("QUAT_TDM_RX_3 Channels", msm_snd_enum[16],
+			msm_quat_tdm_rx_3_ch_get, msm_quat_tdm_rx_3_ch_put),
+	SOC_ENUM_EXT("QUAT_TDM_TX_0 Channels", msm_snd_enum[16],
+			msm_quat_tdm_tx_0_ch_get, msm_quat_tdm_tx_0_ch_put),
+	SOC_ENUM_EXT("QUAT_TDM_TX_1 Channels", msm_snd_enum[16],
+			msm_quat_tdm_tx_1_ch_get, msm_quat_tdm_tx_1_ch_put),
+	SOC_ENUM_EXT("QUAT_TDM_TX_2 Channels", msm_snd_enum[16],
+			msm_quat_tdm_tx_2_ch_get, msm_quat_tdm_tx_2_ch_put),
+	SOC_ENUM_EXT("QUAT_TDM_TX_3 Channels", msm_snd_enum[16],
+			msm_quat_tdm_tx_3_ch_get, msm_quat_tdm_tx_3_ch_put),
+	SOC_ENUM_EXT("PRI_TDM_TX_0 Bit Format", msm_snd_enum[17],
+			msm_pri_tdm_tx_0_bit_format_get,
+			msm_pri_tdm_tx_0_bit_format_put),
+	SOC_ENUM_EXT("PRI_TDM_TX_1 Bit Format", msm_snd_enum[17],
+			msm_pri_tdm_tx_1_bit_format_get,
+			msm_pri_tdm_tx_1_bit_format_put),
+	SOC_ENUM_EXT("PRI_TDM_TX_2 Bit Format", msm_snd_enum[17],
+			msm_pri_tdm_tx_2_bit_format_get,
+			msm_pri_tdm_tx_2_bit_format_put),
+	SOC_ENUM_EXT("PRI_TDM_TX_3 Bit Format", msm_snd_enum[17],
+			msm_pri_tdm_tx_3_bit_format_get,
+			msm_pri_tdm_tx_3_bit_format_put),
+	SOC_ENUM_EXT("PRI_TDM_RX_0 Bit Format", msm_snd_enum[17],
+			msm_pri_tdm_rx_0_bit_format_get,
+			msm_pri_tdm_rx_0_bit_format_put),
+	SOC_ENUM_EXT("PRI_TDM_RX_1 Bit Format", msm_snd_enum[17],
+			msm_pri_tdm_rx_1_bit_format_get,
+			msm_pri_tdm_rx_1_bit_format_put),
+	SOC_ENUM_EXT("PRI_TDM_RX_2 Bit Format", msm_snd_enum[17],
+			msm_pri_tdm_rx_2_bit_format_get,
+			msm_pri_tdm_rx_2_bit_format_put),
+	SOC_ENUM_EXT("PRI_TDM_RX_3 Bit Format", msm_snd_enum[17],
+			msm_pri_tdm_rx_3_bit_format_get,
+			msm_pri_tdm_rx_3_bit_format_put),
+	SOC_ENUM_EXT("SEC_TDM_RX_0 Bit Format", msm_snd_enum[17],
+			msm_sec_tdm_rx_0_bit_format_get,
+			msm_sec_tdm_rx_0_bit_format_put),
+	SOC_ENUM_EXT("SEC_TDM_RX_1 Bit Format", msm_snd_enum[17],
+			msm_sec_tdm_rx_1_bit_format_get,
+			msm_sec_tdm_rx_1_bit_format_put),
+	SOC_ENUM_EXT("SEC_TDM_RX_2 Bit Format", msm_snd_enum[17],
+			msm_sec_tdm_rx_2_bit_format_get,
+			msm_sec_tdm_rx_2_bit_format_put),
+	SOC_ENUM_EXT("SEC_TDM_RX_3 Bit Format", msm_snd_enum[17],
+			msm_sec_tdm_rx_3_bit_format_get,
+			msm_sec_tdm_rx_3_bit_format_put),
+	SOC_ENUM_EXT("SEC_TDM_TX_0 Bit Format", msm_snd_enum[17],
+			msm_sec_tdm_tx_0_bit_format_get,
+			msm_sec_tdm_tx_0_bit_format_put),
+	SOC_ENUM_EXT("SEC_TDM_TX_1 Bit Format", msm_snd_enum[17],
+			msm_sec_tdm_tx_1_bit_format_get,
+			msm_sec_tdm_tx_1_bit_format_put),
+	SOC_ENUM_EXT("SEC_TDM_TX_2 Bit Format", msm_snd_enum[17],
+			msm_sec_tdm_tx_2_bit_format_get,
+			msm_sec_tdm_tx_2_bit_format_put),
+	SOC_ENUM_EXT("SEC_TDM_TX_3 Bit Format", msm_snd_enum[17],
+			msm_sec_tdm_tx_3_bit_format_get,
+			msm_sec_tdm_tx_3_bit_format_put),
+	SOC_ENUM_EXT("TERT_TDM_RX_0 Bit Format", msm_snd_enum[17],
+			msm_tert_tdm_rx_0_bit_format_get,
+			msm_tert_tdm_rx_0_bit_format_put),
+	SOC_ENUM_EXT("TERT_TDM_RX_1 Bit Format", msm_snd_enum[17],
+			msm_tert_tdm_rx_1_bit_format_get,
+			msm_tert_tdm_rx_1_bit_format_put),
+	SOC_ENUM_EXT("TERT_TDM_RX_2 Bit Format", msm_snd_enum[17],
+			msm_tert_tdm_rx_2_bit_format_get,
+			msm_tert_tdm_rx_2_bit_format_put),
+	SOC_ENUM_EXT("TERT_TDM_RX_3 Bit Format", msm_snd_enum[17],
+			msm_tert_tdm_rx_3_bit_format_get,
+			msm_tert_tdm_rx_3_bit_format_put),
+	SOC_ENUM_EXT("TERT_TDM_TX_0 Bit Format", msm_snd_enum[17],
+			msm_tert_tdm_tx_0_bit_format_get,
+			msm_tert_tdm_tx_0_bit_format_put),
+	SOC_ENUM_EXT("TERT_TDM_TX_1 Bit Format", msm_snd_enum[17],
+			msm_tert_tdm_tx_1_bit_format_get,
+			msm_tert_tdm_tx_1_bit_format_put),
+	SOC_ENUM_EXT("TERT_TDM_TX_2 Bit Format", msm_snd_enum[17],
+			msm_tert_tdm_tx_2_bit_format_get,
+			msm_tert_tdm_tx_2_bit_format_put),
+	SOC_ENUM_EXT("TERT_TDM_TX_3 Bit Format", msm_snd_enum[17],
+			msm_tert_tdm_tx_3_bit_format_get,
+			msm_tert_tdm_tx_3_bit_format_put),
+	SOC_ENUM_EXT("QUAT_TDM_RX_0 Bit Format", msm_snd_enum[17],
+			msm_quat_tdm_rx_0_bit_format_get,
+			msm_quat_tdm_rx_0_bit_format_put),
+	SOC_ENUM_EXT("QUAT_TDM_RX_1 Bit Format", msm_snd_enum[17],
+			msm_quat_tdm_rx_1_bit_format_get,
+			msm_quat_tdm_rx_1_bit_format_put),
+	SOC_ENUM_EXT("QUAT_TDM_RX_2 Bit Format", msm_snd_enum[17],
+			msm_quat_tdm_rx_2_bit_format_get,
+			msm_quat_tdm_rx_2_bit_format_put),
+	SOC_ENUM_EXT("QUAT_TDM_RX_3 Bit Format", msm_snd_enum[17],
+			msm_quat_tdm_rx_3_bit_format_get,
+			msm_quat_tdm_rx_3_bit_format_put),
+	SOC_ENUM_EXT("QUAT_TDM_TX_0 Bit Format", msm_snd_enum[17],
+			msm_quat_tdm_tx_0_bit_format_get,
+			msm_quat_tdm_tx_0_bit_format_put),
+	SOC_ENUM_EXT("QUAT_TDM_TX_1 Bit Format", msm_snd_enum[17],
+			msm_quat_tdm_tx_1_bit_format_get,
+			msm_quat_tdm_tx_1_bit_format_put),
+	SOC_ENUM_EXT("QUAT_TDM_TX_2 Bit Format", msm_snd_enum[17],
+			msm_quat_tdm_tx_2_bit_format_get,
+			msm_quat_tdm_tx_2_bit_format_put),
+	SOC_ENUM_EXT("QUAT_TDM_TX_3 Bit Format", msm_snd_enum[17],
+			msm_quat_tdm_tx_3_bit_format_get,
+			msm_quat_tdm_tx_3_bit_format_put),
+	SOC_ENUM_EXT("PRI_TDM SampleRate", msm_snd_enum[18],
+			msm_pri_tdm_rate_get, msm_pri_tdm_rate_put),
+	SOC_ENUM_EXT("PRI_TDM Slot Number", msm_snd_enum[19],
+			msm_pri_tdm_slot_num_get, msm_pri_tdm_slot_num_put),
+	SOC_ENUM_EXT("PRI_TDM Slot Width", msm_snd_enum[20],
+			msm_pri_tdm_slot_width_get, msm_pri_tdm_slot_width_put),
+	SOC_ENUM_EXT("SEC_TDM SampleRate", msm_snd_enum[18],
+			msm_sec_tdm_rate_get, msm_sec_tdm_rate_put),
+	SOC_ENUM_EXT("SEC_TDM Slot Number", msm_snd_enum[19],
+			msm_sec_tdm_slot_num_get, msm_sec_tdm_slot_num_put),
+	SOC_ENUM_EXT("SEC_TDM Slot Width", msm_snd_enum[20],
+			msm_sec_tdm_slot_width_get, msm_sec_tdm_slot_width_put),
+	SOC_ENUM_EXT("TERT_TDM SampleRate", msm_snd_enum[18],
+			msm_tert_tdm_rate_get, msm_tert_tdm_rate_put),
+	SOC_ENUM_EXT("TERT_TDM Slot Number", msm_snd_enum[19],
+			msm_tert_tdm_slot_num_get, msm_tert_tdm_slot_num_put),
+	SOC_ENUM_EXT("TERT_TDM Slot Width", msm_snd_enum[20],
+			msm_tert_tdm_slot_width_get,
+			msm_tert_tdm_slot_width_put),
+	SOC_ENUM_EXT("QUAT_TDM SampleRate", msm_snd_enum[18],
+			msm_quat_tdm_rate_get, msm_quat_tdm_rate_put),
+	SOC_ENUM_EXT("QUAT_TDM Slot Number", msm_snd_enum[19],
+			msm_quat_tdm_slot_num_get, msm_quat_tdm_slot_num_put),
+	SOC_ENUM_EXT("QUAT_TDM Slot Width", msm_snd_enum[20],
+			msm_quat_tdm_slot_width_get,
+			msm_quat_tdm_slot_width_put),
+#ifdef CONFIG_MACH_XIAOMI_A8
+	SOC_ENUM_EXT("Ultrasound Power", ultrasound_power,
+			ultrasound_power_get, ultrasound_power_put),
+#endif
+	SOC_SINGLE_MULTI_EXT("PRI_TDM_RX_0 Slot Mapping", SND_SOC_NOPM,
+			PRIMARY_TDM_RX_0, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("PRI_TDM_RX_1 Slot Mapping", SND_SOC_NOPM,
+			PRIMARY_TDM_RX_1, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("PRI_TDM_RX_2 Slot Mapping", SND_SOC_NOPM,
+			PRIMARY_TDM_RX_2, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("PRI_TDM_RX_3 Slot Mapping", SND_SOC_NOPM,
+			PRIMARY_TDM_RX_3, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("PRI_TDM_RX_4 Slot Mapping", SND_SOC_NOPM,
+			PRIMARY_TDM_RX_4, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("PRI_TDM_RX_5 Slot Mapping", SND_SOC_NOPM,
+			PRIMARY_TDM_RX_5, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("PRI_TDM_RX_6 Slot Mapping", SND_SOC_NOPM,
+			PRIMARY_TDM_RX_6, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("PRI_TDM_RX_7 Slot Mapping", SND_SOC_NOPM,
+			PRIMARY_TDM_RX_7, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("PRI_TDM_TX_0 Slot Mapping", SND_SOC_NOPM,
+			PRIMARY_TDM_TX_0, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("PRI_TDM_TX_1 Slot Mapping", SND_SOC_NOPM,
+			PRIMARY_TDM_TX_1, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("PRI_TDM_TX_2 Slot Mapping", SND_SOC_NOPM,
+			PRIMARY_TDM_TX_2, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("PRI_TDM_TX_3 Slot Mapping", SND_SOC_NOPM,
+			PRIMARY_TDM_TX_3, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("PRI_TDM_TX_4 Slot Mapping", SND_SOC_NOPM,
+			PRIMARY_TDM_TX_4, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("PRI_TDM_TX_5 Slot Mapping", SND_SOC_NOPM,
+			PRIMARY_TDM_TX_5, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("PRI_TDM_TX_6 Slot Mapping", SND_SOC_NOPM,
+			PRIMARY_TDM_TX_6, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("PRI_TDM_TX_7 Slot Mapping", SND_SOC_NOPM,
+			PRIMARY_TDM_TX_7, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("SEC_TDM_RX_0 Slot Mapping", SND_SOC_NOPM,
+			SECONDARY_TDM_RX_0, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("SEC_TDM_RX_1 Slot Mapping", SND_SOC_NOPM,
+			SECONDARY_TDM_RX_1, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("SEC_TDM_RX_2 Slot Mapping", SND_SOC_NOPM,
+			SECONDARY_TDM_RX_2, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("SEC_TDM_RX_3 Slot Mapping", SND_SOC_NOPM,
+			SECONDARY_TDM_RX_3, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("SEC_TDM_RX_4 Slot Mapping", SND_SOC_NOPM,
+			SECONDARY_TDM_RX_4, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("SEC_TDM_RX_5 Slot Mapping", SND_SOC_NOPM,
+			SECONDARY_TDM_RX_5, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("SEC_TDM_RX_6 Slot Mapping", SND_SOC_NOPM,
+			SECONDARY_TDM_RX_6, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("SEC_TDM_RX_7 Slot Mapping", SND_SOC_NOPM,
+			SECONDARY_TDM_RX_7, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("SEC_TDM_TX_0 Slot Mapping", SND_SOC_NOPM,
+			SECONDARY_TDM_TX_0, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("SEC_TDM_TX_1 Slot Mapping", SND_SOC_NOPM,
+			SECONDARY_TDM_TX_1, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("SEC_TDM_TX_2 Slot Mapping", SND_SOC_NOPM,
+			SECONDARY_TDM_TX_2, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("SEC_TDM_TX_3 Slot Mapping", SND_SOC_NOPM,
+			SECONDARY_TDM_TX_3, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("SEC_TDM_TX_4 Slot Mapping", SND_SOC_NOPM,
+			SECONDARY_TDM_TX_4, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("SEC_TDM_TX_5 Slot Mapping", SND_SOC_NOPM,
+			SECONDARY_TDM_TX_5, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("SEC_TDM_TX_6 Slot Mapping", SND_SOC_NOPM,
+			SECONDARY_TDM_TX_6, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("SEC_TDM_TX_7 Slot Mapping", SND_SOC_NOPM,
+			SECONDARY_TDM_TX_7, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("TERT_TDM_RX_0 Slot Mapping", SND_SOC_NOPM,
+			TERTIARY_TDM_RX_0, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("TERT_TDM_RX_1 Slot Mapping", SND_SOC_NOPM,
+			TERTIARY_TDM_RX_1, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("TERT_TDM_RX_2 Slot Mapping", SND_SOC_NOPM,
+			TERTIARY_TDM_RX_2, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("TERT_TDM_RX_3 Slot Mapping", SND_SOC_NOPM,
+			TERTIARY_TDM_RX_3, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("TERT_TDM_RX_4 Slot Mapping", SND_SOC_NOPM,
+			TERTIARY_TDM_RX_4, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("TERT_TDM_RX_5 Slot Mapping", SND_SOC_NOPM,
+			TERTIARY_TDM_RX_5, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("TERT_TDM_RX_6 Slot Mapping", SND_SOC_NOPM,
+			TERTIARY_TDM_RX_6, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("TERT_TDM_RX_7 Slot Mapping", SND_SOC_NOPM,
+			TERTIARY_TDM_RX_7, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("TERT_TDM_TX_0 Slot Mapping", SND_SOC_NOPM,
+			TERTIARY_TDM_TX_0, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("TERT_TDM_TX_1 Slot Mapping", SND_SOC_NOPM,
+			TERTIARY_TDM_TX_1, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("TERT_TDM_TX_2 Slot Mapping", SND_SOC_NOPM,
+			TERTIARY_TDM_TX_2, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("TERT_TDM_TX_3 Slot Mapping", SND_SOC_NOPM,
+			TERTIARY_TDM_TX_3, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("TERT_TDM_TX_4 Slot Mapping", SND_SOC_NOPM,
+			TERTIARY_TDM_TX_4, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("TERT_TDM_TX_5 Slot Mapping", SND_SOC_NOPM,
+			TERTIARY_TDM_TX_5, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("TERT_TDM_TX_6 Slot Mapping", SND_SOC_NOPM,
+			TERTIARY_TDM_TX_6, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("TERT_TDM_TX_7 Slot Mapping", SND_SOC_NOPM,
+			TERTIARY_TDM_TX_7, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("QUAT_TDM_RX_0 Slot Mapping", SND_SOC_NOPM,
+			QUATERNARY_TDM_RX_0, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("QUAT_TDM_RX_1 Slot Mapping", SND_SOC_NOPM,
+			QUATERNARY_TDM_RX_1, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("QUAT_TDM_RX_2 Slot Mapping", SND_SOC_NOPM,
+			QUATERNARY_TDM_RX_2, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("QUAT_TDM_RX_3 Slot Mapping", SND_SOC_NOPM,
+			QUATERNARY_TDM_RX_3, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("QUAT_TDM_RX_4 Slot Mapping", SND_SOC_NOPM,
+			QUATERNARY_TDM_RX_4, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("QUAT_TDM_RX_5 Slot Mapping", SND_SOC_NOPM,
+			QUATERNARY_TDM_RX_5, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("QUAT_TDM_RX_6 Slot Mapping", SND_SOC_NOPM,
+			QUATERNARY_TDM_RX_6, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("QUAT_TDM_RX_7 Slot Mapping", SND_SOC_NOPM,
+			QUATERNARY_TDM_RX_7, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("QUAT_TDM_TX_0 Slot Mapping", SND_SOC_NOPM,
+			QUATERNARY_TDM_TX_0, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("QUAT_TDM_TX_1 Slot Mapping", SND_SOC_NOPM,
+			QUATERNARY_TDM_TX_1, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("QUAT_TDM_TX_2 Slot Mapping", SND_SOC_NOPM,
+			QUATERNARY_TDM_TX_2, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("QUAT_TDM_TX_3 Slot Mapping", SND_SOC_NOPM,
+			QUATERNARY_TDM_TX_3, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("QUAT_TDM_TX_4 Slot Mapping", SND_SOC_NOPM,
+			QUATERNARY_TDM_TX_4, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("QUAT_TDM_TX_5 Slot Mapping", SND_SOC_NOPM,
+			QUATERNARY_TDM_TX_5, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("QUAT_TDM_TX_6 Slot Mapping", SND_SOC_NOPM,
+			QUATERNARY_TDM_TX_6, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
+	SOC_SINGLE_MULTI_EXT("QUAT_TDM_TX_7 Slot Mapping", SND_SOC_NOPM,
+			QUATERNARY_TDM_TX_7, 0xFFFF,
+			0, 8, msm_tdm_slot_mapping_get,
+			msm_tdm_slot_mapping_put),
 };
 
 static bool msm8996_swap_gnd_mic(struct snd_soc_codec *codec)
@@ -1797,7 +6941,7 @@ static int msm_audrx_init(struct snd_soc_pcm_runtime *rtd)
 	int err;
 	void *config_data;
 	struct snd_soc_codec *codec = rtd->codec;
-	struct snd_soc_dapm_context *dapm = &codec->dapm;
+	struct snd_soc_dapm_context *dapm = snd_soc_codec_get_dapm(codec);
 	struct snd_soc_dai *cpu_dai = rtd->cpu_dai;
 	struct snd_soc_dai *codec_dai = rtd->codec_dai;
 	struct snd_soc_pcm_runtime *rtd_aux = rtd->card->rtd_aux;
@@ -2015,13 +7159,11 @@ static void *def_tasha_mbhc_cal(void)
 
 	tasha_wcd_cal = kzalloc(WCD_MBHC_CAL_SIZE(WCD_MBHC_DEF_BUTTONS,
 				WCD9XXX_MBHC_DEF_RLOADS), GFP_KERNEL);
-	if (!tasha_wcd_cal) {
-		pr_err("%s: out of memory\n", __func__);
+	if (!tasha_wcd_cal)
 		return NULL;
-	}
 
 #define S(X, Y) ((WCD_MBHC_CAL_PLUG_TYPE_PTR(tasha_wcd_cal)->X) = (Y))
-	S(v_hs_max, 1500);
+	S(v_hs_max, 1700);
 #undef S
 #define S(X, Y) ((WCD_MBHC_CAL_BTN_DET_PTR(tasha_wcd_cal)->X) = (Y))
 	S(num_btn, WCD_MBHC_DEF_BUTTONS);
@@ -2032,14 +7174,23 @@ static void *def_tasha_mbhc_cal(void)
 		(sizeof(btn_cfg->_v_btn_low[0]) * btn_cfg->num_btn);
 
 	btn_high[0] = 75;
-	btn_high[1] = 150;
-	btn_high[2] = 237;
-	btn_high[3] = 500;
-	btn_high[4] = 500;
-	btn_high[5] = 500;
-	btn_high[6] = 500;
-	btn_high[7] = 500;
+	btn_high[1] = 260;
+	btn_high[2] = 750;
+	btn_high[3] = 750;
+	btn_high[4] = 750;
+	btn_high[5] = 750;
+	btn_high[6] = 750;
+	btn_high[7] = 750;
 
+	/* A 500ohm resistor is connected on headset mic pin on A7P4.3,
+	   for fixing the noise issue introduced by NFC P2P. So need
+	   re-calculate the button threshold
+	*/
+	if ((get_hw_version_devid() == 7) &&
+			(get_hw_version() & (HW_MAJOR_VERSION_MASK | HW_MINOR_VERSION_MASK)) > 0x43) {
+		btn_high[0] = 360;
+		btn_high[1] = 500;
+	}
 	return tasha_wcd_cal;
 }
 
@@ -2059,7 +7210,7 @@ static int msm_snd_hw_params(struct snd_pcm_substream *substream,
 
 	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
 		ret = snd_soc_dai_get_channel_map(codec_dai,
-					&tx_ch_cnt, tx_ch, &rx_ch_cnt , rx_ch);
+					&tx_ch_cnt, tx_ch, &rx_ch_cnt, rx_ch);
 		if (ret < 0) {
 			pr_err("%s: failed to get codec chan map, err:%d\n",
 				__func__, ret);
@@ -2078,7 +7229,7 @@ static int msm_snd_hw_params(struct snd_pcm_substream *substream,
 				  msm_slim_0_rx_ch);
 			rx_ch_count = msm_slim_0_rx_ch;
 		}
-		ret = snd_soc_dai_set_channel_map(cpu_dai, 0, 0,
+		ret = snd_soc_dai_set_channel_map(cpu_dai, 0, NULL,
 						  rx_ch_count, rx_ch);
 		if (ret < 0) {
 			pr_err("%s: failed to set cpu chan map, err:%d\n",
@@ -2090,7 +7241,7 @@ static int msm_snd_hw_params(struct snd_pcm_substream *substream,
 		pr_debug("%s: %s_tx_dai_id_%d_ch=%d\n", __func__,
 			 codec_dai->name, codec_dai->id, user_set_tx_ch);
 		ret = snd_soc_dai_get_channel_map(codec_dai,
-					 &tx_ch_cnt, tx_ch, &rx_ch_cnt , rx_ch);
+					 &tx_ch_cnt, tx_ch, &rx_ch_cnt, rx_ch);
 		if (ret < 0) {
 			pr_err("%s: failed to get codec chan map\n, err:%d\n",
 				__func__, ret);
@@ -2118,7 +7269,8 @@ static int msm_snd_hw_params(struct snd_pcm_substream *substream,
 			 tx_ch_cnt, dai_link->be_id);
 
 		ret = snd_soc_dai_set_channel_map(cpu_dai,
-						  user_set_tx_ch, tx_ch, 0 , 0);
+						  user_set_tx_ch,
+						  tx_ch, 0, NULL);
 		if (ret < 0) {
 			pr_err("%s: failed to set cpu chan map, err:%d\n",
 				__func__, ret);
@@ -2152,7 +7304,7 @@ static int msm_snd_cpe_hw_params(struct snd_pcm_substream *substream,
 	pr_debug("%s: %s_tx_dai_id_%d\n", __func__,
 		 codec_dai->name, codec_dai->id);
 	ret = snd_soc_dai_get_channel_map(codec_dai,
-				 &tx_ch_cnt, tx_ch, NULL , NULL);
+				 &tx_ch_cnt, tx_ch, NULL, NULL);
 	if (ret < 0) {
 		pr_err("%s: failed to get codec chan map\n, err:%d\n",
 			__func__, ret);
@@ -2165,7 +7317,7 @@ static int msm_snd_cpe_hw_params(struct snd_pcm_substream *substream,
 		 __func__, tx_ch_cnt, dai_link->be_id);
 
 	ret = snd_soc_dai_set_channel_map(cpu_dai,
-					  user_set_tx_ch, tx_ch, 0 , 0);
+					  user_set_tx_ch, tx_ch, 0, NULL);
 	if (ret < 0)
 		pr_err("%s: failed to set cpu chan map, err:%d\n",
 			__func__, ret);
@@ -2198,13 +7350,13 @@ static int msm8996_slimbus_2_hw_params(struct snd_pcm_substream *substream,
 		pr_debug("%s: %s rx_dai_id = %d  num_ch = %d\n", __func__,
 			codec_dai->name, codec_dai->id, num_rx_ch);
 		ret = snd_soc_dai_get_channel_map(codec_dai,
-				&tx_ch_cnt, tx_ch, &rx_ch_cnt , rx_ch);
+				&tx_ch_cnt, tx_ch, &rx_ch_cnt, rx_ch);
 		if (ret < 0) {
 			pr_err("%s: failed to get codec chan map, err:%d\n",
 				__func__, ret);
 			goto end;
 		}
-		ret = snd_soc_dai_set_channel_map(cpu_dai, 0, 0,
+		ret = snd_soc_dai_set_channel_map(cpu_dai, 0, NULL,
 				num_rx_ch, rx_ch);
 		if (ret < 0) {
 			pr_err("%s: failed to set cpu chan map, err:%d\n",
@@ -2216,14 +7368,14 @@ static int msm8996_slimbus_2_hw_params(struct snd_pcm_substream *substream,
 		pr_debug("%s: %s  tx_dai_id = %d  num_ch = %d\n", __func__,
 			codec_dai->name, codec_dai->id, num_tx_ch);
 		ret = snd_soc_dai_get_channel_map(codec_dai,
-				&tx_ch_cnt, tx_ch, &rx_ch_cnt , rx_ch);
+				&tx_ch_cnt, tx_ch, &rx_ch_cnt, rx_ch);
 		if (ret < 0) {
 			pr_err("%s: failed to get codec chan map, err:%d\n",
 				__func__, ret);
 			goto end;
 		}
 		ret = snd_soc_dai_set_channel_map(cpu_dai,
-				num_tx_ch, tx_ch, 0 , 0);
+				num_tx_ch, tx_ch, 0, NULL);
 		if (ret < 0) {
 			pr_err("%s: failed to set cpu chan map, err:%d\n",
 				__func__, ret);
@@ -2415,7 +7567,6 @@ static struct snd_soc_dai_link msm8996_common_dai_links[] = {
 		.dynamic = 1,
 		.async_ops = ASYNC_DPCM_SND_SOC_HW_PARAMS,
 		.dpcm_playback = 1,
-		.dpcm_capture = 1,
 		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
 			 SND_SOC_DPCM_TRIGGER_POST},
 		.codec_dai_name = "snd-soc-dummy-dai",
@@ -2910,12 +8061,13 @@ static struct snd_soc_dai_link msm8996_common_dai_links[] = {
 		.be_id = MSM_FRONTEND_DAI_MULTIMEDIA15,
 	},
 	{
-		.name = "MSM8996 Compress9",
-		.stream_name = "Compress9",
+		.name = "MSM8996 ULL NOIRQ_2",
+		.stream_name = "MM_NOIRQ_2",
 		.cpu_dai_name = "MultiMedia16",
-		.platform_name = "msm-compress-dsp",
+		.platform_name = "msm-pcm-dsp-noirq",
 		.dynamic = 1,
 		.dpcm_playback = 1,
+		.dpcm_capture = 1,
 		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
 			 SND_SOC_DPCM_TRIGGER_POST},
 		.codec_dai_name = "snd-soc-dummy-dai",
@@ -2961,8 +8113,595 @@ static struct snd_soc_dai_link msm8996_common_dai_links[] = {
 		.codec_name = "snd-soc-dummy",
 		.be_id = MSM_FRONTEND_DAI_VOICE2,
 	},
+	{
+		.name = "Primary MI2S RX_Hostless",
+		.stream_name = "Primary MI2S_RX Hostless Playback",
+		.cpu_dai_name = "PRI_MI2S_RX_HOSTLESS",
+		.platform_name = "msm-pcm-hostless",
+		.dynamic = 1,
+		.dpcm_playback = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+			SND_SOC_DPCM_TRIGGER_POST},
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
+		.ignore_suspend = 1,
+		.ignore_pmdown_time = 1,
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+	},
+	{
+		.name = "Primary MI2S TX_Hostless",
+		.stream_name = "Primary MI2S_TX Hostless Capture",
+		.cpu_dai_name = "PRI_MI2S_TX_HOSTLESS",
+		.platform_name = "msm-pcm-hostless",
+		.dynamic = 1,
+		.dpcm_capture = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+			SND_SOC_DPCM_TRIGGER_POST},
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
+		.ignore_suspend = 1,
+		.ignore_pmdown_time = 1,
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+	},
+	{
+		.name = "Secondary MI2S RX_Hostless",
+		.stream_name = "Secondary MI2S_RX Hostless Playback",
+		.cpu_dai_name = "SEC_MI2S_RX_HOSTLESS",
+		.platform_name = "msm-pcm-hostless",
+		.dynamic = 1,
+		.dpcm_playback = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+			SND_SOC_DPCM_TRIGGER_POST},
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
+		.ignore_suspend = 1,
+		.ignore_pmdown_time = 1,
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+	},
+	{
+		.name = "Secondary MI2S TX_Hostless",
+		.stream_name = "Secondary MI2S_TX Hostless Capture",
+		.cpu_dai_name = "SEC_MI2S_TX_HOSTLESS",
+		.platform_name = "msm-pcm-hostless",
+		.dynamic = 1,
+		.dpcm_capture = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+			SND_SOC_DPCM_TRIGGER_POST},
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
+		.ignore_suspend = 1,
+		.ignore_pmdown_time = 1,
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+	},
+	{
+		.name = "Tertiary MI2S RX_Hostless",
+		.stream_name = "Tertiary MI2S_RX Hostless Playback",
+		.cpu_dai_name = "TERT_MI2S_RX_HOSTLESS",
+		.platform_name = "msm-pcm-hostless",
+		.dynamic = 1,
+		.dpcm_playback = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+			SND_SOC_DPCM_TRIGGER_POST},
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
+		.ignore_suspend = 1,
+		.ignore_pmdown_time = 1,
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+	},
+	{
+		.name = "Quaternary MI2S RX_Hostless",
+		.stream_name = "Quaternary MI2S_RX Hostless Playback",
+		.cpu_dai_name = "QUAT_MI2S_RX_HOSTLESS",
+		.platform_name = "msm-pcm-hostless",
+		.dynamic = 1,
+		.dpcm_playback = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+			SND_SOC_DPCM_TRIGGER_POST},
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
+		.ignore_suspend = 1,
+		.ignore_pmdown_time = 1,
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+	},
+	{
+		.name = "Quaternary MI2S TX_Hostless",
+		.stream_name = "Quaternary MI2S_TX Hostless Capture",
+		.cpu_dai_name = "QUAT_MI2S_TX_HOSTLESS",
+		.platform_name = "msm-pcm-hostless",
+		.dynamic = 1,
+		.dpcm_capture = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+			SND_SOC_DPCM_TRIGGER_POST},
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
+		.ignore_suspend = 1,
+		.ignore_pmdown_time = 1,
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+	},
 };
+static struct snd_soc_dai_link msm8996_tdm_fe_dai_links[] = {
+	{
+		.name = "Primary TDM RX 0 Hostless",
+		.stream_name = "Primary TDM RX 0 Hostless",
+		.cpu_dai_name = "PRI_TDM_RX_0_HOSTLESS",
+		.platform_name = "msm-pcm-hostless",
+		.dynamic = 1,
+		.dpcm_playback = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+				SND_SOC_DPCM_TRIGGER_POST},
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
+		.ignore_suspend = 1,
+		.ignore_pmdown_time = 1,
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+	},
+	{
+		.name = "Primary TDM RX 1 Hostless",
+		.stream_name = "Primary TDM RX 1 Hostless",
+		.cpu_dai_name = "PRI_TDM_RX_1_HOSTLESS",
+		.platform_name = "msm-pcm-hostless",
+		.dynamic = 1,
+		.dpcm_playback = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+				SND_SOC_DPCM_TRIGGER_POST},
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
+		.ignore_suspend = 1,
+		.ignore_pmdown_time = 1,
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+	},
+	{
+		.name = "Primary TDM RX 2 Hostless",
+		.stream_name = "Primary TDM RX 2 Hostless",
+		.cpu_dai_name = "PRI_TDM_RX_2_HOSTLESS",
+		.platform_name = "msm-pcm-hostless",
+		.dynamic = 1,
+		.dpcm_playback = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+				SND_SOC_DPCM_TRIGGER_POST},
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
+		.ignore_suspend = 1,
+		.ignore_pmdown_time = 1,
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+	},
+	{
+		.name = "Primary TDM RX 3 Hostless",
+		.stream_name = "Primary TDM RX 3 Hostless",
+		.cpu_dai_name = "PRI_TDM_RX_3_HOSTLESS",
+		.platform_name = "msm-pcm-hostless",
+		.dynamic = 1,
+		.dpcm_playback = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+				SND_SOC_DPCM_TRIGGER_POST},
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
+		.ignore_suspend = 1,
+		.ignore_pmdown_time = 1,
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+	},
+	{
+		.name = "Primary TDM TX 0 Hostless",
+		.stream_name = "Primary TDM TX 0 Hostless",
+		.cpu_dai_name = "PRI_TDM_TX_0_HOSTLESS",
+		.platform_name = "msm-pcm-hostless",
+		.dynamic = 1,
+		.dpcm_capture = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+				SND_SOC_DPCM_TRIGGER_POST},
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
+		.ignore_suspend = 1,
+		.ignore_pmdown_time = 1,
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+	},
+	{
+		.name = "Primary TDM TX 1 Hostless",
+		.stream_name = "Primary TDM TX 1 Hostless",
+		.cpu_dai_name = "PRI_TDM_TX_1_HOSTLESS",
+		.platform_name = "msm-pcm-hostless",
+		.dynamic = 1,
+		.dpcm_capture = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+				SND_SOC_DPCM_TRIGGER_POST},
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
+		.ignore_suspend = 1,
+		.ignore_pmdown_time = 1,
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+	},
+	{
+		.name = "Primary TDM TX 2 Hostless",
+		.stream_name = "Primary TDM TX 2 Hostless",
+		.cpu_dai_name = "PRI_TDM_TX_2_HOSTLESS",
+		.platform_name = "msm-pcm-hostless",
+		.dynamic = 1,
+		.dpcm_capture = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+				SND_SOC_DPCM_TRIGGER_POST},
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
+		.ignore_suspend = 1,
+		.ignore_pmdown_time = 1,
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+	},
+	{
+		.name = "Primary TDM TX 3 Hostless",
+		.stream_name = "Primary TDM TX 3 Hostless",
+		.cpu_dai_name = "PRI_TDM_TX_3_HOSTLESS",
+		.platform_name = "msm-pcm-hostless",
+		.dynamic = 1,
+		.dpcm_capture = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+				SND_SOC_DPCM_TRIGGER_POST},
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
+		.ignore_suspend = 1,
+		.ignore_pmdown_time = 1,
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+	},
+	{
+		.name = "Secondary TDM RX 0 Hostless",
+		.stream_name = "Secondary TDM RX 0 Hostless",
+		.cpu_dai_name = "SEC_TDM_RX_0_HOSTLESS",
+		.platform_name = "msm-pcm-hostless",
+		.dynamic = 1,
+		.dpcm_playback = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+				SND_SOC_DPCM_TRIGGER_POST},
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
+		.ignore_suspend = 1,
+		.ignore_pmdown_time = 1,
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+	},
+	{
+		.name = "Secondary TDM RX 1 Hostless",
+		.stream_name = "Secondary TDM RX 1 Hostless",
+		.cpu_dai_name = "SEC_TDM_RX_1_HOSTLESS",
+		.platform_name = "msm-pcm-hostless",
+		.dynamic = 1,
+		.dpcm_playback = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+				SND_SOC_DPCM_TRIGGER_POST},
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
+		.ignore_suspend = 1,
+		.ignore_pmdown_time = 1,
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+	},
+	{
+		.name = "Secondary TDM RX 2 Hostless",
+		.stream_name = "Secondary TDM RX 2 Hostless",
+		.cpu_dai_name = "SEC_TDM_RX_2_HOSTLESS",
+		.platform_name = "msm-pcm-hostless",
+		.dynamic = 1,
+		.dpcm_playback = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+				SND_SOC_DPCM_TRIGGER_POST},
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
+		.ignore_suspend = 1,
+		.ignore_pmdown_time = 1,
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+	},
+	{
+		.name = "Secondary TDM RX 3 Hostless",
+		.stream_name = "Secondary TDM RX 3 Hostless",
+		.cpu_dai_name = "SEC_TDM_RX_3_HOSTLESS",
+		.platform_name = "msm-pcm-hostless",
+		.dynamic = 1,
+		.dpcm_playback = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+				SND_SOC_DPCM_TRIGGER_POST},
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
+		.ignore_suspend = 1,
+		.ignore_pmdown_time = 1,
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+	},
+	{
+		.name = "Secondary TDM TX 0 Hostless",
+		.stream_name = "Secondary TDM TX 0 Hostless",
+		.cpu_dai_name = "SEC_TDM_TX_0_HOSTLESS",
+		.platform_name = "msm-pcm-hostless",
+		.dynamic = 1,
+		.dpcm_capture = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+				SND_SOC_DPCM_TRIGGER_POST},
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
+		.ignore_suspend = 1,
+		.ignore_pmdown_time = 1,
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+	},
+	{
+		.name = "Secondary TDM TX 1 Hostless",
+		.stream_name = "Secondary TDM TX 1 Hostless",
+		.cpu_dai_name = "SEC_TDM_TX_1_HOSTLESS",
+		.platform_name = "msm-pcm-hostless",
+		.dynamic = 1,
+		.dpcm_capture = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+				SND_SOC_DPCM_TRIGGER_POST},
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
+		.ignore_suspend = 1,
+		.ignore_pmdown_time = 1,
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+	},
+	{
+		.name = "Secondary TDM TX 2 Hostless",
+		.stream_name = "Secondary TDM TX 2 Hostless",
+		.cpu_dai_name = "SEC_TDM_TX_2_HOSTLESS",
+		.platform_name = "msm-pcm-hostless",
+		.dynamic = 1,
+		.dpcm_capture = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+				SND_SOC_DPCM_TRIGGER_POST},
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
+		.ignore_suspend = 1,
+		.ignore_pmdown_time = 1,
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+	},
+	{
+		.name = "Secondary TDM TX 3 Hostless",
+		.stream_name = "Secondary TDM TX 3 Hostless",
+		.cpu_dai_name = "SEC_TDM_TX_3_HOSTLESS",
+		.platform_name = "msm-pcm-hostless",
+		.dynamic = 1,
+		.dpcm_capture = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+				SND_SOC_DPCM_TRIGGER_POST},
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
+		.ignore_suspend = 1,
+		.ignore_pmdown_time = 1,
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+	},
+	{
+		.name = "Tertiary TDM RX 0 Hostless",
+		.stream_name = "Tertiary TDM RX 0 Hostless",
+		.cpu_dai_name = "TERT_TDM_RX_0_HOSTLESS",
+		.platform_name = "msm-pcm-hostless",
+		.dynamic = 1,
+		.dpcm_playback = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+				SND_SOC_DPCM_TRIGGER_POST},
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
+		.ignore_suspend = 1,
+		.ignore_pmdown_time = 1,
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+	},
+	{
+		.name = "Tertiary TDM RX 1 Hostless",
+		.stream_name = "Tertiary TDM RX 1 Hostless",
+		.cpu_dai_name = "TERT_TDM_RX_1_HOSTLESS",
+		.platform_name = "msm-pcm-hostless",
+		.dynamic = 1,
+		.dpcm_playback = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+				SND_SOC_DPCM_TRIGGER_POST},
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
+		.ignore_suspend = 1,
+		.ignore_pmdown_time = 1,
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+	},
+	{
+		.name = "Tertiary TDM RX 2 Hostless",
+		.stream_name = "Tertiary TDM RX 2 Hostless",
+		.cpu_dai_name = "TERT_TDM_RX_2_HOSTLESS",
+		.platform_name = "msm-pcm-hostless",
+		.dynamic = 1,
+		.dpcm_playback = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+				SND_SOC_DPCM_TRIGGER_POST},
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
+		.ignore_suspend = 1,
+		.ignore_pmdown_time = 1,
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+	},
+	{
+		.name = "Tertiary TDM RX 3 Hostless",
+		.stream_name = "Tertiary TDM RX 3 Hostless",
+		.cpu_dai_name = "TERT_TDM_RX_3_HOSTLESS",
+		.platform_name = "msm-pcm-hostless",
+		.dynamic = 1,
+		.dpcm_playback = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+				SND_SOC_DPCM_TRIGGER_POST},
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
+		.ignore_suspend = 1,
+		.ignore_pmdown_time = 1,
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+	},
+	{
+		.name = "Tertiary TDM TX 0 Hostless",
+		.stream_name = "Tertiary TDM TX 0 Hostless",
+		.cpu_dai_name = "TERT_TDM_TX_0_HOSTLESS",
+		.platform_name = "msm-pcm-hostless",
+		.dynamic = 1,
+		.dpcm_capture = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+				SND_SOC_DPCM_TRIGGER_POST},
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
+		.ignore_suspend = 1,
+		.ignore_pmdown_time = 1,
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+	},
+	{
+		.name = "Tertiary TDM TX 1 Hostless",
+		.stream_name = "Tertiary TDM TX 1 Hostless",
+		.cpu_dai_name = "TERT_TDM_TX_1_HOSTLESS",
+		.platform_name = "msm-pcm-hostless",
+		.dynamic = 1,
+		.dpcm_capture = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+				SND_SOC_DPCM_TRIGGER_POST},
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
+		.ignore_suspend = 1,
+		.ignore_pmdown_time = 1,
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+	},
+	{
+		.name = "Tertiary TDM TX 2 Hostless",
+		.stream_name = "Tertiary TDM TX 2 Hostless",
+		.cpu_dai_name = "TERT_TDM_TX_2_HOSTLESS",
+		.platform_name = "msm-pcm-hostless",
+		.dynamic = 1,
+		.dpcm_capture = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+				SND_SOC_DPCM_TRIGGER_POST},
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
+		.ignore_suspend = 1,
+		.ignore_pmdown_time = 1,
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+	},
+	{
+		.name = "Tertiary TDM TX 3 Hostless",
+		.stream_name = "Tertiary TDM TX 3 Hostless",
+		.cpu_dai_name = "TERT_TDM_TX_3_HOSTLESS",
+		.platform_name = "msm-pcm-hostless",
+		.dynamic = 1,
+		.dpcm_capture = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+				SND_SOC_DPCM_TRIGGER_POST},
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
+		.ignore_suspend = 1,
+		.ignore_pmdown_time = 1,
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+	},
+	{
+		.name = "Quaternary TDM RX 0 Hostless",
+		.stream_name = "Quaternary TDM RX 0 Hostless",
+		.cpu_dai_name = "QUAT_TDM_RX_0_HOSTLESS",
+		.platform_name = "msm-pcm-hostless",
+		.dynamic = 1,
+		.dpcm_playback = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+				SND_SOC_DPCM_TRIGGER_POST},
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
+		.ignore_suspend = 1,
+		.ignore_pmdown_time = 1,
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+	},
+	{
+		.name = "Quaternary TDM RX 1 Hostless",
+		.stream_name = "Quaternary TDM RX 1 Hostless",
+		.cpu_dai_name = "QUAT_TDM_RX_1_HOSTLESS",
+		.platform_name = "msm-pcm-hostless",
+		.dynamic = 1,
+		.dpcm_playback = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+				SND_SOC_DPCM_TRIGGER_POST},
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
+		.ignore_suspend = 1,
+		.ignore_pmdown_time = 1,
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+	},
+	{
+		.name = "Quaternary TDM RX 2 Hostless",
+		.stream_name = "Quaternary TDM RX 2 Hostless",
+		.cpu_dai_name = "QUAT_TDM_RX_2_HOSTLESS",
+		.platform_name = "msm-pcm-hostless",
+		.dynamic = 1,
+		.dpcm_playback = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+				SND_SOC_DPCM_TRIGGER_POST},
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
+		.ignore_suspend = 1,
+		.ignore_pmdown_time = 1,
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+	},
+	{
+		.name = "Quaternary TDM RX 3 Hostless",
+		.stream_name = "Quaternary TDM RX 3 Hostless",
+		.cpu_dai_name = "QUAT_TDM_RX_3_HOSTLESS",
+		.platform_name = "msm-pcm-hostless",
+		.dynamic = 1,
+		.dpcm_playback = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+				SND_SOC_DPCM_TRIGGER_POST},
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
+		.ignore_suspend = 1,
+		.ignore_pmdown_time = 1,
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+	},
+	{
+		.name = "Quaternary TDM TX 0 Hostless",
+		.stream_name = "Quaternary TDM TX 0 Hostless",
+		.cpu_dai_name = "QUAT_TDM_TX_0_HOSTLESS",
+		.platform_name = "msm-pcm-hostless",
+		.dynamic = 1,
+		.dpcm_capture = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+				SND_SOC_DPCM_TRIGGER_POST},
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
+		.ignore_suspend = 1,
+		.ignore_pmdown_time = 1,
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+	},
+	{
+		.name = "Quaternary TDM TX 1 Hostless",
+		.stream_name = "Quaternary TDM TX 1 Hostless",
+		.cpu_dai_name = "QUAT_TDM_TX_1_HOSTLESS",
+		.platform_name = "msm-pcm-hostless",
+		.dynamic = 1,
+		.dpcm_capture = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+				SND_SOC_DPCM_TRIGGER_POST},
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
+		.ignore_suspend = 1,
+		.ignore_pmdown_time = 1,
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+	},
+	{
+		.name = "Quaternary TDM TX 2 Hostless",
+		.stream_name = "Quaternary TDM TX 2 Hostless",
+		.cpu_dai_name = "QUAT_TDM_TX_2_HOSTLESS",
+		.platform_name = "msm-pcm-hostless",
+		.dynamic = 1,
+		.dpcm_capture = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+				SND_SOC_DPCM_TRIGGER_POST},
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
+		.ignore_suspend = 1,
+		.ignore_pmdown_time = 1,
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+	},
+	{
+		.name = "Quaternary TDM TX 3 Hostless",
+		.stream_name = "Quaternary TDM TX 3 Hostless",
+		.cpu_dai_name = "QUAT_TDM_TX_3_HOSTLESS",
+		.platform_name = "msm-pcm-hostless",
+		.dynamic = 1,
+		.dpcm_capture = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+				SND_SOC_DPCM_TRIGGER_POST},
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
+		.ignore_suspend = 1,
+		.ignore_pmdown_time = 1,
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+	},
 
+};
 static struct snd_soc_dai_link msm8996_tasha_fe_dai_links[] = {
 	{
 		.name = LPASS_BE_SLIMBUS_4_TX,
@@ -3174,8 +8913,171 @@ static struct snd_soc_dai_link msm8996_common_be_dai_links[] = {
 		.no_pcm = 1,
 		.dpcm_capture = 1,
 		.be_id = MSM_BACKEND_DAI_TERTIARY_MI2S_TX,
-		.be_hw_params_fixup = msm_tx_be_hw_params_fixup,
-		.ops = &msm8996_mi2s_be_ops,
+		.be_hw_params_fixup = msm_tert_mi2s_tx_be_hw_params_fixup,
+		.ops = &legacy_msm8996_mi2s_be_ops,
+		.ignore_suspend = 1,
+	},
+	{
+		.name = LPASS_BE_PRI_MI2S_RX,
+		.stream_name = "Primary MI2S Playback",
+		.cpu_dai_name = "msm-dai-q6-mi2s.0",
+		.platform_name = "msm-pcm-routing",
+		.codec_name = "msm-stub-codec.1",
+		.codec_dai_name = "msm-stub-rx",
+		.no_pcm = 1,
+		.dpcm_playback = 1,
+		.be_id = MSM_BACKEND_DAI_PRI_MI2S_RX,
+		.be_hw_params_fixup = msm_pri_mi2s_rx_be_hw_params_fixup,
+		.ops = &msm8996_pri_mi2s_be_ops,
+		.ignore_suspend = 1,
+	},
+	{
+		.name = LPASS_BE_PRI_MI2S_TX,
+		.stream_name = "Primary MI2S Capture",
+		.cpu_dai_name = "msm-dai-q6-mi2s.0",
+		.platform_name = "msm-pcm-routing",
+		.codec_name = "msm-stub-codec.1",
+		.codec_dai_name = "msm-stub-tx",
+		.no_pcm = 1,
+		.dpcm_capture = 1,
+		.be_id = MSM_BACKEND_DAI_PRI_MI2S_TX,
+		.be_hw_params_fixup = msm_pri_mi2s_tx_be_hw_params_fixup,
+		.ops = &msm8996_pri_mi2s_be_ops,
+		.ignore_suspend = 1,
+	},
+	{
+		.name = LPASS_BE_SEC_MI2S_RX,
+		.stream_name = "Secondary MI2S Playback",
+		.cpu_dai_name = "msm-dai-q6-mi2s.1",
+		.platform_name = "msm-pcm-routing",
+		.codec_name = "msm-stub-codec.1",
+		.codec_dai_name = "msm-stub-rx",
+		.no_pcm = 1,
+		.dpcm_playback = 1,
+		.be_id = MSM_BACKEND_DAI_SECONDARY_MI2S_RX,
+		.be_hw_params_fixup = msm_sec_mi2s_rx_be_hw_params_fixup,
+		.ops = &msm8996_sec_mi2s_be_ops,
+		.ignore_suspend = 1,
+	},
+	{
+		.name = LPASS_BE_SEC_MI2S_TX,
+		.stream_name = "Secondary MI2S Capture",
+		.cpu_dai_name = "msm-dai-q6-mi2s.1",
+		.platform_name = "msm-pcm-routing",
+		.codec_name = "msm-stub-codec.1",
+		.codec_dai_name = "msm-stub-tx",
+		.no_pcm = 1,
+		.dpcm_capture = 1,
+		.be_id = MSM_BACKEND_DAI_SECONDARY_MI2S_TX,
+		.be_hw_params_fixup = msm_sec_mi2s_tx_be_hw_params_fixup,
+		.ops = &msm8996_sec_mi2s_be_ops,
+		.ignore_suspend = 1,
+	},
+	{
+		.name = LPASS_BE_TERT_MI2S_RX,
+		.stream_name = "Tertiary MI2S Playback",
+		.cpu_dai_name = "msm-dai-q6-mi2s.2",
+		.platform_name = "msm-pcm-routing",
+		.codec_name = "msm-stub-codec.1",
+		.codec_dai_name = "msm-stub-rx",
+		.no_pcm = 1,
+		.dpcm_playback = 1,
+		.be_id = MSM_BACKEND_DAI_TERTIARY_MI2S_RX,
+		.be_hw_params_fixup = msm_tert_mi2s_rx_be_hw_params_fixup,
+		.ops = &msm8996_tert_mi2s_be_ops,
+		.ignore_suspend = 1,
+	},
+	{
+		.name = LPASS_BE_USB_AUDIO_RX,
+		.stream_name = "USB Audio Playback",
+		.cpu_dai_name = "msm-dai-q6-dev.28672",
+		.platform_name = "msm-pcm-routing",
+		.codec_name = "msm-stub-codec.1",
+		.codec_dai_name = "msm-stub-rx",
+		.no_pcm = 1,
+		.dpcm_playback = 1,
+		.be_id = MSM_BACKEND_DAI_USB_RX,
+		.be_hw_params_fixup = msm_be_hw_params_fixup,
+		.ignore_pmdown_time = 1,
+		.ignore_suspend = 1,
+	},
+	{
+		.name = LPASS_BE_USB_AUDIO_TX,
+		.stream_name = "USB Audio Capture",
+		.cpu_dai_name = "msm-dai-q6-dev.28673",
+		.platform_name = "msm-pcm-routing",
+		.codec_name = "msm-stub-codec.1",
+		.codec_dai_name = "msm-stub-tx",
+		.no_pcm = 1,
+		.dpcm_capture = 1,
+		.be_id = MSM_BACKEND_DAI_USB_TX,
+		.be_hw_params_fixup = msm_be_hw_params_fixup,
+		.ignore_suspend = 1,
+	}
+};
+
+static struct snd_soc_dai_link msm8996_quat_mi2s_tfa98xx_dai_links[] = {
+	{
+		.name = LPASS_BE_QUAT_MI2S_RX,
+		.stream_name = "Quaternary MI2S Playback",
+		.cpu_dai_name = "msm-dai-q6-mi2s.3",
+		.platform_name = "msm-pcm-routing",
+		.codec_name = "tfa98xx.9-0034",
+		.codec_dai_name = "tfa98xx-aif-9-34",
+		.no_pcm = 1,
+		.dai_fmt = SND_SOC_DAIFMT_I2S | SND_SOC_DAIFMT_CBS_CFS,
+		.dpcm_playback = 1,
+		.be_id = MSM_BACKEND_DAI_QUATERNARY_MI2S_RX,
+		.be_hw_params_fixup = msm_quat_mi2s_rx_be_hw_params_fixup,
+		.ops = &msm8996_quat_mi2s_be_ops,
+		.ignore_suspend = 1,
+		.ignore_pmdown_time = 1,
+	},
+	{
+		.name = LPASS_BE_QUAT_MI2S_TX,
+		.stream_name = "Quaternary MI2S Capture",
+		.cpu_dai_name = "msm-dai-q6-mi2s.3",
+		.platform_name = "msm-pcm-routing",
+		.codec_name = "msm-stub-codec.1",
+		.codec_dai_name = "msm-stub-tx",
+		.no_pcm = 1,
+		.dpcm_capture = 1,
+		.be_id = MSM_BACKEND_DAI_QUATERNARY_MI2S_TX,
+		.be_hw_params_fixup = msm_quat_mi2s_tx_be_hw_params_fixup,
+		.ops = &msm8996_quat_mi2s_be_ops,
+		.ignore_suspend = 1,
+	}
+};
+
+static struct snd_soc_dai_link msm8996_quat_mi2s_tas2555_dai_links[] = {
+	{
+		.name = LPASS_BE_QUAT_MI2S_RX,
+		.stream_name = "Quaternary MI2S Playback",
+		.cpu_dai_name = "msm-dai-q6-mi2s.3",
+		.platform_name = "msm-pcm-routing",
+		.codec_name = "tas2555.9-004c",
+		.codec_dai_name = "tas2555 ASI1",
+		.no_pcm = 1,
+		.dai_fmt = SND_SOC_DAIFMT_I2S | SND_SOC_DAIFMT_CBS_CFS,
+		.dpcm_playback = 1,
+		.be_id = MSM_BACKEND_DAI_QUATERNARY_MI2S_RX,
+		.be_hw_params_fixup = msm_quat_mi2s_rx_be_hw_params_fixup,
+		.ops = &msm8996_quat_mi2s_be_ops,
+		.ignore_suspend = 1,
+		.ignore_pmdown_time = 1,
+	},
+	{
+		.name = LPASS_BE_QUAT_MI2S_TX,
+		.stream_name = "Quaternary MI2S Capture",
+		.cpu_dai_name = "msm-dai-q6-mi2s.3",
+		.platform_name = "msm-pcm-routing",
+		.codec_name = "msm-stub-codec.1",
+		.codec_dai_name = "msm-stub-tx",
+		.no_pcm = 1,
+		.dpcm_capture = 1,
+		.be_id = MSM_BACKEND_DAI_QUATERNARY_MI2S_TX,
+		.be_hw_params_fixup = msm_quat_mi2s_tx_be_hw_params_fixup,
+		.ops = &msm8996_quat_mi2s_be_ops,
 		.ignore_suspend = 1,
 	}
 };
@@ -3219,11 +9121,11 @@ static struct snd_soc_dai_link msm8996_tasha_be_dai_links[] = {
 		.cpu_dai_name = "msm-dai-q6-dev.16386",
 		.platform_name = "msm-pcm-routing",
 		.codec_name = "tasha_codec",
-		.codec_dai_name = "tasha_mix_rx1",
+		.codec_dai_name = "tasha_rx2",
 		.no_pcm = 1,
 		.dpcm_playback = 1,
 		.be_id = MSM_BACKEND_DAI_SLIMBUS_1_RX,
-		.be_hw_params_fixup = msm_slim_0_rx_be_hw_params_fixup,
+		.be_hw_params_fixup = msm_slim_1_rx_be_hw_params_fixup,
 		.ops = &msm8996_be_ops,
 		/* dai link has playback support */
 		.ignore_pmdown_time = 1,
@@ -3235,7 +9137,7 @@ static struct snd_soc_dai_link msm8996_tasha_be_dai_links[] = {
 		.cpu_dai_name = "msm-dai-q6-dev.16387",
 		.platform_name = "msm-pcm-routing",
 		.codec_name = "tasha_codec",
-		.codec_dai_name = "tasha_tx3",
+		.codec_dai_name = "tasha_tx2",
 		.no_pcm = 1,
 		.dpcm_capture = 1,
 		.be_id = MSM_BACKEND_DAI_SLIMBUS_1_TX,
@@ -3335,7 +9237,458 @@ static struct snd_soc_dai_link msm8996_tasha_be_dai_links[] = {
 		/* dai link has playback support */
 		.ignore_pmdown_time = 1,
 		.ignore_suspend = 1,
+	}
+};
+static struct snd_soc_dai_link msm8996_tdm_be_dai_links[] = {
+	{
+		.name = LPASS_BE_SEC_TDM_RX_0,
+		.stream_name = "Secondary TDM0 Playback",
+		.cpu_dai_name = "msm-dai-q6-tdm.36880",
+		.platform_name = "msm-pcm-routing",
+		.codec_name = "msm-stub-codec.1",
+		.codec_dai_name = "msm-stub-rx",
+		.no_pcm = 1,
+		.dpcm_playback = 1,
+		.be_id = MSM_BACKEND_DAI_SEC_TDM_RX_0,
+		.be_hw_params_fixup = msm_tdm_be_hw_params_fixup,
+		.ops = &msm8996_tdm_be_ops,
+		.ignore_suspend = 1,
 	},
+	{
+		.name = LPASS_BE_SEC_TDM_RX_1,
+		.stream_name = "Secondary TDM1 Playback",
+		.cpu_dai_name = "msm-dai-q6-tdm.36882",
+		.platform_name = "msm-pcm-routing",
+		.codec_name = "msm-stub-codec.1",
+		.codec_dai_name = "msm-stub-rx",
+		.no_pcm = 1,
+		.dpcm_playback = 1,
+		.be_id = MSM_BACKEND_DAI_SEC_TDM_RX_1,
+		.be_hw_params_fixup = msm_tdm_be_hw_params_fixup,
+		.ops = &msm8996_tdm_be_ops,
+		.ignore_suspend = 1,
+	},
+	{
+		.name = LPASS_BE_SEC_TDM_RX_2,
+		.stream_name = "Secondary TDM2 Playback",
+		.cpu_dai_name = "msm-dai-q6-tdm.36884",
+		.platform_name = "msm-pcm-routing",
+		.codec_name = "msm-stub-codec.1",
+		.codec_dai_name = "msm-stub-rx",
+		.no_pcm = 1,
+		.dpcm_playback = 1,
+		.be_id = MSM_BACKEND_DAI_SEC_TDM_RX_2,
+		.be_hw_params_fixup = msm_tdm_be_hw_params_fixup,
+		.ops = &msm8996_tdm_be_ops,
+		.ignore_suspend = 1,
+	},
+	{
+		.name = LPASS_BE_SEC_TDM_RX_3,
+		.stream_name = "Secondary TDM3 Playback",
+		.cpu_dai_name = "msm-dai-q6-tdm.36886",
+		.platform_name = "msm-pcm-routing",
+		.codec_name = "msm-stub-codec.1",
+		.codec_dai_name = "msm-stub-rx",
+		.no_pcm = 1,
+		.dpcm_playback = 1,
+		.be_id = MSM_BACKEND_DAI_SEC_TDM_RX_3,
+		.be_hw_params_fixup = msm_tdm_be_hw_params_fixup,
+		.ops = &msm8996_tdm_be_ops,
+		.ignore_suspend = 1,
+	},
+	{
+		.name = LPASS_BE_SEC_TDM_TX_0,
+		.stream_name = "Secondary TDM0 Capture",
+		.cpu_dai_name = "msm-dai-q6-tdm.36881",
+		.platform_name = "msm-pcm-routing",
+		.codec_name = "msm-stub-codec.1",
+		.codec_dai_name = "msm-stub-rx",
+		.no_pcm = 1,
+		.dpcm_capture = 1,
+		.be_id = MSM_BACKEND_DAI_SEC_TDM_TX_0,
+		.be_hw_params_fixup = msm_tdm_be_hw_params_fixup,
+		.ops = &msm8996_tdm_be_ops,
+		.ignore_suspend = 1,
+	},
+	{
+		.name = LPASS_BE_SEC_TDM_TX_1,
+		.stream_name = "Secondary TDM1 Capture",
+		.cpu_dai_name = "msm-dai-q6-tdm.36883",
+		.platform_name = "msm-pcm-routing",
+		.codec_name = "msm-stub-codec.1",
+		.codec_dai_name = "msm-stub-rx",
+		.no_pcm = 1,
+		.dpcm_capture = 1,
+		.be_id = MSM_BACKEND_DAI_SEC_TDM_TX_1,
+		.be_hw_params_fixup = msm_tdm_be_hw_params_fixup,
+		.ops = &msm8996_tdm_be_ops,
+		.ignore_suspend = 1,
+	},
+	{
+		.name = LPASS_BE_SEC_TDM_TX_2,
+		.stream_name = "Secondary TDM2 Capture",
+		.cpu_dai_name = "msm-dai-q6-tdm.36885",
+		.platform_name = "msm-pcm-routing",
+		.codec_name = "msm-stub-codec.1",
+		.codec_dai_name = "msm-stub-rx",
+		.no_pcm = 1,
+		.dpcm_capture = 1,
+		.be_id = MSM_BACKEND_DAI_SEC_TDM_TX_2,
+		.be_hw_params_fixup = msm_tdm_be_hw_params_fixup,
+		.ops = &msm8996_tdm_be_ops,
+		.ignore_suspend = 1,
+	},
+	{
+		.name = LPASS_BE_SEC_TDM_TX_3,
+		.stream_name = "Secondary TDM3 Capture",
+		.cpu_dai_name = "msm-dai-q6-tdm.36887",
+		.platform_name = "msm-pcm-routing",
+		.codec_name = "msm-stub-codec.1",
+		.codec_dai_name = "msm-stub-rx",
+		.no_pcm = 1,
+		.dpcm_capture = 1,
+		.be_id = MSM_BACKEND_DAI_SEC_TDM_TX_3,
+		.be_hw_params_fixup = msm_tdm_be_hw_params_fixup,
+		.ops = &msm8996_tdm_be_ops,
+		.ignore_suspend = 1,
+	},
+	{
+		.name = LPASS_BE_TERT_TDM_RX_0,
+		.stream_name = "Tertiary TDM0 Playback",
+		.cpu_dai_name = "msm-dai-q6-tdm.36896",
+		.platform_name = "msm-pcm-routing",
+		.codec_name = "msm-stub-codec.1",
+		.codec_dai_name = "msm-stub-rx",
+		.no_pcm = 1,
+		.dpcm_playback = 1,
+		.be_id = MSM_BACKEND_DAI_TERT_TDM_RX_0,
+		.be_hw_params_fixup = msm_tdm_be_hw_params_fixup,
+		.ops = &msm8996_tdm_be_ops,
+		.ignore_suspend = 1,
+	},
+	{
+		.name = LPASS_BE_TERT_TDM_RX_1,
+		.stream_name = "Tertiary TDM1 Playback",
+		.cpu_dai_name = "msm-dai-q6-tdm.36898",
+		.platform_name = "msm-pcm-routing",
+		.codec_name = "msm-stub-codec.1",
+		.codec_dai_name = "msm-stub-rx",
+		.no_pcm = 1,
+		.dpcm_playback = 1,
+		.be_id = MSM_BACKEND_DAI_TERT_TDM_RX_1,
+		.be_hw_params_fixup = msm_tdm_be_hw_params_fixup,
+		.ops = &msm8996_tdm_be_ops,
+		.ignore_suspend = 1,
+	},
+	{
+		.name = LPASS_BE_TERT_TDM_RX_2,
+		.stream_name = "Tertiary TDM2 Playback",
+		.cpu_dai_name = "msm-dai-q6-tdm.36900",
+		.platform_name = "msm-pcm-routing",
+		.codec_name = "msm-stub-codec.1",
+		.codec_dai_name = "msm-stub-rx",
+		.no_pcm = 1,
+		.dpcm_playback = 1,
+		.be_id = MSM_BACKEND_DAI_TERT_TDM_RX_2,
+		.be_hw_params_fixup = msm_tdm_be_hw_params_fixup,
+		.ops = &msm8996_tdm_be_ops,
+		.ignore_suspend = 1,
+	},
+	{
+		.name = LPASS_BE_TERT_TDM_RX_3,
+		.stream_name = "Tertiary TDM3 Playback",
+		.cpu_dai_name = "msm-dai-q6-tdm.36902",
+		.platform_name = "msm-pcm-routing",
+		.codec_name = "msm-stub-codec.1",
+		.codec_dai_name = "msm-stub-rx",
+		.no_pcm = 1,
+		.dpcm_playback = 1,
+		.be_id = MSM_BACKEND_DAI_TERT_TDM_RX_3,
+		.be_hw_params_fixup = msm_tdm_be_hw_params_fixup,
+		.ops = &msm8996_tdm_be_ops,
+		.ignore_suspend = 1,
+	},
+	{
+		.name = LPASS_BE_TERT_TDM_TX_0,
+		.stream_name = "Tertiary TDM0 Capture",
+		.cpu_dai_name = "msm-dai-q6-tdm.36897",
+		.platform_name = "msm-pcm-routing",
+		.codec_name = "msm-stub-codec.1",
+		.codec_dai_name = "msm-stub-rx",
+		.no_pcm = 1,
+		.dpcm_capture = 1,
+		.be_id = MSM_BACKEND_DAI_TERT_TDM_TX_0,
+		.be_hw_params_fixup = msm_tdm_be_hw_params_fixup,
+		.ops = &msm8996_tdm_be_ops,
+		.ignore_suspend = 1,
+	},
+	{
+		.name = LPASS_BE_TERT_TDM_TX_1,
+		.stream_name = "Tertiary TDM1 Capture",
+		.cpu_dai_name = "msm-dai-q6-tdm.36899",
+		.platform_name = "msm-pcm-routing",
+		.codec_name = "msm-stub-codec.1",
+		.codec_dai_name = "msm-stub-rx",
+		.no_pcm = 1,
+		.dpcm_capture = 1,
+		.be_id = MSM_BACKEND_DAI_TERT_TDM_TX_1,
+		.be_hw_params_fixup = msm_tdm_be_hw_params_fixup,
+		.ops = &msm8996_tdm_be_ops,
+		.ignore_suspend = 1,
+	},
+	{
+		.name = LPASS_BE_TERT_TDM_TX_2,
+		.stream_name = "Tertiary TDM2 Capture",
+		.cpu_dai_name = "msm-dai-q6-tdm.36901",
+		.platform_name = "msm-pcm-routing",
+		.codec_name = "msm-stub-codec.1",
+		.codec_dai_name = "msm-stub-rx",
+		.no_pcm = 1,
+		.dpcm_capture = 1,
+		.be_id = MSM_BACKEND_DAI_TERT_TDM_TX_2,
+		.be_hw_params_fixup = msm_tdm_be_hw_params_fixup,
+		.ops = &msm8996_tdm_be_ops,
+		.ignore_suspend = 1,
+	},
+	{
+		.name = LPASS_BE_TERT_TDM_TX_3,
+		.stream_name = "Tertiary TDM3 Capture",
+		.cpu_dai_name = "msm-dai-q6-tdm.36903",
+		.platform_name = "msm-pcm-routing",
+		.codec_name = "msm-stub-codec.1",
+		.codec_dai_name = "msm-stub-rx",
+		.no_pcm = 1,
+		.dpcm_capture = 1,
+		.be_id = MSM_BACKEND_DAI_TERT_TDM_TX_3,
+		.be_hw_params_fixup = msm_tdm_be_hw_params_fixup,
+		.ops = &msm8996_tdm_be_ops,
+		.ignore_suspend = 1,
+	},
+	{
+		.name = LPASS_BE_QUAT_TDM_RX_0,
+		.stream_name = "Quaternary TDM0 Playback",
+		.cpu_dai_name = "msm-dai-q6-tdm.36912",
+		.platform_name = "msm-pcm-routing",
+		.codec_name = "msm-stub-codec.1",
+		.codec_dai_name = "msm-stub-rx",
+		.no_pcm = 1,
+		.dpcm_playback = 1,
+		.be_id = MSM_BACKEND_DAI_QUAT_TDM_RX_0,
+		.be_hw_params_fixup = msm_tdm_be_hw_params_fixup,
+		.ops = &msm8996_tdm_be_ops,
+		.ignore_suspend = 1,
+	},
+	{
+		.name = LPASS_BE_QUAT_TDM_RX_1,
+		.stream_name = "Quaternary TDM1 Playback",
+		.cpu_dai_name = "msm-dai-q6-tdm.36914",
+		.platform_name = "msm-pcm-routing",
+		.codec_name = "msm-stub-codec.1",
+		.codec_dai_name = "msm-stub-rx",
+		.no_pcm = 1,
+		.dpcm_playback = 1,
+		.be_id = MSM_BACKEND_DAI_QUAT_TDM_RX_1,
+		.be_hw_params_fixup = msm_tdm_be_hw_params_fixup,
+		.ops = &msm8996_tdm_be_ops,
+		.ignore_suspend = 1,
+	},
+	{
+		.name = LPASS_BE_QUAT_TDM_RX_2,
+		.stream_name = "Quaternary TDM2 Playback",
+		.cpu_dai_name = "msm-dai-q6-tdm.36916",
+		.platform_name = "msm-pcm-routing",
+		.codec_name = "msm-stub-codec.1",
+		.codec_dai_name = "msm-stub-rx",
+		.no_pcm = 1,
+		.dpcm_playback = 1,
+		.be_id = MSM_BACKEND_DAI_QUAT_TDM_RX_2,
+		.be_hw_params_fixup = msm_tdm_be_hw_params_fixup,
+		.ops = &msm8996_tdm_be_ops,
+		.ignore_suspend = 1,
+	},
+	{
+		.name = LPASS_BE_QUAT_TDM_RX_3,
+		.stream_name = "Quaternary TDM3 Playback",
+		.cpu_dai_name = "msm-dai-q6-tdm.36918",
+		.platform_name = "msm-pcm-routing",
+		.codec_name = "msm-stub-codec.1",
+		.codec_dai_name = "msm-stub-rx",
+		.no_pcm = 1,
+		.dpcm_playback = 1,
+		.be_id = MSM_BACKEND_DAI_QUAT_TDM_RX_3,
+		.be_hw_params_fixup = msm_tdm_be_hw_params_fixup,
+		.ops = &msm8996_tdm_be_ops,
+		.ignore_suspend = 1,
+	},
+	{
+		.name = LPASS_BE_QUAT_TDM_TX_0,
+		.stream_name = "Quaternary TDM0 Capture",
+		.cpu_dai_name = "msm-dai-q6-tdm.36913",
+		.platform_name = "msm-pcm-routing",
+		.codec_name = "msm-stub-codec.1",
+		.codec_dai_name = "msm-stub-rx",
+		.no_pcm = 1,
+		.dpcm_capture = 1,
+		.be_id = MSM_BACKEND_DAI_QUAT_TDM_TX_0,
+		.be_hw_params_fixup = msm_tdm_be_hw_params_fixup,
+		.ops = &msm8996_tdm_be_ops,
+		.ignore_suspend = 1,
+	},
+	{
+		.name = LPASS_BE_QUAT_TDM_TX_1,
+		.stream_name = "Quaternary TDM1 Capture",
+		.cpu_dai_name = "msm-dai-q6-tdm.36915",
+		.platform_name = "msm-pcm-routing",
+		.codec_name = "msm-stub-codec.1",
+		.codec_dai_name = "msm-stub-rx",
+		.no_pcm = 1,
+		.dpcm_capture = 1,
+		.be_id = MSM_BACKEND_DAI_QUAT_TDM_TX_1,
+		.be_hw_params_fixup = msm_tdm_be_hw_params_fixup,
+		.ops = &msm8996_tdm_be_ops,
+		.ignore_suspend = 1,
+	},
+	{
+		.name = LPASS_BE_QUAT_TDM_TX_2,
+		.stream_name = "Quaternary TDM2 Capture",
+		.cpu_dai_name = "msm-dai-q6-tdm.36917",
+		.platform_name = "msm-pcm-routing",
+		.codec_name = "msm-stub-codec.1",
+		.codec_dai_name = "msm-stub-rx",
+		.no_pcm = 1,
+		.dpcm_capture = 1,
+		.be_id = MSM_BACKEND_DAI_QUAT_TDM_TX_2,
+		.be_hw_params_fixup = msm_tdm_be_hw_params_fixup,
+		.ops = &msm8996_tdm_be_ops,
+		.ignore_suspend = 1,
+	},
+	{
+		.name = LPASS_BE_QUAT_TDM_TX_3,
+		.stream_name = "Quaternary TDM3 Capture",
+		.cpu_dai_name = "msm-dai-q6-tdm.36919",
+		.platform_name = "msm-pcm-routing",
+		.codec_name = "msm-stub-codec.1",
+		.codec_dai_name = "msm-stub-rx",
+		.no_pcm = 1,
+		.dpcm_capture = 1,
+		.be_id = MSM_BACKEND_DAI_QUAT_TDM_TX_3,
+		.be_hw_params_fixup = msm_tdm_be_hw_params_fixup,
+		.ops = &msm8996_tdm_be_ops,
+		.ignore_suspend = 1,
+	},
+	{
+		.name = LPASS_BE_PRI_TDM_RX_0,
+		.stream_name = "Primary TDM0 Playback",
+		.cpu_dai_name = "msm-dai-q6-tdm.36864",
+		.platform_name = "msm-pcm-routing",
+		.codec_name = "msm-stub-codec.1",
+		.codec_dai_name = "msm-stub-rx",
+		.no_pcm = 1,
+		.dpcm_playback = 1,
+		.be_id = MSM_BACKEND_DAI_PRI_TDM_RX_0,
+		.be_hw_params_fixup = msm_tdm_be_hw_params_fixup,
+		.ops = &msm8996_tdm_be_ops,
+		.ignore_suspend = 1,
+	},
+	{
+		.name = LPASS_BE_PRI_TDM_RX_1,
+		.stream_name = "Primary TDM1 Playback",
+		.cpu_dai_name = "msm-dai-q6-tdm.36866",
+		.platform_name = "msm-pcm-routing",
+		.codec_name = "msm-stub-codec.1",
+		.codec_dai_name = "msm-stub-rx",
+		.no_pcm = 1,
+		.dpcm_playback = 1,
+		.be_id = MSM_BACKEND_DAI_PRI_TDM_RX_1,
+		.be_hw_params_fixup = msm_tdm_be_hw_params_fixup,
+		.ops = &msm8996_tdm_be_ops,
+		.ignore_suspend = 1,
+	},
+	{
+		.name = LPASS_BE_PRI_TDM_RX_2,
+		.stream_name = "Primary TDM2 Playback",
+		.cpu_dai_name = "msm-dai-q6-tdm.36868",
+		.platform_name = "msm-pcm-routing",
+		.codec_name = "msm-stub-codec.1",
+		.codec_dai_name = "msm-stub-rx",
+		.no_pcm = 1,
+		.dpcm_playback = 1,
+		.be_id = MSM_BACKEND_DAI_PRI_TDM_RX_2,
+		.be_hw_params_fixup = msm_tdm_be_hw_params_fixup,
+		.ops = &msm8996_tdm_be_ops,
+		.ignore_suspend = 1,
+	},
+	{
+		.name = LPASS_BE_PRI_TDM_RX_3,
+		.stream_name = "Primary TDM3 Playback",
+		.cpu_dai_name = "msm-dai-q6-tdm.36870",
+		.platform_name = "msm-pcm-routing",
+		.codec_name = "msm-stub-codec.1",
+		.codec_dai_name = "msm-stub-rx",
+		.no_pcm = 1,
+		.dpcm_playback = 1,
+		.be_id = MSM_BACKEND_DAI_PRI_TDM_RX_3,
+		.be_hw_params_fixup = msm_tdm_be_hw_params_fixup,
+		.ops = &msm8996_tdm_be_ops,
+		.ignore_suspend = 1,
+	},
+	{
+		.name = LPASS_BE_PRI_TDM_TX_0,
+		.stream_name = "Primary TDM0 Capture",
+		.cpu_dai_name = "msm-dai-q6-tdm.36865",
+		.platform_name = "msm-pcm-routing",
+		.codec_name = "msm-stub-codec.1",
+		.codec_dai_name = "msm-stub-rx",
+		.no_pcm = 1,
+		.dpcm_capture = 1,
+		.be_id = MSM_BACKEND_DAI_PRI_TDM_TX_0,
+		.be_hw_params_fixup = msm_tdm_be_hw_params_fixup,
+		.ops = &msm8996_tdm_be_ops,
+		.ignore_suspend = 1,
+	},
+	{
+		.name = LPASS_BE_PRI_TDM_TX_1,
+		.stream_name = "Primary TDM1 Capture",
+		.cpu_dai_name = "msm-dai-q6-tdm.36867",
+		.platform_name = "msm-pcm-routing",
+		.codec_name = "msm-stub-codec.1",
+		.codec_dai_name = "msm-stub-rx",
+		.no_pcm = 1,
+		.dpcm_capture = 1,
+		.be_id = MSM_BACKEND_DAI_PRI_TDM_TX_1,
+		.be_hw_params_fixup = msm_tdm_be_hw_params_fixup,
+		.ops = &msm8996_tdm_be_ops,
+		.ignore_suspend = 1,
+	},
+	{
+		.name = LPASS_BE_PRI_TDM_TX_2,
+		.stream_name = "Primary TDM2 Capture",
+		.cpu_dai_name = "msm-dai-q6-tdm.36869",
+		.platform_name = "msm-pcm-routing",
+		.codec_name = "msm-stub-codec.1",
+		.codec_dai_name = "msm-stub-rx",
+		.no_pcm = 1,
+		.dpcm_capture = 1,
+		.be_id = MSM_BACKEND_DAI_PRI_TDM_TX_2,
+		.be_hw_params_fixup = msm_tdm_be_hw_params_fixup,
+		.ops = &msm8996_tdm_be_ops,
+		.ignore_suspend = 1,
+	},
+	{
+		.name = LPASS_BE_PRI_TDM_TX_3,
+		.stream_name = "Primary TDM3 Capture",
+		.cpu_dai_name = "msm-dai-q6-tdm.36871",
+		.platform_name = "msm-pcm-routing",
+		.codec_name = "msm-stub-codec.1",
+		.codec_dai_name = "msm-stub-rx",
+		.no_pcm = 1,
+		.dpcm_capture = 1,
+		.be_id = MSM_BACKEND_DAI_PRI_TDM_TX_3,
+		.be_hw_params_fixup = msm_tdm_be_hw_params_fixup,
+		.ops = &msm8996_tdm_be_ops,
+		.ignore_suspend = 1,
+	}
+
 };
 
 static struct snd_soc_dai_link msm8996_hdmi_dai_link[] = {
@@ -3345,7 +9698,7 @@ static struct snd_soc_dai_link msm8996_hdmi_dai_link[] = {
 		.stream_name = "HDMI Playback",
 		.cpu_dai_name = "msm-dai-q6-hdmi.8",
 		.platform_name = "msm-pcm-routing",
-		.codec_name = "msm-hdmi-audio-codec-rx",
+		.codec_name = "msm-ext-disp-audio-codec-rx",
 		.codec_dai_name = "msm_hdmi_audio_codec_rx_dai",
 		.no_pcm = 1,
 		.dpcm_playback = 1,
@@ -3359,8 +9712,11 @@ static struct snd_soc_dai_link msm8996_hdmi_dai_link[] = {
 static struct snd_soc_dai_link msm8996_tasha_dai_links[
 			 ARRAY_SIZE(msm8996_common_dai_links) +
 			 ARRAY_SIZE(msm8996_tasha_fe_dai_links) +
+			 ARRAY_SIZE(msm8996_tdm_fe_dai_links) +
 			 ARRAY_SIZE(msm8996_common_be_dai_links) +
+			 ARRAY_SIZE(msm8996_quat_mi2s_tfa98xx_dai_links) +
 			 ARRAY_SIZE(msm8996_tasha_be_dai_links) +
+			 ARRAY_SIZE(msm8996_tdm_be_dai_links) +
 			 ARRAY_SIZE(msm8996_hdmi_dai_link)];
 
 static int msm8996_wsa881x_init(struct snd_soc_component *component)
@@ -3378,7 +9734,7 @@ static int msm8996_wsa881x_init(struct snd_soc_component *component)
 		return -EINVAL;
 	}
 
-	dapm = &codec->dapm;
+	dapm = snd_soc_codec_get_dapm(codec);
 
 	if (!strcmp(component->name_prefix, "SpkrLeft")) {
 		dev_dbg(codec->dev, "%s: setting left ch map to codec %s\n",
@@ -3563,8 +9919,8 @@ static const struct of_device_id msm8996_asoc_machine_of_match[]  = {
 static struct snd_soc_card *populate_snd_card_dailinks(struct device *dev)
 {
 	struct snd_soc_card *card = NULL;
-	struct snd_soc_dai_link *dailink;
-	int len_1, len_2, len_3, len_4;
+	struct snd_soc_dai_link *dailink = NULL;
+	int len_1 = 0, len_2 = 0, len_3 = 0, len_4 = 0, len_5 = 0, len_6 = 0;
 	const struct of_device_id *match;
 
 	match = of_match_node(msm8996_asoc_machine_of_match, dev->of_node);
@@ -3578,7 +9934,9 @@ static struct snd_soc_card *populate_snd_card_dailinks(struct device *dev)
 		card = &snd_soc_card_tasha_msm8996;
 		len_1 = ARRAY_SIZE(msm8996_common_dai_links);
 		len_2 = len_1 + ARRAY_SIZE(msm8996_tasha_fe_dai_links);
-		len_3 = len_2 + ARRAY_SIZE(msm8996_common_be_dai_links);
+		len_3 = len_2 + ARRAY_SIZE(msm8996_tdm_fe_dai_links);
+		len_4 = len_3 + ARRAY_SIZE(msm8996_common_be_dai_links);
+		len_5 = len_4 + ARRAY_SIZE(msm8996_quat_mi2s_tfa98xx_dai_links);
 
 		memcpy(msm8996_tasha_dai_links,
 		       msm8996_common_dai_links,
@@ -3587,32 +9945,116 @@ static struct snd_soc_card *populate_snd_card_dailinks(struct device *dev)
 		       msm8996_tasha_fe_dai_links,
 		       sizeof(msm8996_tasha_fe_dai_links));
 		memcpy(msm8996_tasha_dai_links + len_2,
+		       msm8996_tdm_fe_dai_links,
+		       sizeof(msm8996_tdm_fe_dai_links));
+		memcpy(msm8996_tasha_dai_links + len_3,
 		       msm8996_common_be_dai_links,
 		       sizeof(msm8996_common_be_dai_links));
-		memcpy(msm8996_tasha_dai_links + len_3,
+
+		if ((get_hw_version_devid() == 4) &&
+			(get_hw_version_major() > 1)) {
+			memcpy(msm8996_tasha_dai_links + len_4,
+				msm8996_quat_mi2s_tas2555_dai_links,
+				sizeof(msm8996_quat_mi2s_tas2555_dai_links));
+		} else if (get_hw_version_devid() == 9) {
+			len_5 = len_4;
+		} else {
+			if (get_hw_version_devid() == 8 && get_hw_version_major() > 0) {
+				msm8996_quat_mi2s_tfa98xx_dai_links[0].codec_name = "tfa98xx.3-0034";
+				msm8996_quat_mi2s_tfa98xx_dai_links[0].codec_dai_name = "tfa98xx-aif-3-34";
+			}
+			memcpy(msm8996_tasha_dai_links + len_4,
+				msm8996_quat_mi2s_tfa98xx_dai_links,
+				sizeof(msm8996_quat_mi2s_tfa98xx_dai_links));
+		}
+
+		memcpy(msm8996_tasha_dai_links + len_5,
 		       msm8996_tasha_be_dai_links,
 		       sizeof(msm8996_tasha_be_dai_links));
 
 		dailink = msm8996_tasha_dai_links;
-		len_4 = len_3 + ARRAY_SIZE(msm8996_tasha_be_dai_links);
+		len_6 = len_5 + ARRAY_SIZE(msm8996_tasha_be_dai_links);
 	}
 
 	if (of_property_read_bool(dev->of_node, "qcom,hdmi-audio-rx")) {
 		dev_dbg(dev, "%s(): hdmi audio support present\n",
 				__func__);
-		memcpy(dailink + len_4, msm8996_hdmi_dai_link,
+		memcpy(dailink + len_6, msm8996_hdmi_dai_link,
 			sizeof(msm8996_hdmi_dai_link));
-		len_4 += ARRAY_SIZE(msm8996_hdmi_dai_link);
+		len_6 += ARRAY_SIZE(msm8996_hdmi_dai_link);
 	} else {
 		dev_dbg(dev, "%s(): No hdmi audio support\n", __func__);
 	}
-
+	if (of_property_read_bool(dev->of_node, "qcom,tdm-audio-intf")) {
+		dev_dbg(dev, "%s(): TDM support present\n",
+				__func__);
+		memcpy(dailink + len_6, msm8996_tdm_be_dai_links,
+			sizeof(msm8996_tdm_be_dai_links));
+		len_6 += ARRAY_SIZE(msm8996_tdm_be_dai_links);
+	} else {
+		dev_dbg(dev, "%s(): No TDM support\n", __func__);
+	}
 	if (card) {
 		card->dai_link = dailink;
-		card->num_links = len_4;
+		card->num_links = len_6;
+		card->num_aux_devs = 0;
+		card->num_configs = 0;
 	}
 
 	return card;
+}
+
+static int msm_register_aux_dev(struct platform_device *pdev,
+		struct snd_soc_card *card,
+		struct snd_soc_aux_dev *auxdev,
+		struct snd_soc_codec_conf *conf,
+		int number)
+{
+	struct snd_soc_aux_dev *aux_dev;
+	struct snd_soc_codec_conf *aux_conf;
+	int aux_num;
+
+	dev_dbg(&pdev->dev, "%s, register aux dev %d\n", __func__, number);
+	if ((auxdev == NULL) || (conf == NULL) || (number <= 0)) {
+		dev_err(&pdev->dev, "%s, Invalid argument!\n", __func__);
+		return -EINVAL;
+	}
+
+	aux_num = card->num_aux_devs + number;
+	aux_dev = devm_kcalloc(&pdev->dev, aux_num,
+				sizeof(struct snd_soc_aux_dev),
+				GFP_KERNEL);
+	if (aux_dev == NULL)
+		return -ENOMEM;
+
+	aux_conf = devm_kcalloc(&pdev->dev, aux_num,
+				sizeof(struct snd_soc_codec_conf),
+				GFP_KERNEL);
+	if (aux_conf == NULL)
+		return -ENOMEM;
+
+	memcpy(aux_dev, auxdev,
+		(sizeof(struct snd_soc_aux_dev) * number));
+	memcpy(aux_conf, conf,
+		(sizeof(struct snd_soc_codec_conf) * number));
+
+
+	if (card->num_aux_devs > 0) {
+		memcpy((aux_dev + number), card->aux_dev,
+			(sizeof(struct snd_soc_aux_dev) * card->num_aux_devs));
+		memcpy((aux_conf + number), card->codec_conf,
+			(sizeof(struct snd_soc_codec_conf) * card->num_aux_devs));
+
+		devm_kfree(&pdev->dev, card->aux_dev);
+		devm_kfree(&pdev->dev, card->codec_conf);
+	}
+
+	card->aux_dev = aux_dev;
+	card->codec_conf = aux_conf;
+	card->num_aux_devs = aux_num;
+	card->num_configs = aux_num;
+
+	return 0;
 }
 
 static int msm8996_init_wsa_dev(struct platform_device *pdev,
@@ -3628,6 +10070,9 @@ static int msm8996_init_wsa_dev(struct platform_device *pdev,
 	int i;
 	int ret;
 
+#ifndef CONFIG_SND_SOC_WSA881X
+	return 0;
+#endif
 	/* Get maximum WSA device count for this platform */
 	ret = of_property_read_u32(pdev->dev.of_node,
 				   "qcom,wsa-max-devs", &wsa_max_devs);
@@ -3726,24 +10171,21 @@ static int msm8996_init_wsa_dev(struct platform_device *pdev,
 		"%s: found %d wsa881x devices registered with ALSA core\n",
 		__func__, found);
 
-	card->num_aux_devs = wsa_max_devs;
-	card->num_configs = wsa_max_devs;
-
 	/* Alloc array of AUX devs struct */
-	msm8996_aux_dev = devm_kcalloc(&pdev->dev, card->num_aux_devs,
+	msm8996_aux_dev = devm_kcalloc(&pdev->dev, wsa_max_devs,
 				       sizeof(struct snd_soc_aux_dev),
 				       GFP_KERNEL);
 	if (!msm8996_aux_dev)
 		return -ENOMEM;
 
 	/* Alloc array of codec conf struct */
-	msm8996_codec_conf = devm_kcalloc(&pdev->dev, card->num_aux_devs,
+	msm8996_codec_conf = devm_kcalloc(&pdev->dev, wsa_max_devs,
 					  sizeof(struct snd_soc_codec_conf),
 					  GFP_KERNEL);
 	if (!msm8996_codec_conf)
 		return -ENOMEM;
 
-	for (i = 0; i < card->num_aux_devs; i++) {
+	for (i = 0; i < wsa_max_devs; i++) {
 		dev_name_str = devm_kzalloc(&pdev->dev, DEV_NAME_STR_LEN,
 					    GFP_KERNEL);
 		if (!dev_name_str)
@@ -3771,8 +10213,137 @@ static int msm8996_init_wsa_dev(struct platform_device *pdev,
 		msm8996_codec_conf[i].of_node =
 					wsa881x_dev_info[i].of_node;
 	}
-	card->codec_conf = msm8996_codec_conf;
-	card->aux_dev = msm8996_aux_dev;
+
+	msm_register_aux_dev(pdev, card,
+		msm8996_aux_dev, msm8996_codec_conf, wsa_max_devs);
+	devm_kfree(&pdev->dev, msm8996_aux_dev);
+	devm_kfree(&pdev->dev, msm8996_codec_conf);
+
+	return 0;
+}
+
+static int msm8996_init_pa_dev(struct platform_device *pdev,
+				struct snd_soc_card *card)
+{
+	struct device_node *pa_of_node;
+	struct snd_soc_aux_dev *pa_dev;
+	struct snd_soc_codec_conf *pa_codec_conf;
+	const char *pa_dev_name_prefix;
+	int ret;
+
+	pa_of_node = of_parse_phandle(pdev->dev.of_node,
+				"qcom,pa-devs", 0);
+	if (unlikely(!pa_of_node)) {
+		/* we should not be here */
+		dev_info(&pdev->dev, "%s: PA dev node is not present\n",
+				__func__);
+		return 0;
+	}
+	if (!soc_find_component(pa_of_node, NULL)) {
+		dev_err(&pdev->dev,
+			"%s: PA device is not registered with ALSA core\n",
+			__func__);
+		return EPROBE_DEFER;
+	}
+	dev_info(&pdev->dev, "%s: PA devices registered with ALSA core\n",
+			__func__);
+
+	ret = of_property_read_string_index(pdev->dev.of_node,
+						"qcom,pa-dev-prefix",
+						0,
+						&pa_dev_name_prefix);
+	if (ret) {
+		dev_err(&pdev->dev,
+			"%s: failed to read wsa aux dev prefix, ret = %d\n",
+			__func__, ret);
+		return -EINVAL;
+	}
+
+	pa_dev = devm_kcalloc(&pdev->dev, 1,
+				       sizeof(struct snd_soc_aux_dev),
+				       GFP_KERNEL);
+	if (!pa_dev)
+		return -ENOMEM;
+
+	pa_codec_conf = devm_kcalloc(&pdev->dev, 1,
+					  sizeof(struct snd_soc_codec_conf),
+					  GFP_KERNEL);
+	if (!pa_codec_conf)
+		return -ENOMEM;
+
+	pa_dev->name = "opa1622-pa";
+	pa_dev->codec_name = NULL;
+	pa_dev->codec_of_node = pa_of_node;
+	pa_codec_conf->dev_name = NULL;
+	pa_codec_conf->name_prefix = pa_dev_name_prefix;
+	pa_codec_conf->of_node = pa_of_node;
+
+	msm_register_aux_dev(pdev, card, pa_dev, pa_codec_conf, 1);
+	devm_kfree(&pdev->dev, pa_dev);
+	devm_kfree(&pdev->dev, pa_codec_conf);
+
+	return 0;
+}
+
+static int msm8996_init_piezo_dev(struct platform_device *pdev,
+				struct snd_soc_card *card)
+{
+	struct device_node *pa_of_node;
+	struct snd_soc_aux_dev *pa_dev;
+	struct snd_soc_codec_conf *pa_codec_conf;
+	const char *pa_dev_name_prefix;
+	int ret;
+
+	pa_of_node = of_parse_phandle(pdev->dev.of_node,
+				"qcom,piezo-devs", 0);
+	if (unlikely(!pa_of_node)) {
+		/* we should not be here */
+		dev_info(&pdev->dev, "%s: PA dev node is not present\n",
+				__func__);
+		return 0;
+	}
+	if (!soc_find_component(pa_of_node, NULL)) {
+		dev_err(&pdev->dev,
+			"%s: PA device is not registered with ALSA core\n",
+			__func__);
+		return EPROBE_DEFER;
+	}
+	dev_info(&pdev->dev, "%s: PA devices registered with ALSA core\n",
+			__func__);
+
+	ret = of_property_read_string_index(pdev->dev.of_node,
+						"qcom,piezo-dev-prefix",
+						0,
+						&pa_dev_name_prefix);
+	if (ret) {
+		dev_err(&pdev->dev,
+			"%s: failed to read piezo aux dev prefix, ret = %d\n",
+			__func__, ret);
+		return -EINVAL;
+	}
+
+	pa_dev = devm_kcalloc(&pdev->dev, 1,
+				       sizeof(struct snd_soc_aux_dev),
+				       GFP_KERNEL);
+	if (!pa_dev)
+		return -ENOMEM;
+
+	pa_codec_conf = devm_kcalloc(&pdev->dev, 1,
+					  sizeof(struct snd_soc_codec_conf),
+					  GFP_KERNEL);
+	if (!pa_codec_conf)
+		return -ENOMEM;
+
+	pa_dev->name = "piezo";
+	pa_dev->codec_name = NULL;
+	pa_dev->codec_of_node = pa_of_node;
+	pa_codec_conf->dev_name = NULL;
+	pa_codec_conf->name_prefix = pa_dev_name_prefix;
+	pa_codec_conf->of_node = pa_of_node;
+
+	msm_register_aux_dev(pdev, card, pa_dev, pa_codec_conf, 1);
+	devm_kfree(&pdev->dev, pa_dev);
+	devm_kfree(&pdev->dev, pa_codec_conf);
 
 	return 0;
 }
@@ -3808,6 +10379,11 @@ static int msm8996_asoc_machine_probe(struct platform_device *pdev)
 	platform_set_drvdata(pdev, card);
 	snd_soc_card_set_drvdata(card, pdata);
 
+	atomic_set(&msm_pri_mi2s_data.mi2s_rsc_ref, 0);
+	atomic_set(&msm_sec_mi2s_data.mi2s_rsc_ref, 0);
+	atomic_set(&msm_tert_mi2s_data.mi2s_rsc_ref, 0);
+	atomic_set(&msm_quat_mi2s_data.mi2s_rsc_ref, 0);
+
 	ret = snd_soc_of_parse_card_name(card, "qcom,model");
 	if (ret) {
 		dev_err(&pdev->dev, "parse card name failed, err:%d\n",
@@ -3815,7 +10391,12 @@ static int msm8996_asoc_machine_probe(struct platform_device *pdev)
 		goto err;
 	}
 
-	ret = snd_soc_of_parse_audio_routing(card, "qcom,audio-routing");
+	if ((get_hw_version_devid() == 8) &&
+		(get_hw_version() & (HW_MAJOR_VERSION_MASK | HW_MINOR_VERSION_MASK)) <= 0x20)
+		ret = snd_soc_of_parse_audio_routing(card, "qcom,audio-routing-p2");
+	else
+		ret = snd_soc_of_parse_audio_routing(card, "qcom,audio-routing");
+
 	if (ret) {
 		dev_err(&pdev->dev, "parse audio routing failed, err:%d\n",
 			ret);
@@ -3858,6 +10439,14 @@ static int msm8996_asoc_machine_probe(struct platform_device *pdev)
 	}
 
 	ret = msm8996_init_wsa_dev(pdev, card);
+	if (ret)
+		goto err;
+
+	ret = msm8996_init_pa_dev(pdev, card);
+	if (ret)
+		goto err;
+
+	ret = msm8996_init_piezo_dev(pdev, card);
 	if (ret)
 		goto err;
 
@@ -3930,6 +10519,27 @@ static int msm8996_asoc_machine_probe(struct platform_device *pdev)
 	if (ret)
 		dev_info(&pdev->dev, "msm8996_prepare_us_euro failed (%d)\n",
 			ret);
+
+	speaker_id_gpio = of_get_named_gpio(pdev->dev.of_node, "spkr-id-gpio", 0);
+	if (!gpio_is_valid(speaker_id_gpio)) {
+		dev_info(&pdev->dev, "property %s not detected in node %s",
+			"spkr-id-gpio", pdev->dev.of_node->full_name);
+	}
+
+#ifdef CONFIG_MACH_XIAOMI_A8
+	pdata->us_p_power = regulator_get(&pdev->dev, "vreg_pa_p_5p0");
+	if (IS_ERR(pdata->us_p_power)) {
+		dev_info(&pdev->dev, "ultrasound p power can't be found\n");
+		pdata->us_p_power = NULL;
+	}
+
+	pdata->us_n_power = regulator_get(&pdev->dev, "vreg_pa_n_5p0");
+	if (IS_ERR(pdata->us_n_power)) {
+		dev_info(&pdev->dev, "ultrasound n power can't be found\n");
+		pdata->us_n_power = NULL;
+	}
+#endif
+
 	return 0;
 err:
 	if (pdata->us_euro_gpio > 0) {
@@ -3959,6 +10569,13 @@ static int msm8996_asoc_machine_remove(struct platform_device *pdev)
 	struct snd_soc_card *card = platform_get_drvdata(pdev);
 	struct msm8996_asoc_mach_data *pdata =
 				snd_soc_card_get_drvdata(card);
+
+#ifdef CONFIG_MACH_XIAOMI_A8
+	if (pdata->us_p_power)
+		regulator_put(pdata->us_p_power);
+	if (pdata->us_p_power)
+		regulator_put(pdata->us_n_power);
+#endif
 
 	if (gpio_is_valid(ext_us_amp_gpio))
 		gpio_free(ext_us_amp_gpio);
@@ -3995,7 +10612,19 @@ static struct platform_driver msm8996_asoc_machine_driver = {
 	.probe = msm8996_asoc_machine_probe,
 	.remove = msm8996_asoc_machine_remove,
 };
-module_platform_driver(msm8996_asoc_machine_driver);
+
+static int __init msm8996_asoc_machine_driver_init(void)
+{
+	return platform_driver_register(&msm8996_asoc_machine_driver);
+}
+
+static void __exit msm8996_asoc_machine_driver_exit(void)
+{
+	platform_driver_unregister(&msm8996_asoc_machine_driver);
+}
+
+late_initcall(msm8996_asoc_machine_driver_init);
+module_exit(msm8996_asoc_machine_driver_exit);
 
 MODULE_DESCRIPTION("ALSA SoC msm");
 MODULE_LICENSE("GPL v2");

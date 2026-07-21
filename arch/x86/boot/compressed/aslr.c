@@ -1,5 +1,6 @@
 #include "misc.h"
 
+#include <asm/asm.h>
 #include <asm/msr.h>
 #include <asm/archrandom.h>
 #include <asm/e820.h>
@@ -24,8 +25,8 @@ static inline u16 i8254(void)
 	u16 status, timer;
 
 	do {
-		outb(I8254_PORT_CONTROL,
-		     I8254_CMD_READBACK | I8254_SELECT_COUNTER0);
+		outb(I8254_CMD_READBACK | I8254_SELECT_COUNTER0,
+		     I8254_PORT_CONTROL);
 		status = inb(I8254_PORT_COUNTER0);
 		timer  = inb(I8254_PORT_COUNTER0);
 		timer |= inb(I8254_PORT_COUNTER0) << 8;
@@ -82,7 +83,7 @@ static unsigned long get_random_long(void)
 
 	if (has_cpuflag(X86_FEATURE_TSC)) {
 		debug_putstr(" RDTSC");
-		rdtscll(raw);
+		raw = rdtsc();
 
 		random ^= raw;
 		use_i8254 = false;
@@ -94,7 +95,7 @@ static unsigned long get_random_long(void)
 	}
 
 	/* Circular multiply for better bit diffusion */
-	asm("mul %3"
+	asm(_ASM_MUL "%3"
 	    : "=a" (random), "=d" (raw)
 	    : "a" (random), "rm" (mix_const));
 	random += raw;
@@ -295,7 +296,8 @@ static unsigned long find_random_addr(unsigned long minimum,
 	return slots_fetch_random();
 }
 
-unsigned char *choose_kernel_location(unsigned char *input,
+unsigned char *choose_kernel_location(struct boot_params *boot_params,
+				      unsigned char *input,
 				      unsigned long input_size,
 				      unsigned char *output,
 				      unsigned long output_size)
@@ -314,6 +316,8 @@ unsigned char *choose_kernel_location(unsigned char *input,
 		goto out;
 	}
 #endif
+
+	boot_params->hdr.loadflags |= KASLR_FLAG;
 
 	/* Record the various known unsafe memory ranges. */
 	mem_avoid_init((unsigned long)input, input_size,

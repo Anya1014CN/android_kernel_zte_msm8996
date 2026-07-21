@@ -1266,8 +1266,7 @@ static int mv_u3d_start(struct usb_gadget *g,
 	return 0;
 }
 
-static int mv_u3d_stop(struct usb_gadget *g,
-		struct usb_gadget_driver *driver)
+static int mv_u3d_stop(struct usb_gadget *g)
 {
 	struct mv_u3d *u3d = container_of(g, struct mv_u3d, gadget);
 	struct mv_usb_platform_data *pdata = dev_get_platdata(u3d->dev);
@@ -1284,7 +1283,7 @@ static int mv_u3d_stop(struct usb_gadget *g,
 	mv_u3d_controller_stop(u3d);
 	/* stop all usb activities */
 	u3d->gadget.speed = USB_SPEED_UNKNOWN;
-	mv_u3d_stop_activity(u3d, driver);
+	mv_u3d_stop_activity(u3d, NULL);
 	mv_u3d_disable(u3d);
 
 	if (pdata->phy_deinit)
@@ -1325,6 +1324,9 @@ static int mv_u3d_eps_init(struct mv_u3d *u3d)
 	ep->ep.ops = &mv_u3d_ep_ops;
 	ep->wedge = 0;
 	usb_ep_set_maxpacket_limit(&ep->ep, MV_U3D_EP0_MAX_PKT_SIZE);
+	ep->ep.caps.type_control = true;
+	ep->ep.caps.dir_in = true;
+	ep->ep.caps.dir_out = true;
 	ep->ep_num = 0;
 	ep->ep.desc = &mv_u3d_ep0_desc;
 	INIT_LIST_HEAD(&ep->queue);
@@ -1340,13 +1342,19 @@ static int mv_u3d_eps_init(struct mv_u3d *u3d)
 		if (i & 1) {
 			snprintf(name, sizeof(name), "ep%din", i >> 1);
 			ep->direction = MV_U3D_EP_DIR_IN;
+			ep->ep.caps.dir_in = true;
 		} else {
 			snprintf(name, sizeof(name), "ep%dout", i >> 1);
 			ep->direction = MV_U3D_EP_DIR_OUT;
+			ep->ep.caps.dir_out = true;
 		}
 		ep->u3d = u3d;
 		strncpy(ep->name, name, sizeof(ep->name));
 		ep->ep.name = ep->name;
+
+		ep->ep.caps.type_iso = true;
+		ep->ep.caps.type_bulk = true;
+		ep->ep.caps.type_int = true;
 
 		ep->ep.ops = &mv_u3d_ep_ops;
 		usb_ep_set_maxpacket_limit(&ep->ep, (unsigned short) ~0);
@@ -1759,8 +1767,7 @@ static int mv_u3d_remove(struct platform_device *dev)
 	usb_del_gadget_udc(&u3d->gadget);
 
 	/* free memory allocated in probe */
-	if (u3d->trb_pool)
-		dma_pool_destroy(u3d->trb_pool);
+	dma_pool_destroy(u3d->trb_pool);
 
 	if (u3d->ep_context)
 		dma_free_coherent(&dev->dev, u3d->ep_context_size,
@@ -1922,14 +1929,6 @@ static int mv_u3d_probe(struct platform_device *dev)
 		goto err_get_irq;
 	}
 	u3d->irq = r->start;
-	if (request_irq(u3d->irq, mv_u3d_irq,
-		IRQF_SHARED, driver_name, u3d)) {
-		u3d->irq = 0;
-		dev_err(&dev->dev, "Request irq %d for u3d failed\n",
-			u3d->irq);
-		retval = -ENODEV;
-		goto err_request_irq;
-	}
 
 	/* initialize gadget structure */
 	u3d->gadget.ops = &mv_u3d_ops;	/* usb_gadget_ops */
@@ -1941,6 +1940,15 @@ static int mv_u3d_probe(struct platform_device *dev)
 	u3d->gadget.name = driver_name;		/* gadget name */
 
 	mv_u3d_eps_init(u3d);
+
+	if (request_irq(u3d->irq, mv_u3d_irq,
+		IRQF_SHARED, driver_name, u3d)) {
+		u3d->irq = 0;
+		dev_err(&dev->dev, "Request irq %d for u3d failed\n",
+			u3d->irq);
+		retval = -ENODEV;
+		goto err_request_irq;
+	}
 
 	/* external vbus detection */
 	if (u3d->vbus) {
@@ -1965,8 +1973,8 @@ static int mv_u3d_probe(struct platform_device *dev)
 
 err_unregister:
 	free_irq(u3d->irq, u3d);
-err_request_irq:
 err_get_irq:
+err_request_irq:
 	kfree(u3d->status_req);
 err_alloc_status_req:
 	kfree(u3d->eps);
@@ -2053,7 +2061,6 @@ static struct platform_driver mv_u3d_driver = {
 	.remove		= mv_u3d_remove,
 	.shutdown	= mv_u3d_shutdown,
 	.driver		= {
-		.owner	= THIS_MODULE,
 		.name	= "mv-u3d",
 		.pm	= &mv_u3d_pm_ops,
 	},

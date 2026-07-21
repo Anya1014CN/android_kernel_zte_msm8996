@@ -1,4 +1,4 @@
-/* Copyright (c) 2014-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014-2016, 2018, 2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -30,8 +30,9 @@
 #include <dt-bindings/clock/msm-clocks-8996.h>
 #include <dt-bindings/clock/msm-clocks-hwio-8996.h>
 
-#include "vdd-level-8994.h"
+#include "vdd-level-8996.h"
 #include "clock.h"
+#include "reset.h"
 
 static void __iomem *virt_base;
 static void __iomem *virt_base_gpu;
@@ -52,7 +53,7 @@ static void __iomem *virt_base_gpu;
 #define dsi1phypll_mm_source_val		2
 #define ext_extpclk_clk_src_mm_source_val	1
 
-#define FIXDIV(div) ((div) == 0 ? 0 : (2 * (div) - 1))
+#define FIXDIV(div) ((int)div ? (2 * (div) - 1) : (0))
 
 #define F_MM(f, s, div, m, n) \
 	{ \
@@ -1516,9 +1517,9 @@ static struct rcg_clk extpclk_clk_src = {
 		.dbg_name = "extpclk_clk_src",
 		.parent = &ext_extpclk_clk_src.c,
 		.ops = &clk_ops_byte,
+		.flags = CLKFLAG_NO_RATE_CACHE,
 		VDD_DIG_FMAX_MAP3(LOWER, 150000000, LOW, 300000000,
 							NOMINAL, 600000000),
-		.flags = CLKFLAG_NO_RATE_CACHE,
 		CLK_INIT(extpclk_clk_src.c),
 	},
 };
@@ -3034,6 +3035,17 @@ static struct branch_clk vmem_maxi_clk = {
 	},
 };
 
+static const struct msm_reset_map mmss_msm8996_resets[] = {
+	[VIDEO_BCR] = { 0x1020 },
+	[MDSS_BCR] = { 0x2300 },
+	[CAMSS_MICRO_BCR] = { 0x3490 },
+	[CAMSS_JPEG_BCR] = { 0x35a0 },
+	[CAMSS_VFE0_BCR] = { 0x3660 },
+	[CAMSS_VFE1_BCR] = { 0x3670 },
+	[FD_BCR] = { 0x3b60 },
+	[GPU_GX_BCR] = { 0x4020 },
+};
+
 static struct mux_clk mmss_gcc_dbg_clk = {
 	.ops = &mux_reg_ops,
 	.en_mask = BIT(16),
@@ -3636,6 +3648,21 @@ void __iomem *gpu_base;
 u64 efuse;
 int gpu_speed_bin;
 
+static int mmss_pll_suspend(struct device *dev)
+{
+	return 0;
+}
+
+static int mmss_pll_resume(struct device *dev)
+{
+#ifdef CONFIG_HIBERNATION
+	mmpll9.c.ops->set_rate(&mmpll9.c, 1248000000);
+	mmpll8.c.ops->set_rate(&mmpll8.c, 510000);
+	mmpll2.c.ops->set_rate(&mmpll2.c, 510000);
+#endif
+	return 0;
+}
+
 int msm_mmsscc_8996_probe(struct platform_device *pdev)
 {
 	struct resource *res;
@@ -3744,7 +3771,6 @@ int msm_mmsscc_8996_probe(struct platform_device *pdev)
 	ext_byte1_clk_src.c.flags = CLKFLAG_NO_RATE_CACHE;
 	ext_extpclk_clk_src.dev = &pdev->dev;
 	ext_extpclk_clk_src.clk_id = "extpclk_src";
-	ext_extpclk_clk_src.c.flags = CLKFLAG_NO_RATE_CACHE;
 
 	efuse = readl_relaxed(gpu_base);
 	gpu_speed_bin = ((efuse >> EFUSE_SHIFT_v3) & EFUSE_MASK_v3);
@@ -3781,6 +3807,11 @@ int msm_mmsscc_8996_probe(struct platform_device *pdev)
 		if (rc)
 			return rc;
 	}
+
+	 /* Register block resets */
+	msm_reset_controller_register(pdev, mmss_msm8996_resets,
+			ARRAY_SIZE(mmss_msm8996_resets), virt_base);
+
 	dev_info(&pdev->dev, "Registered MMSS clocks.\n");
 
 	return platform_driver_register(&msm_clock_gpu_driver);
@@ -3794,11 +3825,19 @@ static struct of_device_id msm_clock_mmss_match_table[] = {
 	{},
 };
 
+static const struct dev_pm_ops msm_clock_mmss_pm_ops = {
+	.freeze_late = mmss_pll_suspend,
+	.thaw_early = mmss_pll_resume,
+	.poweroff_late = mmss_pll_suspend,
+	.restore_early = mmss_pll_resume,
+};
+
 static struct platform_driver msm_clock_mmss_driver = {
 	.probe = msm_mmsscc_8996_probe,
 	.driver = {
 		.name = "qcom,mmsscc-8996",
 		.of_match_table = msm_clock_mmss_match_table,
+		.pm = &msm_clock_mmss_pm_ops,
 		.owner = THIS_MODULE,
 	},
 };

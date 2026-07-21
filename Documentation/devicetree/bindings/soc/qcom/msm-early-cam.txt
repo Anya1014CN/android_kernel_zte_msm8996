@@ -8,10 +8,10 @@ Required properties:
 [Subnode]
 ==========
 - qcom,early-cam-input-profile-#: Defines child nodes for the profiles supported
-              by early camera driver. Each profile should have properties
-              "mmagic-supply", "gdscr-supply", "vfe0-vdd-supply",
-              "qcom,cam-vreg-name", "clocks", "clock-names",
-              "qcom,clock-rates".
+		by early camera driver. Each profile should have properties
+		"mmagic-supply", "gdscr-supply", "vfe0-vdd-supply",
+		"qcom,cam-vreg-name", "clocks", "clock-names",
+		"qcom,clock-rates".
 Required properties:
 - mmagic-supply : should contain mmagic regulator used for mmagic clocks.
 - gdscr-supply : should contain gdsr regulator used for cci clocks.

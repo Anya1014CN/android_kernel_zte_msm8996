@@ -5,7 +5,7 @@
  * Copyright 2001 Red Hat, Inc.
  * Based on code from mm/memory.c Copyright Linus Torvalds and others.
  *
- * Copyright 2011 Red Hat, Inc., Peter Zijlstra <pzijlstr@redhat.com>
+ * Copyright 2011 Red Hat, Inc., Peter Zijlstra
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -136,8 +136,12 @@ static inline void __tlb_adjust_range(struct mmu_gather *tlb,
 
 static inline void __tlb_reset_range(struct mmu_gather *tlb)
 {
-	tlb->start = TASK_SIZE;
-	tlb->end = 0;
+	if (tlb->fullmm) {
+		tlb->start = tlb->end = ~0;
+	} else {
+		tlb->start = TASK_SIZE;
+		tlb->end = 0;
+	}
 }
 
 /*
@@ -160,6 +164,13 @@ static inline void __tlb_reset_range(struct mmu_gather *tlb)
 #ifndef tlb_end_vma
 #define tlb_end_vma	__tlb_end_vma
 #endif
+
+static inline void tlb_flush_pmd_range(struct mmu_gather *tlb,
+				unsigned long address, unsigned long size)
+{
+	tlb->start = min(tlb->start, address);
+	tlb->end = max(tlb->end, address + size);
+}
 
 #ifndef __tlb_remove_tlb_entry
 #define __tlb_remove_tlb_entry(tlb, ptep, address) do { } while (0)

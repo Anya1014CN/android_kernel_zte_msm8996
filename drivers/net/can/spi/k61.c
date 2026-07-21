@@ -180,7 +180,7 @@ static void k61_frame_error(struct k61_can *priv_data,
 
 	netdev = priv_data->netdev;
 	skb = alloc_can_err_skb(netdev, &cf);
-	if (skb == NULL) {
+	if (!skb) {
 		LOGDE("skb alloc failed\n");
 		return;
 	}
@@ -212,7 +212,7 @@ static void k61_receive_frame(struct k61_can *priv_data,
 
 	netdev = priv_data->netdev;
 	skb = alloc_can_skb(netdev, &cf);
-	if (skb == NULL) {
+	if (!skb) {
 		LOGDE("skb alloc failed\n");
 		return;
 	}
@@ -243,6 +243,7 @@ static void k61_process_response(struct k61_can *priv_data,
 				 struct spi_miso *resp)
 {
 	int ret = 0;
+
 	LOGDI("<%x %2d [%d]\n", resp->cmd, resp->len, resp->seq);
 	if (resp->cmd == CMD_CAN_RECEIVE_FRAME) {
 		struct can_receive_frame *frame =
@@ -480,7 +481,7 @@ static int k61_frame_filter(struct net_device *netdev,
 	memset(rx_buf, 0, XFER_BUFFER_SIZE);
 	priv_data->xfer_length = XFER_BUFFER_SIZE;
 
-	if (ifr == NULL)
+	if (!ifr)
 		return -EINVAL;
 
 	filter_request =
@@ -496,7 +497,7 @@ static int k61_frame_filter(struct net_device *netdev,
 	}
 
 	req = (struct spi_mosi *)tx_buf;
-	if (IOCTL_ADD_FRAME_FILTER == cmd)
+	if (cmd == IOCTL_ADD_FRAME_FILTER)
 		req->cmd = CMD_CAN_ADD_FILTER;
 	else
 		req->cmd = CMD_CAN_REMOVE_FILTER;
@@ -646,7 +647,7 @@ static int k61_data_buffering(struct net_device *netdev,
 		return spi_cmd;
 	}
 
-	if (ifr == NULL)
+	if (!ifr)
 		return -EINVAL;
 
 	add_request = devm_kzalloc(&spi->dev, sizeof(struct k61_add_can_buffer),

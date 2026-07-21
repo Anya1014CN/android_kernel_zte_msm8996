@@ -20,7 +20,6 @@
 #define TTBR_ASID_MASK	(UL(0xffff) << 48)
 
 #ifndef __ASSEMBLY__
-
 #include <linux/smp.h>
 
 #include <asm/cpufeature.h>
@@ -84,10 +83,17 @@ static inline void arm64_apply_bp_hardening(void)	{ }
 extern void paging_init(void);
 extern void __iomem *early_io_map(phys_addr_t phys, unsigned long virt);
 extern void init_mem_pgprot(void);
-extern void mem_text_write_kernel_word(u32 *addr, u32 word);
 extern void create_pgd_mapping(struct mm_struct *mm, phys_addr_t phys,
 			       unsigned long virt, phys_addr_t size,
 			       pgprot_t prot);
+extern void *fixmap_remap_fdt(phys_addr_t dt_phys);
+#ifdef CONFIG_MEMORY_HOTPLUG
+extern void hotplug_paging(phys_addr_t start, phys_addr_t size);
+#ifdef CONFIG_MEMORY_HOTREMOVE
+extern void remove_pagetable(unsigned long start,
+	unsigned long end, bool direct);
+#endif
+#endif
 
 #endif	/* !__ASSEMBLY__ */
 #endif

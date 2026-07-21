@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2014, Intel Corp.
+ * Copyright (C) 2000 - 2015, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -272,7 +272,7 @@ cleanup:
  * FUNCTION:    acpi_ds_get_field_names
  *
  * PARAMETERS:  info            - create_field info structure
- *  `           walk_state      - Current method state
+ *              walk_state      - Current method state
  *              arg             - First parser arg for the field name list
  *
  * RETURN:      Status
@@ -502,7 +502,7 @@ acpi_ds_create_field(union acpi_parse_object *op,
 		}
 	}
 
-	ACPI_MEMSET(&info, 0, sizeof(struct acpi_create_field_info));
+	memset(&info, 0, sizeof(struct acpi_create_field_info));
 
 	/* Second arg is the field flags */
 

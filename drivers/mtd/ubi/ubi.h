@@ -478,7 +478,8 @@ struct ubi_debug_info {
  * @pq_head: protection queue head
  * @wl_lock: protects the @used, @free, @pq, @pq_head, @lookuptbl, @move_from,
  *	     @move_to, @move_to_put @erase_pending, @wl_scheduled, @works,
- *	     @erroneous, @erroneous_peb_count, and @fm_work_scheduled fields
+ *	     @erroneous, @erroneous_peb_count, @fm_work_scheduled, @fm_pool,
+ *	     and @fm_wl_pool fields
  * @move_mutex: serializes eraseblock moves
  * @work_sem: used to wait for all the scheduled works to finish and prevent
  * new works from being submitted
@@ -599,7 +600,6 @@ struct ubi_device {
 	char bgt_name[sizeof(UBI_BGT_NAME_PATTERN)+2];
 	bool scrub_in_progress;
 	atomic_t scrub_work_count;
-	int wl_is_inited;
 
 	/* I/O sub-system's stuff */
 	long long flash_size;
@@ -705,6 +705,8 @@ struct ubi_ainf_volume {
  * @erase: list of physical eraseblocks which have to be erased
  * @alien: list of physical eraseblocks which should not be used by UBI (e.g.,
  *         those belonging to "preserve"-compatible internal volumes)
+ * @fastmap: list of physical eraseblocks which relate to fastmap (e.g.,
+ *           eraseblocks of the current and not yet erased old fastmap blocks)
  * @corr_peb_count: count of PEBs in the @corr list
  * @empty_peb_count: count of PEBs which are presumably empty (contain only
  *                   0xFF bytes)
@@ -715,6 +717,8 @@ struct ubi_ainf_volume {
  * @vols_found: number of volumes found
  * @highest_vol_id: highest volume ID
  * @is_empty: flag indicating whether the MTD device is empty or not
+ * @force_full_scan: flag indicating whether we need to do a full scan and drop
+		     all existing Fastmap data structures
  * @min_ec: lowest erase counter value
  * @max_ec: highest erase counter value
  * @max_sqnum: highest sequence number value
@@ -733,6 +737,7 @@ struct ubi_attach_info {
 	struct list_head free;
 	struct list_head erase;
 	struct list_head alien;
+	struct list_head fastmap;
 	int corr_peb_count;
 	int empty_peb_count;
 	int alien_peb_count;
@@ -741,6 +746,7 @@ struct ubi_attach_info {
 	int vols_found;
 	int highest_vol_id;
 	int is_empty;
+	int force_full_scan;
 	int min_ec;
 	int max_ec;
 	unsigned long long max_sqnum;
@@ -872,7 +878,7 @@ ssize_t ubi_wl_scrub_all(struct ubi_device *ubi,
 void ubi_wl_update_peb_sqnum(struct ubi_device *ubi, int pnum,
 				struct ubi_vid_hdr *vid_hdr);
 unsigned long long ubi_wl_scrub_get_min_sqnum(struct ubi_device *ubi);
-int ubi_wl_re_erase_peb(struct ubi_device *ubi, int pnum);
+int ubi_wl_erase_peb(struct ubi_device *ubi, int pnum);
 
 /* io.c */
 int ubi_io_read(const struct ubi_device *ubi, void *buf, int pnum, int offset,
@@ -919,7 +925,7 @@ int ubi_compare_lebs(struct ubi_device *ubi, const struct ubi_ainf_peb *aeb,
 size_t ubi_calc_fm_size(struct ubi_device *ubi);
 int ubi_update_fastmap(struct ubi_device *ubi);
 int ubi_scan_fastmap(struct ubi_device *ubi, struct ubi_attach_info *ai,
-		     int fm_anchor);
+		     struct ubi_attach_info *scan_ai);
 #else
 static inline int ubi_update_fastmap(struct ubi_device *ubi) { return 0; }
 #endif
@@ -1111,6 +1117,44 @@ static inline int idx2vol_id(const struct ubi_device *ubi, int idx)
 		return idx - ubi->vtbl_slots + UBI_INTERNAL_VOL_START;
 	else
 		return idx;
+}
+
+/**
+ * ubi_is_fm_vol - check whether a volume ID is a Fastmap volume.
+ * @vol_id: volume ID
+ */
+static inline bool ubi_is_fm_vol(int vol_id)
+{
+	switch (vol_id) {
+		case UBI_FM_SB_VOLUME_ID:
+		case UBI_FM_DATA_VOLUME_ID:
+		return true;
+	}
+
+	return false;
+}
+
+/**
+ * ubi_find_fm_block - check whether a PEB is part of the current Fastmap.
+ * @ubi: UBI device description object
+ * @pnum: physical eraseblock to look for
+ *
+ * This function returns a wear leveling object if @pnum relates to the current
+ * fastmap, @NULL otherwise.
+ */
+static inline struct ubi_wl_entry *ubi_find_fm_block(const struct ubi_device *ubi,
+						     int pnum)
+{
+	int i;
+
+	if (ubi->fm) {
+		for (i = 0; i < ubi->fm->used_blocks; i++) {
+			if (ubi->fm->e[i]->pnum == pnum)
+				return ubi->fm->e[i];
+		}
+	}
+
+	return NULL;
 }
 
 #endif /* !__UBI_UBI_H__ */

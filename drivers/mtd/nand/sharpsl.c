@@ -144,7 +144,7 @@ static int sharpsl_nand_probe(struct platform_device *pdev)
 
 	/* Link the private data with the MTD structure */
 	sharpsl->mtd.priv = this;
-	sharpsl->mtd.owner = THIS_MODULE;
+	sharpsl->mtd.dev.parent = &pdev->dev;
 
 	platform_set_drvdata(pdev, sharpsl);
 
@@ -189,7 +189,7 @@ static int sharpsl_nand_probe(struct platform_device *pdev)
 	return 0;
 
 err_add:
-	nand_release(&sharpsl->mtd);
+	nand_cleanup(this);
 
 err_scan:
 	iounmap(sharpsl->io);
@@ -220,7 +220,6 @@ static int sharpsl_nand_remove(struct platform_device *pdev)
 static struct platform_driver sharpsl_nand_driver = {
 	.driver = {
 		.name	= "sharpsl-nand",
-		.owner	= THIS_MODULE,
 	},
 	.probe		= sharpsl_nand_probe,
 	.remove		= sharpsl_nand_remove,

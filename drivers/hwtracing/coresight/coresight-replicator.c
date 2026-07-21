@@ -12,7 +12,6 @@
 
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include <linux/init.h>
 #include <linux/device.h>
 #include <linux/platform_device.h>
 #include <linux/io.h>
@@ -128,20 +127,6 @@ out_disable_pm:
 	return ret;
 }
 
-static int replicator_remove(struct platform_device *pdev)
-{
-	struct replicator_drvdata *drvdata = platform_get_drvdata(pdev);
-
-	coresight_unregister(drvdata->csdev);
-	pm_runtime_get_sync(&pdev->dev);
-	if (!IS_ERR(drvdata->atclk))
-		clk_disable_unprepare(drvdata->atclk);
-	pm_runtime_put_noidle(&pdev->dev);
-	pm_runtime_disable(&pdev->dev);
-
-	return 0;
-}
-
 #ifdef CONFIG_PM
 static int replicator_runtime_suspend(struct device *dev)
 {
@@ -169,32 +154,22 @@ static const struct dev_pm_ops replicator_dev_pm_ops = {
 			   replicator_runtime_resume, NULL)
 };
 
-static struct of_device_id replicator_match[] = {
+static const struct of_device_id replicator_match[] = {
 	{.compatible = "arm,coresight-replicator"},
 	{}
 };
 
 static struct platform_driver replicator_driver = {
 	.probe          = replicator_probe,
-	.remove         = replicator_remove,
 	.driver         = {
 		.name   = "coresight-replicator",
 		.of_match_table = replicator_match,
 		.pm	= &replicator_dev_pm_ops,
+		.suppress_bind_attrs = true,
 	},
 };
 
-static int __init replicator_init(void)
-{
-	return platform_driver_register(&replicator_driver);
-}
-module_init(replicator_init);
-
-static void __exit replicator_exit(void)
-{
-	platform_driver_unregister(&replicator_driver);
-}
-module_exit(replicator_exit);
+builtin_platform_driver(replicator_driver);
 
 MODULE_LICENSE("GPL v2");
 MODULE_DESCRIPTION("CoreSight Replicator driver");

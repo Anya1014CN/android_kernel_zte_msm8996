@@ -138,7 +138,7 @@ struct msm_jpeg_hw_cmd hw_cmd_encode_output_size[] = {
 	/* type, repeat n times, offset, mask, data or pdata */
 	{MSM_JPEG_HW_CMD_TYPE_READ, 1,
 	JPEG_ENCODE_OUTPUT_SIZE_STATUS_ADDR,
-	JPEG_ENCODE_OUTPUT_SIZE_STATUS_BMSK, {0} } ,
+	JPEG_ENCODE_OUTPUT_SIZE_STATUS_BMSK, {0} },
 };
 
 long msm_jpeg_hw_encode_output_size(void *base)

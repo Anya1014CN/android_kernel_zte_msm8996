@@ -89,6 +89,7 @@ enum amd_chipset_gen {
 	AMD_CHIPSET_HUDSON2,
 	AMD_CHIPSET_BOLTON,
 	AMD_CHIPSET_YANGTZE,
+	AMD_CHIPSET_TAISHAN,
 	AMD_CHIPSET_UNKNOWN,
 };
 
@@ -136,20 +137,26 @@ static int amd_chipset_sb_type_init(struct amd_chipset_info *pinfo)
 		pinfo->smbus_dev = pci_get_device(PCI_VENDOR_ID_AMD,
 				PCI_DEVICE_ID_AMD_HUDSON2_SMBUS, NULL);
 
-		if (!pinfo->smbus_dev) {
-			pinfo->sb_type.gen = NOT_AMD_CHIPSET;
-			return 0;
+		if (pinfo->smbus_dev) {
+			rev = pinfo->smbus_dev->revision;
+			if (rev >= 0x11 && rev <= 0x14)
+				pinfo->sb_type.gen = AMD_CHIPSET_HUDSON2;
+			else if (rev >= 0x15 && rev <= 0x18)
+				pinfo->sb_type.gen = AMD_CHIPSET_BOLTON;
+			else if (rev >= 0x39 && rev <= 0x3a)
+				pinfo->sb_type.gen = AMD_CHIPSET_YANGTZE;
+		} else {
+			pinfo->smbus_dev = pci_get_device(PCI_VENDOR_ID_AMD,
+							  0x145c, NULL);
+			if (pinfo->smbus_dev) {
+				rev = pinfo->smbus_dev->revision;
+				pinfo->sb_type.gen = AMD_CHIPSET_TAISHAN;
+			} else {
+				pinfo->sb_type.gen = NOT_AMD_CHIPSET;
+				return 0;
+			}
 		}
-
-		rev = pinfo->smbus_dev->revision;
-		if (rev >= 0x11 && rev <= 0x14)
-			pinfo->sb_type.gen = AMD_CHIPSET_HUDSON2;
-		else if (rev >= 0x15 && rev <= 0x18)
-			pinfo->sb_type.gen = AMD_CHIPSET_BOLTON;
-		else if (rev >= 0x39 && rev <= 0x3a)
-			pinfo->sb_type.gen = AMD_CHIPSET_YANGTZE;
 	}
-
 	pinfo->sb_type.rev = rev;
 	return 1;
 }
@@ -171,7 +178,7 @@ int usb_amd_find_chipset_info(void)
 {
 	unsigned long flags;
 	struct amd_chipset_info info;
-	int ret;
+	int need_pll_quirk = 0;
 
 	spin_lock_irqsave(&amd_lock, flags);
 
@@ -185,21 +192,28 @@ int usb_amd_find_chipset_info(void)
 	spin_unlock_irqrestore(&amd_lock, flags);
 
 	if (!amd_chipset_sb_type_init(&info)) {
-		ret = 0;
 		goto commit;
 	}
 
-	/* Below chipset generations needn't enable AMD PLL quirk */
-	if (info.sb_type.gen == AMD_CHIPSET_UNKNOWN ||
-			info.sb_type.gen == AMD_CHIPSET_SB600 ||
-			info.sb_type.gen == AMD_CHIPSET_YANGTZE ||
-			(info.sb_type.gen == AMD_CHIPSET_SB700 &&
-			info.sb_type.rev > 0x3b)) {
+	switch (info.sb_type.gen) {
+	case AMD_CHIPSET_SB700:
+		need_pll_quirk = info.sb_type.rev <= 0x3B;
+		break;
+	case AMD_CHIPSET_SB800:
+	case AMD_CHIPSET_HUDSON2:
+	case AMD_CHIPSET_BOLTON:
+		need_pll_quirk = 1;
+		break;
+	default:
+		need_pll_quirk = 0;
+		break;
+	}
+
+	if (!need_pll_quirk) {
 		if (info.smbus_dev) {
 			pci_dev_put(info.smbus_dev);
 			info.smbus_dev = NULL;
 		}
-		ret = 0;
 		goto commit;
 	}
 
@@ -218,7 +232,7 @@ int usb_amd_find_chipset_info(void)
 		}
 	}
 
-	ret = info.probe_result = 1;
+	need_pll_quirk = info.probe_result = 1;
 	printk(KERN_DEBUG "QUIRK: Enable AMD PLL fix\n");
 
 commit:
@@ -229,14 +243,12 @@ commit:
 
 		/* Mark that we where here */
 		amd_chipset.probe_count++;
-		ret = amd_chipset.probe_result;
+		need_pll_quirk = amd_chipset.probe_result;
 
 		spin_unlock_irqrestore(&amd_lock, flags);
 
-		if (info.nb_dev)
-			pci_dev_put(info.nb_dev);
-		if (info.smbus_dev)
-			pci_dev_put(info.smbus_dev);
+		pci_dev_put(info.nb_dev);
+		pci_dev_put(info.smbus_dev);
 
 	} else {
 		/* no race - commit the result */
@@ -245,7 +257,7 @@ commit:
 		spin_unlock_irqrestore(&amd_lock, flags);
 	}
 
-	return ret;
+	return need_pll_quirk;
 }
 EXPORT_SYMBOL_GPL(usb_amd_find_chipset_info);
 
@@ -253,11 +265,12 @@ int usb_hcd_amd_remote_wakeup_quirk(struct pci_dev *pdev)
 {
 	/* Make sure amd chipset type has already been initialized */
 	usb_amd_find_chipset_info();
-	if (amd_chipset.sb_type.gen != AMD_CHIPSET_YANGTZE)
-		return 0;
-
-	dev_dbg(&pdev->dev, "QUIRK: Enable AMD remote wakeup fix\n");
-	return 1;
+	if (amd_chipset.sb_type.gen == AMD_CHIPSET_YANGTZE ||
+	    amd_chipset.sb_type.gen == AMD_CHIPSET_TAISHAN) {
+		dev_dbg(&pdev->dev, "QUIRK: Enable AMD remote wakeup fix\n");
+		return 1;
+	}
+	return 0;
 }
 EXPORT_SYMBOL_GPL(usb_hcd_amd_remote_wakeup_quirk);
 
@@ -447,10 +460,8 @@ void usb_amd_dev_put(void)
 
 	spin_unlock_irqrestore(&amd_lock, flags);
 
-	if (nb)
-		pci_dev_put(nb);
-	if (smbus)
-		pci_dev_put(smbus);
+	pci_dev_put(nb);
+	pci_dev_put(smbus);
 }
 EXPORT_SYMBOL_GPL(usb_amd_dev_put);
 
@@ -607,9 +618,9 @@ static void quirk_usb_handoff_ohci(struct pci_dev *pdev)
 			msleep(10);
 		}
 		if (wait_time <= 0)
-			dev_warn(&pdev->dev, "OHCI: BIOS handoff failed"
-					" (BIOS bug?) %08x\n",
-					readl(base + OHCI_CONTROL));
+			dev_warn(&pdev->dev,
+				 "OHCI: BIOS handoff failed (BIOS bug?) %08x\n",
+				 readl(base + OHCI_CONTROL));
 	}
 #endif
 
@@ -737,8 +748,9 @@ static void ehci_bios_handoff(struct pci_dev *pdev,
 		 * and hope nothing goes too wrong
 		 */
 		if (try_handoff)
-			dev_warn(&pdev->dev, "EHCI: BIOS handoff failed"
-				 " (BIOS bug?) %08x\n", cap);
+			dev_warn(&pdev->dev,
+				 "EHCI: BIOS handoff failed (BIOS bug?) %08x\n",
+				 cap);
 		pci_write_config_byte(pdev, offset + 2, 0);
 	}
 
@@ -785,8 +797,9 @@ static void quirk_usb_disable_ehci(struct pci_dev *pdev)
 		case 0: /* Illegal reserved cap, set cap=0 so we exit */
 			cap = 0; /* then fallthrough... */
 		default:
-			dev_warn(&pdev->dev, "EHCI: unrecognized capability "
-				 "%02x\n", cap & 0xff);
+			dev_warn(&pdev->dev,
+				 "EHCI: unrecognized capability %02x\n",
+				 cap & 0xff);
 		}
 		offset = (cap >> 8) & 0xff;
 	}
@@ -897,8 +910,7 @@ void usb_enable_intel_xhci_ports(struct pci_dev *xhci_pdev)
 	 */
 	if (!IS_ENABLED(CONFIG_USB_XHCI_HCD)) {
 		dev_warn(&xhci_pdev->dev,
-				"CONFIG_USB_XHCI_HCD is turned off, "
-				"defaulting to EHCI.\n");
+			 "CONFIG_USB_XHCI_HCD is turned off, defaulting to EHCI.\n");
 		dev_warn(&xhci_pdev->dev,
 				"USB 3.0 devices will work at USB 2.0 speeds.\n");
 		usb_disable_xhci_ports(xhci_pdev);
@@ -923,8 +935,9 @@ void usb_enable_intel_xhci_ports(struct pci_dev *xhci_pdev)
 
 	pci_read_config_dword(xhci_pdev, USB_INTEL_USB3_PSSEN,
 			&ports_available);
-	dev_dbg(&xhci_pdev->dev, "USB 3.0 ports that are now enabled "
-			"under xHCI: 0x%x\n", ports_available);
+	dev_dbg(&xhci_pdev->dev,
+		"USB 3.0 ports that are now enabled under xHCI: 0x%x\n",
+		ports_available);
 
 	/* Read XUSB2PRM, xHCI USB 2.0 Port Routing Mask Register
 	 * Indicate the USB 2.0 ports to be controlled by the xHCI host.
@@ -945,8 +958,9 @@ void usb_enable_intel_xhci_ports(struct pci_dev *xhci_pdev)
 
 	pci_read_config_dword(xhci_pdev, USB_INTEL_XUSB2PR,
 			&ports_available);
-	dev_dbg(&xhci_pdev->dev, "USB 2.0 ports that are now switched over "
-			"to xHCI: 0x%x\n", ports_available);
+	dev_dbg(&xhci_pdev->dev,
+		"USB 2.0 ports that are now switched over to xHCI: 0x%x\n",
+		ports_available);
 }
 EXPORT_SYMBOL_GPL(usb_enable_intel_xhci_ports);
 
@@ -962,7 +976,7 @@ EXPORT_SYMBOL_GPL(usb_disable_xhci_ports);
  *
  * Takes care of the handoff between the Pre-OS (i.e. BIOS) and the OS.
  * It signals to the BIOS that the OS wants control of the host controller,
- * and then waits 5 seconds for the BIOS to hand over control.
+ * and then waits 1 second for the BIOS to hand over control.
  * If we timeout, assume the BIOS is broken and take control anyway.
  */
 static void quirk_usb_handoff_xhci(struct pci_dev *pdev)
@@ -1008,14 +1022,15 @@ static void quirk_usb_handoff_xhci(struct pci_dev *pdev)
 	if (val & XHCI_HC_BIOS_OWNED) {
 		writel(val | XHCI_HC_OS_OWNED, base + ext_cap_offset);
 
-		/* Wait for 5 seconds with 10 microsecond polling interval */
+		/* Wait for 1 second with 10 microsecond polling interval */
 		timeout = handshake(base + ext_cap_offset, XHCI_HC_BIOS_OWNED,
-				0, 5000, 10);
+				0, 1000000, 10);
 
 		/* Assume a buggy BIOS and take HC ownership anyway */
 		if (timeout) {
-			dev_warn(&pdev->dev, "xHCI BIOS handoff failed"
-					" (BIOS bug ?) %08x\n", val);
+			dev_warn(&pdev->dev,
+				 "xHCI BIOS handoff failed (BIOS bug ?) %08x\n",
+				 val);
 			writel(val & ~XHCI_HC_BIOS_OWNED, base + ext_cap_offset);
 		}
 	}
@@ -1038,13 +1053,13 @@ hc_init:
 	 * operational or runtime registers.  Wait 5 seconds and no more.
 	 */
 	timeout = handshake(op_reg_base + XHCI_STS_OFFSET, XHCI_STS_CNR, 0,
-			5000, 10);
+			5000000, 10);
 	/* Assume a buggy HC and start HC initialization anyway */
 	if (timeout) {
 		val = readl(op_reg_base + XHCI_STS_OFFSET);
 		dev_warn(&pdev->dev,
-				"xHCI HW not ready after 5 sec (HC bug?) "
-				"status = 0x%x\n", val);
+			 "xHCI HW not ready after 5 sec (HC bug?) status = 0x%x\n",
+			 val);
 	}
 
 	/* Send the halt and disable interrupts command */
@@ -1058,8 +1073,8 @@ hc_init:
 	if (timeout) {
 		val = readl(op_reg_base + XHCI_STS_OFFSET);
 		dev_warn(&pdev->dev,
-				"xHCI HW did not halt within %d usec "
-				"status = 0x%x\n", XHCI_MAX_HALT_USEC, val);
+			 "xHCI HW did not halt within %d usec status = 0x%x\n",
+			 XHCI_MAX_HALT_USEC, val);
 	}
 
 	iounmap(base);
@@ -1079,8 +1094,8 @@ static void quirk_usb_early_handoff(struct pci_dev *pdev)
 		return;
 
 	if (pci_enable_device(pdev) < 0) {
-		dev_warn(&pdev->dev, "Can't enable PCI device, "
-				"BIOS handoff failed.\n");
+		dev_warn(&pdev->dev,
+			 "Can't enable PCI device, BIOS handoff failed.\n");
 		return;
 	}
 	if (pdev->class == PCI_CLASS_SERIAL_USB_UHCI)

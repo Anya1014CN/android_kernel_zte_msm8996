@@ -263,6 +263,8 @@ static void ite_set_carrier_params(struct ite_dev *dev)
 
 			if (allowance > ITE_RXDCR_MAX)
 				allowance = ITE_RXDCR_MAX;
+
+			use_demodulator = true;
 		}
 	}
 
@@ -289,6 +291,12 @@ static irqreturn_t ite_cir_isr(int irq, void *data)
 
 	/* read the interrupt flags */
 	iflags = dev->params.get_irq_causes(dev);
+
+	/* Check for RX overflow */
+	if (iflags & ITE_IRQ_RX_FIFO_OVERRUN) {
+		dev_warn(&dev->rdev->dev, "receive overflow\n");
+		ir_raw_event_reset(dev->rdev);
+	}
 
 	/* check for the receive interrupt */
 	if (iflags & (ITE_IRQ_RX_FIFO | ITE_IRQ_RX_FIFO_OVERRUN)) {
@@ -1708,21 +1716,10 @@ static struct pnp_driver ite_driver = {
 	.shutdown	= ite_shutdown,
 };
 
-static int __init ite_init(void)
-{
-	return pnp_register_driver(&ite_driver);
-}
-
-static void __exit ite_exit(void)
-{
-	pnp_unregister_driver(&ite_driver);
-}
-
 MODULE_DEVICE_TABLE(pnp, ite_ids);
 MODULE_DESCRIPTION("ITE Tech Inc. IT8712F/ITE8512F CIR driver");
 
 MODULE_AUTHOR("Juan J. Garcia de Soria <skandalfo@gmail.com>");
 MODULE_LICENSE("GPL");
 
-module_init(ite_init);
-module_exit(ite_exit);
+module_pnp_driver(ite_driver);

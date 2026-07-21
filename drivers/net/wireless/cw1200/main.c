@@ -102,7 +102,7 @@ static struct ieee80211_rate cw1200_mcs_rates[] = {
 
 
 #define CHAN2G(_channel, _freq, _flags) {			\
-	.band			= IEEE80211_BAND_2GHZ,		\
+	.band			= NL80211_BAND_2GHZ,		\
 	.center_freq		= (_freq),			\
 	.hw_value		= (_channel),			\
 	.flags			= (_flags),			\
@@ -111,7 +111,7 @@ static struct ieee80211_rate cw1200_mcs_rates[] = {
 }
 
 #define CHAN5G(_channel, _flags) {				\
-	.band			= IEEE80211_BAND_5GHZ,		\
+	.band			= NL80211_BAND_5GHZ,		\
 	.center_freq	= 5000 + (5 * (_channel)),		\
 	.hw_value		= (_channel),			\
 	.flags			= (_flags),			\
@@ -278,15 +278,14 @@ static struct ieee80211_hw *cw1200_init_common(const u8 *macaddr,
 	else
 		priv->ba_tx_tid_mask = 0xff; /* Enable TX BLKACK for all TIDs */
 
-	hw->flags = IEEE80211_HW_SIGNAL_DBM |
-		    IEEE80211_HW_SUPPORTS_PS |
-		    IEEE80211_HW_SUPPORTS_DYNAMIC_PS |
-		    IEEE80211_HW_REPORTS_TX_ACK_STATUS |
-		    IEEE80211_HW_SUPPORTS_UAPSD |
-		    IEEE80211_HW_CONNECTION_MONITOR |
-		    IEEE80211_HW_AMPDU_AGGREGATION |
-		    IEEE80211_HW_TX_AMPDU_SETUP_IN_HW |
-		    IEEE80211_HW_NEED_DTIM_BEFORE_ASSOC;
+	ieee80211_hw_set(hw, NEED_DTIM_BEFORE_ASSOC);
+	ieee80211_hw_set(hw, TX_AMPDU_SETUP_IN_HW);
+	ieee80211_hw_set(hw, AMPDU_AGGREGATION);
+	ieee80211_hw_set(hw, CONNECTION_MONITOR);
+	ieee80211_hw_set(hw, REPORTS_TX_ACK_STATUS);
+	ieee80211_hw_set(hw, SUPPORTS_DYNAMIC_PS);
+	ieee80211_hw_set(hw, SIGNAL_DBM);
+	ieee80211_hw_set(hw, SUPPORTS_PS);
 
 	hw->wiphy->interface_modes = BIT(NL80211_IFTYPE_STATION) |
 					  BIT(NL80211_IFTYPE_ADHOC) |
@@ -312,12 +311,12 @@ static struct ieee80211_hw *cw1200_init_common(const u8 *macaddr,
 
 	hw->sta_data_size = sizeof(struct cw1200_sta_priv);
 
-	hw->wiphy->bands[IEEE80211_BAND_2GHZ] = &cw1200_band_2ghz;
+	hw->wiphy->bands[NL80211_BAND_2GHZ] = &cw1200_band_2ghz;
 	if (have_5ghz)
-		hw->wiphy->bands[IEEE80211_BAND_5GHZ] = &cw1200_band_5ghz;
+		hw->wiphy->bands[NL80211_BAND_5GHZ] = &cw1200_band_5ghz;
 
 	/* Channel params have to be cleared before registering wiphy again */
-	for (band = 0; band < IEEE80211_NUM_BANDS; band++) {
+	for (band = 0; band < NUM_NL80211_BANDS; band++) {
 		struct ieee80211_supported_band *sband = hw->wiphy->bands[band];
 		if (!sband)
 			continue;
@@ -346,6 +345,11 @@ static struct ieee80211_hw *cw1200_init_common(const u8 *macaddr,
 	mutex_init(&priv->wsm_cmd_mux);
 	mutex_init(&priv->conf_mutex);
 	priv->workqueue = create_singlethread_workqueue("cw1200_wq");
+	if (!priv->workqueue) {
+		ieee80211_free_hw(hw);
+		return NULL;
+	}
+
 	sema_init(&priv->scan.lock, 1);
 	INIT_WORK(&priv->scan.work, cw1200_scan_work);
 	INIT_DELAYED_WORK(&priv->scan.probe_work, cw1200_probe_work);
@@ -374,14 +378,14 @@ static struct ieee80211_hw *cw1200_init_common(const u8 *macaddr,
 	INIT_WORK(&priv->update_filtering_work, cw1200_update_filtering_work);
 	INIT_WORK(&priv->set_beacon_wakeup_period_work,
 		  cw1200_set_beacon_wakeup_period_work);
-	init_timer(&priv->mcast_timeout);
-	priv->mcast_timeout.data = (unsigned long)priv;
-	priv->mcast_timeout.function = cw1200_mcast_timeout;
+	setup_timer(&priv->mcast_timeout, cw1200_mcast_timeout,
+		    (unsigned long)priv);
 
 	if (cw1200_queue_stats_init(&priv->tx_queue_stats,
 				    CW1200_LINK_ID_MAX,
 				    cw1200_skb_dtor,
 				    priv)) {
+		destroy_workqueue(priv->workqueue);
 		ieee80211_free_hw(hw);
 		return NULL;
 	}
@@ -393,6 +397,7 @@ static struct ieee80211_hw *cw1200_init_common(const u8 *macaddr,
 			for (; i > 0; i--)
 				cw1200_queue_deinit(&priv->tx_queue[i - 1]);
 			cw1200_queue_stats_deinit(&priv->tx_queue_stats);
+			destroy_workqueue(priv->workqueue);
 			ieee80211_free_hw(hw);
 			return NULL;
 		}

@@ -332,7 +332,8 @@ static int msm_rng_probe(struct platform_device *pdev)
 	msm_rng_class = class_create(THIS_MODULE, "msm-rng");
 	if (IS_ERR(msm_rng_class)) {
 		pr_err("class_create failed\n");
-		return PTR_ERR(msm_rng_class);
+		error = PTR_ERR(msm_rng_class);
+		goto unregister_chrdev;
 	}
 
 	dev = device_create(msm_rng_class, NULL, MKDEV(QRNG_IOC_MAGIC, 0),
@@ -375,7 +376,8 @@ static int msm_rng_remove(struct platform_device *pdev)
 	return 0;
 }
 
-static int qrng_get_random(struct crypto_rng *tfm, u8 *rdata,
+static int qrng_get_random(struct crypto_rng *tfm, const u8 *src,
+				unsigned int slen, u8 *rdata,
 				unsigned int dlen)
 {
 	int sizeread = 0;
@@ -410,27 +412,23 @@ err_exit:
 
 }
 
-static int qrng_reset(struct crypto_rng *tfm, u8 *seed, unsigned int slen)
+static int qrng_reset(struct crypto_rng *tfm, const u8 *seed, unsigned int slen)
 {
 	return 0;
 }
 
-static struct crypto_alg rng_alg = {
+static struct rng_alg rng_algs[] = { {
+      .generate = qrng_get_random,
+      .seed          = qrng_reset,
+      .seedsize = 0,
+      .base = {
 	.cra_name               = "qrng",
 	.cra_driver_name        = "fips_hw_qrng",
 	.cra_priority           = 300,
-	.cra_flags              = CRYPTO_ALG_TYPE_RNG,
 	.cra_ctxsize            = 0,
-	.cra_type               = &crypto_rng_type,
 	.cra_module             = THIS_MODULE,
-	.cra_u                  = {
-		.rng = {
-			.rng_make_random    = qrng_get_random,
-			.rng_reset          = qrng_reset,
-			.seedsize           = 0,
-			}
-		}
-};
+        }
+} };
 
 static struct of_device_id qrng_match[] = {
 	{	.compatible = "qcom,msm-rng",
@@ -459,7 +457,7 @@ static int __init msm_rng_init(void)
 			__func__, ret);
 		goto err_exit;
 	}
-	ret = crypto_register_alg(&rng_alg);
+	ret = crypto_register_rngs(rng_algs, ARRAY_SIZE(rng_algs));
 	if (ret) {
 		pr_err("%s: crypto_register_algs error:%d\n",
 			__func__, ret);
@@ -474,7 +472,7 @@ module_init(msm_rng_init);
 
 static void __exit msm_rng_exit(void)
 {
-	crypto_unregister_alg(&rng_alg);
+	crypto_unregister_rngs(rng_algs, ARRAY_SIZE(rng_algs));
 	platform_driver_unregister(&rng_driver);
 }
 

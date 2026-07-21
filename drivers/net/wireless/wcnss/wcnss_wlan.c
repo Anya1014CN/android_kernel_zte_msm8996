@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -36,6 +36,7 @@
 #include <linux/qpnp/qpnp-adc.h>
 #include <linux/pinctrl/consumer.h>
 #include <linux/pm_qos.h>
+#include <linux/bitops.h>
 #include <soc/qcom/socinfo.h>
 
 #include <soc/qcom/subsystem_restart.h>
@@ -57,11 +58,26 @@
 #define WCNSS_PM_QOS_TIMEOUT	15000
 #define IS_CAL_DATA_PRESENT     0
 #define WAIT_FOR_CBC_IND     2
-#define WCNSS_DUAL_BAND_CAPABILITY_OFFSET	(1 << 8)
+#define WCNSS_DUAL_BAND_CAPABILITY_OFFSET	BIT(8)
 
 /* module params */
 #define WCNSS_CONFIG_UNSPECIFIED (-1)
 #define UINT32_MAX (0xFFFFFFFFU)
+
+#define SUBSYS_NOTIF_MIN_INDEX	0
+#define SUBSYS_NOTIF_MAX_INDEX	9
+char *wcnss_subsys_notif_type[] = {
+	"SUBSYS_BEFORE_SHUTDOWN",
+	"SUBSYS_AFTER_SHUTDOWN",
+	"SUBSYS_BEFORE_POWERUP",
+	"SUBSYS_AFTER_POWERUP",
+	"SUBSYS_RAMDUMP_NOTIFICATION",
+	"SUBSYS_POWERUP_FAILURE",
+	"SUBSYS_PROXY_VOTE",
+	"SUBSYS_PROXY_UNVOTE",
+	"SUBSYS_SOC_RESET",
+	"SUBSYS_NOTIF_TYPE_COUNT"
+};
 
 static int has_48mhz_xo = WCNSS_CONFIG_UNSPECIFIED;
 module_param(has_48mhz_xo, int, S_IWUSR | S_IRUGO);
@@ -440,7 +456,7 @@ static ssize_t wcnss_wlan_macaddr_store(struct device *dev,
 	if (!penv)
 		return -ENODEV;
 
-	if (WCNSS_USER_MAC_ADDR_LENGTH != strlen(buf)) {
+	if (strlen(buf) != WCNSS_USER_MAC_ADDR_LENGTH) {
 		dev_err(dev, "%s: Invalid MAC addr length\n", __func__);
 		return -EINVAL;
 	}
@@ -595,6 +611,7 @@ void wcnss_pronto_log_debug_regs(void)
 {
 	void __iomem *reg_addr, *tst_addr, *tst_ctrl_addr;
 	u32 reg = 0, reg2 = 0, reg3 = 0, reg4 = 0;
+
 
 	reg_addr = penv->msm_wcnss_base + PRONTO_PMU_SPARE_OFFSET;
 	reg = readl_relaxed(reg_addr);
@@ -799,33 +816,6 @@ void wcnss_pronto_log_debug_regs(void)
 	reg_addr = penv->msm_wcnss_base + PRONTO_PMU_WLAN_AHB_CBCR_OFFSET;
 	reg3 = readl_relaxed(reg_addr);
 	pr_err("PMU_WLAN_AHB_CBCR %08x\n", reg3);
-}
-EXPORT_SYMBOL(wcnss_pronto_log_debug_regs);
-
-/* Log pronto debug registers before sending reset interrupt */
-void wcnss_pronto_dump_regs(void)
-{
-	void __iomem *reg_addr;
-	u32 reg = 0, reg2 = 0, reg3 = 0, reg4 = 0;
-
-	if (!penv || !penv->triggered || !penv->msm_wcnss_base) {
-		pr_info(DEVICE " WCNSS driver is not triggered by userspace\n");
-		return;
-	}
-
-	wcnss_pronto_log_debug_regs();
-
-	reg_addr = penv->msm_wcnss_base + PRONTO_PMU_WLAN_BCR_OFFSET;
-	reg = readl_relaxed(reg_addr);
-
-	reg_addr = penv->msm_wcnss_base + PRONTO_PMU_WLAN_GDSCR_OFFSET;
-	reg2 = readl_relaxed(reg_addr);
-
-	reg_addr = penv->msm_wcnss_base + PRONTO_PMU_WLAN_AHB_CBCR_OFFSET;
-	reg3 = readl_relaxed(reg_addr);
-
-	reg_addr = penv->msm_wcnss_base + PRONTO_PMU_CPU_AHB_CMD_RCGR_OFFSET;
-	reg4 = readl_relaxed(reg_addr);
 
 	msleep(50);
 
@@ -905,7 +895,7 @@ void wcnss_pronto_dump_regs(void)
 	reg = readl_relaxed(penv->alarms_tactl);
 	pr_err("ALARMS_TACTL %08x\n", reg);
 }
-EXPORT_SYMBOL(wcnss_pronto_dump_regs);
+EXPORT_SYMBOL(wcnss_pronto_log_debug_regs);
 
 #ifdef CONFIG_WCNSS_REGISTER_DUMP_ON_BITE
 
@@ -2231,7 +2221,7 @@ static void wcnss_process_smd_msg(int len)
 	case WCNSS_BUILD_VER_RSP:
 		if (len > WCNSS_MAX_BUILD_VER_LEN) {
 			pr_err("wcnss: invalid build version data from wcnss %d\n",
-				len);
+					len);
 			return;
 		}
 		rc = smd_read(penv->smd_ch, build, len);
@@ -2263,6 +2253,7 @@ static void wcnss_process_smd_msg(int len)
 		penv->is_cbc_done = 1;
 		pr_debug("wcnss: received WCNSS_CBC_COMPLETE_IND from FW\n");
 		break;
+
 	case WCNSS_CALDATA_UPLD_REQ:
 		extract_cal_data(len);
 		break;
@@ -2279,7 +2270,7 @@ static void wcnssctrl_rx_handler(struct work_struct *worker)
 
 	while (1) {
 		len = smd_read_avail(penv->smd_ch);
-		if (0 == len) {
+		if (len == 0) {
 			pr_debug("wcnss: No more data to be read\n");
 			return;
 		}
@@ -2389,6 +2380,12 @@ static void wcnss_nvbin_dnld(void)
 	if (ret || !nv || !nv->data || !nv->size) {
 		pr_err("wcnss: %s: request_firmware failed for %s (ret = %d)\n",
 			__func__, NVBIN_FILE, ret);
+		goto out;
+	}
+
+	if (nv->size <= 4) {
+		pr_err("wcnss: %s: request_firmware failed for %s (file size = %zu)\n",
+		       __func__, NVBIN_FILE, nv->size);
 		goto out;
 	}
 
@@ -2704,50 +2701,15 @@ static struct miscdevice wcnss_usr_ctrl = {
 };
 
 static int
-wcnss_dt_parse_vreg_level(struct device *dev, int index,
-			  const char *current_vreg_name, const char *vreg_name,
-			  struct vregs_level *vlevel)
-{
-	int ret = 0;
-	/* array used to store nominal, low and high voltage values
-	 */
-	u32 voltage_levels[3], current_vreg;
-
-	ret = of_property_read_u32_array(dev->of_node, vreg_name,
-					 voltage_levels,
-					 ARRAY_SIZE(voltage_levels));
-	if (ret) {
-		dev_err(dev, "error reading %s property\n", vreg_name);
-		return ret;
-	}
-
-	vlevel[index].nominal_min = voltage_levels[0];
-	vlevel[index].low_power_min = voltage_levels[1];
-	vlevel[index].max_voltage = voltage_levels[2];
-
-	ret = of_property_read_u32(dev->of_node, current_vreg_name,
-				   &current_vreg);
-	if (ret) {
-		dev_err(dev, "error reading %s property\n", current_vreg_name);
-		return ret;
-	}
-
-	vlevel[index].uA_load = current_vreg;
-
-	return ret;
-}
-
-static int
 wcnss_trigger_config(struct platform_device *pdev)
 {
 	int ret;
-	int rc, index = 0;
+	int rc;
 	struct qcom_wcnss_opts *pdata;
 	struct resource *res;
 	int is_pronto_vadc;
 	int is_pronto_v3;
 	int pil_retry = 0;
-	struct wcnss_wlan_config *wlan_cfg = &penv->wlan_config;
 	struct device_node *node = (&pdev->dev)->of_node;
 	int has_pronto_hw = of_property_read_bool(node, "qcom,has-pronto-hw");
 
@@ -2759,93 +2721,14 @@ wcnss_trigger_config(struct platform_device *pdev)
 	penv->is_a2xb_split_reg =
 		of_property_read_bool(node, "qcom,has-a2xb-split-reg");
 
-	wlan_cfg->wcn_external_gpio_support =
-		of_property_read_bool(node, "qcom,wcn-external-gpio-support");
-
 	if (of_property_read_u32(node, "qcom,wlan-rx-buff-count",
 				 &penv->wlan_rx_buff_count)) {
 		penv->wlan_rx_buff_count = WCNSS_DEF_WLAN_RX_BUFF_COUNT;
 	}
 
-	ret = wcnss_dt_parse_vreg_level(&pdev->dev, index,
-					"qcom,pronto-vddmx-current",
-					"qcom,vddmx-voltage-level",
-					penv->wlan_config.pronto_vlevel);
-
-	if (ret) {
-		dev_err(&pdev->dev, "error reading voltage-level property\n");
-		goto fail;
-	}
-
-	index++;
-	ret = wcnss_dt_parse_vreg_level(&pdev->dev, index,
-					"qcom,pronto-vddcx-current",
-					"qcom,vddcx-voltage-level",
-					penv->wlan_config.pronto_vlevel);
-
-	if (ret) {
-		dev_err(&pdev->dev, "error reading voltage-level property\n");
-		goto fail;
-	}
-
-	index++;
-	ret = wcnss_dt_parse_vreg_level(&pdev->dev, index,
-					"qcom,pronto-vddpx-current",
-					"qcom,vddpx-voltage-level",
-					penv->wlan_config.pronto_vlevel);
-
-	if (ret) {
-		dev_err(&pdev->dev, "error reading voltage-level property\n");
-		goto fail;
-	}
-
-	/* assign 0 to index now onwards, index variable re used to
-	 * represent iris regulator index
-	 */
-	index = 0;
-	ret = wcnss_dt_parse_vreg_level(&pdev->dev, index,
-					"qcom,iris-vddxo-current",
-					"qcom,iris-vddxo-voltage-level",
-					penv->wlan_config.iris_vlevel);
-
-	if (ret) {
-		dev_err(&pdev->dev, "error reading voltage-level property\n");
-		goto fail;
-	}
-
-	index++;
-	ret = wcnss_dt_parse_vreg_level(&pdev->dev, index,
-					"qcom,iris-vddrfa-current",
-					"qcom,iris-vddrfa-voltage-level",
-					penv->wlan_config.iris_vlevel);
-
-	if (ret) {
-		dev_err(&pdev->dev, "error reading voltage-level property\n");
-		goto fail;
-	}
-
-	if (!wlan_cfg->wcn_external_gpio_support) {
-		index++;
-		ret = wcnss_dt_parse_vreg_level(
-				&pdev->dev, index,
-				"qcom,iris-vddpa-current",
-				"qcom,iris-vddpa-voltage-level",
-				penv->wlan_config.iris_vlevel);
-		if (ret) {
-			dev_err(&pdev->dev,
-				"error reading voltage-level property\n");
-			goto fail;
-		}
-	}
-
-	index++;
-	ret = wcnss_dt_parse_vreg_level(&pdev->dev, index,
-					"qcom,iris-vdddig-current",
-					"qcom,iris-vdddig-voltage-level",
-					penv->wlan_config.iris_vlevel);
-
-	if (ret) {
-		dev_err(&pdev->dev, "error reading voltage-level property\n");
+	rc = wcnss_parse_voltage_regulator(&penv->wlan_config, &pdev->dev);
+	if (rc) {
+		dev_err(&pdev->dev, "Failed to parse voltage regulators\n");
 		goto fail;
 	}
 
@@ -3191,7 +3074,7 @@ wcnss_trigger_config(struct platform_device *pdev)
 		penv->vadc_dev = qpnp_get_vadc(&penv->pdev->dev, "wcnss");
 
 		if (IS_ERR(penv->vadc_dev)) {
-			pr_err("%s:  vadc get failed\n", __func__);
+			pr_debug("%s:  vadc get failed\n", __func__);
 			penv->vadc_dev = NULL;
 		} else {
 			rc = wcnss_get_battery_volt(&penv->wlan_config.vbatt);
@@ -3211,7 +3094,7 @@ wcnss_trigger_config(struct platform_device *pdev)
 			dev_err(&pdev->dev, "Peripheral Loader failed on WCNSS.\n");
 			ret = PTR_ERR(penv->pil);
 			wcnss_disable_pc_add_req();
-			wcnss_pronto_dump_regs();
+			wcnss_pronto_log_debug_regs();
 		}
 	} while (pil_retry++ < WCNSS_MAX_PIL_RETRY && IS_ERR(penv->pil));
 
@@ -3257,7 +3140,7 @@ void wcnss_snoc_vote(bool clk_chk_en)
 {
 	int rc;
 
-	if (penv->snoc_wcnss == NULL) {
+	if (!penv->snoc_wcnss) {
 		pr_err("%s: couldn't get clk snoc_wcnss\n", __func__);
 		return;
 	}
@@ -3467,7 +3350,15 @@ static int wcnss_notif_cb(struct notifier_block *this, unsigned long code,
 	struct notif_data *data = (struct notif_data *)ss_handle;
 	int ret, xo_mode;
 
-	pr_info("%s: wcnss notification event: %lu\n", __func__, code);
+	if (!(code >= SUBSYS_NOTIF_MIN_INDEX) &&
+	    (code <= SUBSYS_NOTIF_MAX_INDEX)) {
+		pr_debug("%s: Invaild subsystem notification code: %lu\n",
+			 __func__, code);
+		return NOTIFY_DONE;
+	}
+
+	pr_info("%s: wcnss notification event: %lu : %s\n",
+		__func__, code, wcnss_subsys_notif_type[code]);
 
 	if (code == SUBSYS_PROXY_VOTE) {
 		if (pdev && pwlanconfig) {
@@ -3498,7 +3389,7 @@ static int wcnss_notif_cb(struct notifier_block *this, unsigned long code,
 		if (pdev && pwlanconfig)
 			wcnss_wlan_power(&pdev->dev, pwlanconfig,
 					WCNSS_WLAN_SWITCH_OFF, NULL);
-		wcnss_pronto_dump_regs();
+		wcnss_pronto_log_debug_regs();
 		wcnss_disable_pc_remove_req();
 	} else if (SUBSYS_BEFORE_SHUTDOWN == code) {
 		wcnss_disable_pc_add_req();

@@ -145,14 +145,14 @@ static void ath9k_hw_update_nfcal_hist_buffer(struct ath_hw *ah,
 }
 
 static bool ath9k_hw_get_nf_thresh(struct ath_hw *ah,
-				   enum ieee80211_band band,
+				   enum nl80211_band band,
 				   int16_t *nft)
 {
 	switch (band) {
-	case IEEE80211_BAND_5GHZ:
+	case NL80211_BAND_5GHZ:
 		*nft = (int8_t)ah->eep_ops->get_eeprom(ah, EEP_NFTHRESH_5);
 		break;
-	case IEEE80211_BAND_2GHZ:
+	case NL80211_BAND_2GHZ:
 		*nft = (int8_t)ah->eep_ops->get_eeprom(ah, EEP_NFTHRESH_2);
 		break;
 	default:
@@ -234,11 +234,10 @@ void ath9k_hw_start_nfcal(struct ath_hw *ah, bool update)
 	REG_SET_BIT(ah, AR_PHY_AGC_CONTROL, AR_PHY_AGC_CONTROL_NF);
 }
 
-void ath9k_hw_loadnf(struct ath_hw *ah, struct ath9k_channel *chan)
+int ath9k_hw_loadnf(struct ath_hw *ah, struct ath9k_channel *chan)
 {
 	struct ath9k_nfcal_hist *h = NULL;
 	unsigned i, j;
-	int32_t val;
 	u8 chainmask = (ah->rxchainmask << 3) | ah->rxchainmask;
 	struct ath_common *common = ath9k_hw_common(ah);
 	s16 default_nf = ath9k_hw_get_default_nf(ah, chan);
@@ -246,6 +245,7 @@ void ath9k_hw_loadnf(struct ath_hw *ah, struct ath9k_channel *chan)
 	if (ah->caldata)
 		h = ah->caldata->nfCalHist;
 
+	ENABLE_REG_RMW_BUFFER(ah);
 	for (i = 0; i < NUM_NF_READINGS; i++) {
 		if (chainmask & (1 << i)) {
 			s16 nfval;
@@ -258,10 +258,8 @@ void ath9k_hw_loadnf(struct ath_hw *ah, struct ath9k_channel *chan)
 			else
 				nfval = default_nf;
 
-			val = REG_READ(ah, ah->nf_regs[i]);
-			val &= 0xFFFFFE00;
-			val |= (((u32) nfval << 1) & 0x1ff);
-			REG_WRITE(ah, ah->nf_regs[i], val);
+			REG_RMW(ah, ah->nf_regs[i],
+				(((u32) nfval << 1) & 0x1ff), 0x1ff);
 		}
 	}
 
@@ -274,6 +272,7 @@ void ath9k_hw_loadnf(struct ath_hw *ah, struct ath9k_channel *chan)
 	REG_CLR_BIT(ah, AR_PHY_AGC_CONTROL,
 		    AR_PHY_AGC_CONTROL_NO_UPDATE_NF);
 	REG_SET_BIT(ah, AR_PHY_AGC_CONTROL, AR_PHY_AGC_CONTROL_NF);
+	REG_RMW_BUFFER_FLUSH(ah);
 
 	/*
 	 * Wait for load to complete, should be fast, a few 10s of us.
@@ -301,7 +300,7 @@ void ath9k_hw_loadnf(struct ath_hw *ah, struct ath9k_channel *chan)
 		ath_dbg(common, ANY,
 			"Timeout while waiting for nf to load: AR_PHY_AGC_CONTROL=0x%x\n",
 			REG_READ(ah, AR_PHY_AGC_CONTROL));
-		return;
+		return -ETIMEDOUT;
 	}
 
 	/*
@@ -309,19 +308,19 @@ void ath9k_hw_loadnf(struct ath_hw *ah, struct ath9k_channel *chan)
 	 * by the median we just loaded.  This will be initial (and max) value
 	 * of next noise floor calibration the baseband does.
 	 */
-	ENABLE_REGWRITE_BUFFER(ah);
+	ENABLE_REG_RMW_BUFFER(ah);
 	for (i = 0; i < NUM_NF_READINGS; i++) {
 		if (chainmask & (1 << i)) {
 			if ((i >= AR5416_MAX_CHAINS) && !IS_CHAN_HT40(chan))
 				continue;
 
-			val = REG_READ(ah, ah->nf_regs[i]);
-			val &= 0xFFFFFE00;
-			val |= (((u32) (-50) << 1) & 0x1ff);
-			REG_WRITE(ah, ah->nf_regs[i], val);
+			REG_RMW(ah, ah->nf_regs[i],
+					(((u32) (-50) << 1) & 0x1ff), 0x1ff);
 		}
 	}
-	REGWRITE_BUFFER_FLUSH(ah);
+	REG_RMW_BUFFER_FLUSH(ah);
+
+	return 0;
 }
 
 

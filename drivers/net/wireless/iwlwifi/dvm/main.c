@@ -64,22 +64,8 @@
  *
  ******************************************************************************/
 
-/*
- * module name, copyright, version, etc.
- */
 #define DRV_DESCRIPTION	"Intel(R) Wireless WiFi Link AGN driver for Linux"
-
-#ifdef CONFIG_IWLWIFI_DEBUG
-#define VD "d"
-#else
-#define VD
-#endif
-
-#define DRV_VERSION     IWLWIFI_VERSION VD
-
-
 MODULE_DESCRIPTION(DRV_DESCRIPTION);
-MODULE_VERSION(DRV_VERSION);
 MODULE_AUTHOR(DRV_COPYRIGHT " " DRV_AUTHOR);
 MODULE_LICENSE("GPL");
 
@@ -188,7 +174,7 @@ int iwlagn_send_beacon_cmd(struct iwl_priv *priv)
 	rate_flags = iwl_ant_idx_to_flags(priv->mgmt_tx_ant);
 
 	/* In mac80211, rates for 5 GHz start at 0 */
-	if (info->band == IEEE80211_BAND_5GHZ)
+	if (info->band == NL80211_BAND_5GHZ)
 		rate += IWL_FIRST_OFDM_RATE;
 	else if (rate >= IWL_FIRST_CCK_RATE && rate <= IWL_LAST_CCK_RATE)
 		rate_flags |= RATE_MCS_CCK_MSK;
@@ -1011,13 +997,11 @@ static void iwl_setup_deferred_work(struct iwl_priv *priv)
 	if (priv->lib->bt_params)
 		iwlagn_bt_setup_deferred_work(priv);
 
-	init_timer(&priv->statistics_periodic);
-	priv->statistics_periodic.data = (unsigned long)priv;
-	priv->statistics_periodic.function = iwl_bg_statistics_periodic;
+	setup_timer(&priv->statistics_periodic, iwl_bg_statistics_periodic,
+		    (unsigned long)priv);
 
-	init_timer(&priv->ucode_trace);
-	priv->ucode_trace.data = (unsigned long)priv;
-	priv->ucode_trace.function = iwl_bg_ucode_trace;
+	setup_timer(&priv->ucode_trace, iwl_bg_ucode_trace,
+		    (unsigned long)priv);
 }
 
 void iwl_cancel_deferred_work(struct iwl_priv *priv)
@@ -1045,7 +1029,7 @@ static int iwl_init_drv(struct iwl_priv *priv)
 
 	INIT_LIST_HEAD(&priv->calib_results);
 
-	priv->band = IEEE80211_BAND_2GHZ;
+	priv->band = NL80211_BAND_2GHZ;
 
 	priv->plcp_delta_threshold = priv->lib->plcp_delta_threshold;
 
@@ -1244,11 +1228,8 @@ static struct iwl_op_mode *iwl_op_mode_dvm_start(struct iwl_trans *trans,
 	trans_cfg.no_reclaim_cmds = no_reclaim_cmds;
 	trans_cfg.n_no_reclaim_cmds = ARRAY_SIZE(no_reclaim_cmds);
 	trans_cfg.rx_buf_size_8k = iwlwifi_mod_params.amsdu_size_8K;
-	if (!iwlwifi_mod_params.wd_disable)
-		trans_cfg.queue_watchdog_timeout =
-			priv->cfg->base_params->wd_timeout;
-	else
-		trans_cfg.queue_watchdog_timeout = IWL_WATCHDOG_DISABLED;
+	trans_cfg.cmd_q_wdg_timeout = IWL_WATCHDOG_DISABLED;
+
 	trans_cfg.command_names = iwl_dvm_cmd_strings;
 	trans_cfg.cmd_fifo = IWLAGN_CMD_FIFO_NUM;
 
@@ -1568,7 +1549,7 @@ static void iwl_dump_nic_error_log(struct iwl_priv *priv)
 				      table.blink1, table.blink2, table.ilink1,
 				      table.ilink2, table.bcon_time, table.gp1,
 				      table.gp2, table.gp3, table.ucode_ver,
-				      table.hw_ver, table.brd_ver);
+				      table.hw_ver, 0, table.brd_ver);
 	IWL_ERR(priv, "0x%08X | %-28s\n", table.error_id,
 		desc_lookup(table.error_id));
 	IWL_ERR(priv, "0x%08X | uPc\n", table.pc);
@@ -2048,17 +2029,6 @@ static bool iwl_set_hw_rfkill_state(struct iwl_op_mode *op_mode, bool state)
 	return false;
 }
 
-static void iwl_napi_add(struct iwl_op_mode *op_mode,
-			 struct napi_struct *napi,
-			 struct net_device *napi_dev,
-			 int (*poll)(struct napi_struct *, int),
-			 int weight)
-{
-	struct iwl_priv *priv = IWL_OP_MODE_GET_DVM(op_mode);
-
-	ieee80211_napi_add(priv->hw, napi, napi_dev, poll, weight);
-}
-
 static const struct iwl_op_mode_ops iwl_dvm_ops = {
 	.start = iwl_op_mode_dvm_start,
 	.stop = iwl_op_mode_dvm_stop,
@@ -2071,7 +2041,6 @@ static const struct iwl_op_mode_ops iwl_dvm_ops = {
 	.cmd_queue_full = iwl_cmd_queue_full,
 	.nic_config = iwl_nic_config,
 	.wimax_active = iwl_wimax_active,
-	.napi_add = iwl_napi_add,
 };
 
 /*****************************************************************************

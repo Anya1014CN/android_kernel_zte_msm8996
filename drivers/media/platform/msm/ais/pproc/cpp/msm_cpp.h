@@ -26,10 +26,10 @@
 #include <media/msmb_pproc.h>
 
 /* hw version info:
-  31:28  Major version
-  27:16  Minor version
-  15:0   Revision bits
-**/
+ * 31:28  Major version
+ * 27:16  Minor version
+ * 15:0   Revision bits
+ */
 #define CPP_HW_VERSION_1_1_0  0x10010000
 #define CPP_HW_VERSION_1_1_1  0x10010001
 #define CPP_HW_VERSION_2_0_0  0x20000000

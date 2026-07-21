@@ -362,9 +362,9 @@ read_acpi_id(acpi_handle handle, u32 lvl, void *context, void **rv)
 	}
 	/* There are more ACPI Processor objects than in x2APIC or MADT.
 	 * This can happen with incorrect ACPI SSDT declerations. */
-	if (acpi_id > nr_acpi_bits) {
-		pr_debug("We only have %u, trying to set %u\n",
-			 nr_acpi_bits, acpi_id);
+	if (acpi_id >= nr_acpi_bits) {
+		pr_debug("max acpi id %u, trying to set %u\n",
+			 nr_acpi_bits - 1, acpi_id);
 		return AE_OK;
 	}
 	/* OK, There is a ACPI Processor object */
@@ -549,11 +549,9 @@ static int __init xen_acpi_processor_init(void)
 
 	return 0;
 err_unregister:
-	for_each_possible_cpu(i) {
-		struct acpi_processor_performance *perf;
-		perf = per_cpu_ptr(acpi_perf_data, i);
-		acpi_processor_unregister_performance(perf, i);
-	}
+	for_each_possible_cpu(i)
+		acpi_processor_unregister_performance(i);
+
 err_out:
 	/* Freeing a NULL pointer is OK: alloc_percpu zeroes. */
 	free_acpi_perf_data();
@@ -568,11 +566,9 @@ static void __exit xen_acpi_processor_exit(void)
 	kfree(acpi_ids_done);
 	kfree(acpi_id_present);
 	kfree(acpi_id_cst_present);
-	for_each_possible_cpu(i) {
-		struct acpi_processor_performance *perf;
-		perf = per_cpu_ptr(acpi_perf_data, i);
-		acpi_processor_unregister_performance(perf, i);
-	}
+	for_each_possible_cpu(i)
+		acpi_processor_unregister_performance(i);
+
 	free_acpi_perf_data();
 }
 

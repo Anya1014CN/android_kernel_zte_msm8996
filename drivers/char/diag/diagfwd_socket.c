@@ -43,6 +43,8 @@
 #define LPASS_INST_BASE		64
 #define WCNSS_INST_BASE		128
 #define SENSORS_INST_BASE	192
+#define CDSP_INST_BASE	256
+#define WDSP_INST_BASE  320
 
 #define INST_ID_CNTL		0
 #define INST_ID_CMD		1
@@ -73,6 +75,16 @@ struct diag_socket_info socket_data[NUM_PERIPHERALS] = {
 		.peripheral = PERIPHERAL_SENSORS,
 		.type = TYPE_DATA,
 		.name = "SENSORS_DATA"
+	},
+	{
+		.peripheral = PERIPHERAL_WDSP,
+		.type = TYPE_DATA,
+		.name = "DIAG_DATA"
+	},
+	{
+		.peripheral = PERIPHERAL_CDSP,
+		.type = TYPE_DATA,
+		.name = "CDSP_DATA"
 	}
 };
 
@@ -96,6 +108,16 @@ struct diag_socket_info socket_cntl[NUM_PERIPHERALS] = {
 		.peripheral = PERIPHERAL_SENSORS,
 		.type = TYPE_CNTL,
 		.name = "SENSORS_CNTL"
+	},
+	{
+		.peripheral = PERIPHERAL_WDSP,
+		.type = TYPE_CNTL,
+		.name = "DIAG_CTRL"
+	},
+	{
+		.peripheral = PERIPHERAL_CDSP,
+		.type = TYPE_CNTL,
+		.name = "CDSP_CNTL"
 	}
 };
 
@@ -119,6 +141,16 @@ struct diag_socket_info socket_dci[NUM_PERIPHERALS] = {
 		.peripheral = PERIPHERAL_SENSORS,
 		.type = TYPE_DCI,
 		.name = "SENSORS_DCI"
+	},
+	{
+		.peripheral = PERIPHERAL_WDSP,
+		.type = TYPE_DCI,
+		.name = "DIAG_DCI_DATA"
+	},
+	{
+		.peripheral = PERIPHERAL_CDSP,
+		.type = TYPE_DCI,
+		.name = "CDSP_DCI"
 	}
 };
 
@@ -142,7 +174,18 @@ struct diag_socket_info socket_cmd[NUM_PERIPHERALS] = {
 		.peripheral = PERIPHERAL_SENSORS,
 		.type = TYPE_CMD,
 		.name = "SENSORS_CMD"
+	},
+	{
+		.peripheral = PERIPHERAL_WDSP,
+		.type = TYPE_CMD,
+		.name = "DIAG_CMD"
+	},
+	{
+		.peripheral = PERIPHERAL_CDSP,
+		.type = TYPE_CMD,
+		.name = "CDSP_CMD"
 	}
+
 };
 
 struct diag_socket_info socket_dci_cmd[NUM_PERIPHERALS] = {
@@ -165,7 +208,17 @@ struct diag_socket_info socket_dci_cmd[NUM_PERIPHERALS] = {
 		.peripheral = PERIPHERAL_SENSORS,
 		.type = TYPE_DCI_CMD,
 		.name = "SENSORS_DCI_CMD"
-	}
+	},
+	{
+		.peripheral = PERIPHERAL_WDSP,
+		.type = TYPE_DCI_CMD,
+		.name = "DIAG_DCI_CMD"
+	},
+	{
+		.peripheral = PERIPHERAL_CDSP,
+		.type = TYPE_DCI_CMD,
+		.name = "CDSP_DCI_CMD"
+	},
 };
 
 static void diag_state_open_socket(void *ctxt);
@@ -445,7 +498,7 @@ static void __socket_close_channel(struct diag_socket_info *info)
 
 	if (bootup_req[info->peripheral] == PEPIPHERAL_SSR_UP) {
 		DIAG_LOG(DIAG_DEBUG_PERIPHERALS,
-		"Modem is powered up, stopping cleanup: bootup_req[%s] = %d\n",
+		"diag: %s is up, stopping cleanup: bootup_req = %d\n",
 		info->name, (int)bootup_req[info->peripheral]);
 		return;
 	}
@@ -594,6 +647,7 @@ static struct restart_notifier_block restart_notifiers[] = {
 	{SOCKET_ADSP, "adsp", .nb.notifier_call = restart_notifier_cb},
 	{SOCKET_WCNSS, "wcnss", .nb.notifier_call = restart_notifier_cb},
 	{SOCKET_SLPI, "slpi", .nb.notifier_call = restart_notifier_cb},
+	{SOCKET_CDSP, "cdsp", .nb.notifier_call = restart_notifier_cb},
 };
 
 
@@ -737,6 +791,12 @@ static void __diag_socket_init(struct diag_socket_info *info)
 	case PERIPHERAL_SENSORS:
 		ins_base = SENSORS_INST_BASE;
 		break;
+	case PERIPHERAL_WDSP:
+		ins_base = WDSP_INST_BASE;
+		break;
+	case PERIPHERAL_CDSP:
+		ins_base = CDSP_INST_BASE;
+		break;
 	}
 
 	switch (info->type) {
@@ -843,10 +903,13 @@ int diag_socket_init(void)
 
 	for (i = 0; i < ARRAY_SIZE(restart_notifiers); i++) {
 		nb = &restart_notifiers[i];
-		handle = subsys_notif_register_notifier(nb->name, &nb->nb);
-		DIAG_LOG(DIAG_DEBUG_PERIPHERALS,
-		"%s: registering notifier for '%s', handle=%p\n",
-		__func__, nb->name, handle);
+		if (nb) {
+			handle = subsys_notif_register_notifier(nb->name,
+				&nb->nb);
+			DIAG_LOG(DIAG_DEBUG_PERIPHERALS,
+			"%s: registering notifier for '%s', handle=%p\n",
+			__func__, nb->name, handle);
+		}
 	}
 
 	register_ipcrtr_af_init_notifier(&socket_notify);
@@ -891,6 +954,11 @@ static int restart_notifier_cb(struct notifier_block *this, unsigned long code,
 
 	notifier = container_of(this,
 			struct restart_notifier_block, nb);
+	if (!notifier) {
+		DIAG_LOG(DIAG_DEBUG_PERIPHERALS,
+		"diag: %s: invalid notifier block\n", __func__);
+		return NOTIFY_DONE;
+	}
 
 	mutex_lock(&driver->diag_notifier_mutex);
 	DIAG_LOG(DIAG_DEBUG_PERIPHERALS,

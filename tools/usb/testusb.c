@@ -278,12 +278,6 @@ nomem:
 	}
 
 	entry->ifnum = ifnum;
-
-	/* FIXME update USBDEVFS_CONNECTINFO so it tells about high speed etc */
-
-	fprintf(stderr, "%s speed\t%s\t%u\n",
-		speed(entry->speed), entry->name, entry->ifnum);
-
 	entry->next = testdevs;
 	testdevs = entry;
 	return 0;
@@ -311,6 +305,14 @@ static void *handle_testdev (void *arg)
 		perror ("can't open dev file r/w");
 		return 0;
 	}
+
+	status  =  ioctl(fd, USBDEVFS_GET_SPEED, NULL);
+	if (status < 0)
+		fprintf(stderr, "USBDEVFS_GET_SPEED failed %d\n", status);
+	else
+		dev->speed = status;
+	fprintf(stderr, "%s speed\t%s\t%u\n",
+			speed(dev->speed), dev->name, dev->ifnum);
 
 restart:
 	for (i = 0; i < TEST_CASES; i++) {
@@ -394,7 +396,7 @@ int main (int argc, char **argv)
 	 *      low speed, interrupt    8 *  1     =     8
 	 */
 	param.iterations = 1000;
-	param.length = 512;
+	param.length = 1024;
 	param.vary = 512;
 	param.sglen = 32;
 
@@ -454,10 +456,10 @@ usage:
 			"\t-t testnum	only run specified case\n"
 			"\t-n		no test running, show devices to be tested\n"
 			"Case arguments:\n"
-			"\t-c iterations	default 1000\n"
-			"\t-s packetsize	default 512\n"
-			"\t-g sglen	default 32\n"
-			"\t-v vary		default 512\n",
+			"\t-c iterations		default 1000\n"
+			"\t-s transfer length	default 1024\n"
+			"\t-g sglen		default 32\n"
+			"\t-v vary			default 512\n",
 			argv[0]);
 		return 1;
 	}

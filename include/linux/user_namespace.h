@@ -3,6 +3,7 @@
 
 #include <linux/kref.h>
 #include <linux/nsproxy.h>
+#include <linux/ns_common.h>
 #include <linux/sched.h>
 #include <linux/err.h>
 
@@ -30,7 +31,7 @@ struct user_namespace {
 	int			level;
 	kuid_t			owner;
 	kgid_t			group;
-	unsigned int		proc_inum;
+	struct ns_common	ns;
 	unsigned long		flags;
 
 	/* Register of per-UID persistent keyrings for this namespace */
@@ -71,6 +72,9 @@ extern ssize_t proc_projid_map_write(struct file *, const char __user *, size_t,
 extern ssize_t proc_setgroups_write(struct file *, const char __user *, size_t, loff_t *);
 extern int proc_setgroups_show(struct seq_file *m, void *v);
 extern bool userns_may_setgroups(const struct user_namespace *ns);
+extern bool current_in_userns(const struct user_namespace *target_ns);
+
+struct ns_common *ns_get_owner(struct ns_common *ns);
 #else
 
 static inline struct user_namespace *get_user_ns(struct user_namespace *ns)
@@ -98,6 +102,16 @@ static inline void put_user_ns(struct user_namespace *ns)
 static inline bool userns_may_setgroups(const struct user_namespace *ns)
 {
 	return true;
+}
+
+static inline bool current_in_userns(const struct user_namespace *target_ns)
+{
+	return true;
+}
+
+static inline struct ns_common *ns_get_owner(struct ns_common *ns)
+{
+	return ERR_PTR(-EPERM);
 }
 #endif
 

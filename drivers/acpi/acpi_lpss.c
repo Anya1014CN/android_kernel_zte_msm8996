@@ -11,7 +11,6 @@
  */
 
 #include <linux/acpi.h>
-#include <linux/clk.h>
 #include <linux/clkdev.h>
 #include <linux/clk-provider.h>
 #include <linux/err.h>
@@ -60,6 +59,7 @@ ACPI_MODULE_NAME("acpi_lpss");
 #define LPSS_CLK_DIVIDER		BIT(2)
 #define LPSS_LTR			BIT(3)
 #define LPSS_SAVE_CTX			BIT(4)
+#define LPSS_NO_D3_DELAY		BIT(5)
 
 struct lpss_private_data;
 
@@ -129,57 +129,78 @@ static void byt_i2c_setup(struct lpss_private_data *pdata)
 	writel(0, pdata->mmio_base + LPSS_I2C_ENABLE);
 }
 
-static struct lpss_device_desc lpt_dev_desc = {
+static const struct lpss_device_desc lpt_dev_desc = {
 	.flags = LPSS_CLK | LPSS_CLK_GATE | LPSS_CLK_DIVIDER | LPSS_LTR,
 	.prv_offset = 0x800,
 };
 
-static struct lpss_device_desc lpt_i2c_dev_desc = {
+static const struct lpss_device_desc lpt_i2c_dev_desc = {
 	.flags = LPSS_CLK | LPSS_CLK_GATE | LPSS_LTR,
 	.prv_offset = 0x800,
 };
 
-static struct lpss_device_desc lpt_uart_dev_desc = {
+static const struct lpss_device_desc lpt_uart_dev_desc = {
 	.flags = LPSS_CLK | LPSS_CLK_GATE | LPSS_CLK_DIVIDER | LPSS_LTR,
 	.clk_con_id = "baudclk",
 	.prv_offset = 0x800,
 	.setup = lpss_uart_setup,
 };
 
-static struct lpss_device_desc lpt_sdio_dev_desc = {
+static const struct lpss_device_desc lpt_sdio_dev_desc = {
 	.flags = LPSS_LTR,
 	.prv_offset = 0x1000,
 	.prv_size_override = 0x1018,
 };
 
-static struct lpss_device_desc byt_pwm_dev_desc = {
+static const struct lpss_device_desc byt_pwm_dev_desc = {
 	.flags = LPSS_SAVE_CTX,
+	.prv_offset = 0x800,
 };
 
-static struct lpss_device_desc byt_uart_dev_desc = {
+static const struct lpss_device_desc bsw_pwm_dev_desc = {
+	.flags = LPSS_SAVE_CTX | LPSS_NO_D3_DELAY,
+	.prv_offset = 0x800,
+};
+
+static const struct lpss_device_desc byt_uart_dev_desc = {
 	.flags = LPSS_CLK | LPSS_CLK_GATE | LPSS_CLK_DIVIDER | LPSS_SAVE_CTX,
 	.clk_con_id = "baudclk",
 	.prv_offset = 0x800,
 	.setup = lpss_uart_setup,
 };
 
-static struct lpss_device_desc byt_spi_dev_desc = {
+static const struct lpss_device_desc bsw_uart_dev_desc = {
+	.flags = LPSS_CLK | LPSS_CLK_GATE | LPSS_CLK_DIVIDER | LPSS_SAVE_CTX
+			| LPSS_NO_D3_DELAY,
+	.clk_con_id = "baudclk",
+	.prv_offset = 0x800,
+	.setup = lpss_uart_setup,
+};
+
+static const struct lpss_device_desc byt_spi_dev_desc = {
 	.flags = LPSS_CLK | LPSS_CLK_GATE | LPSS_CLK_DIVIDER | LPSS_SAVE_CTX,
 	.prv_offset = 0x400,
 };
 
-static struct lpss_device_desc byt_sdio_dev_desc = {
+static const struct lpss_device_desc byt_sdio_dev_desc = {
 	.flags = LPSS_CLK,
 };
 
-static struct lpss_device_desc byt_i2c_dev_desc = {
+static const struct lpss_device_desc byt_i2c_dev_desc = {
 	.flags = LPSS_CLK | LPSS_SAVE_CTX,
 	.prv_offset = 0x800,
 	.setup = byt_i2c_setup,
 };
 
+static const struct lpss_device_desc bsw_i2c_dev_desc = {
+	.flags = LPSS_CLK | LPSS_SAVE_CTX | LPSS_NO_D3_DELAY,
+	.prv_offset = 0x800,
+	.setup = byt_i2c_setup,
+};
+
 static struct lpss_device_desc bsw_spi_dev_desc = {
-	.flags = LPSS_CLK | LPSS_CLK_GATE | LPSS_CLK_DIVIDER | LPSS_SAVE_CTX,
+	.flags = LPSS_CLK | LPSS_CLK_GATE | LPSS_CLK_DIVIDER | LPSS_SAVE_CTX
+			| LPSS_NO_D3_DELAY,
 	.prv_offset = 0x400,
 	.setup = lpss_deassert_reset,
 };
@@ -214,11 +235,14 @@ static const struct acpi_device_id acpi_lpss_device_ids[] = {
 	{ "INT33FC", },
 
 	/* Braswell LPSS devices */
-	{ "80862288", LPSS_ADDR(byt_pwm_dev_desc) },
-	{ "8086228A", LPSS_ADDR(byt_uart_dev_desc) },
+	{ "80862286", LPSS_ADDR(lpss_dma_desc) },
+	{ "80862288", LPSS_ADDR(bsw_pwm_dev_desc) },
+	{ "8086228A", LPSS_ADDR(bsw_uart_dev_desc) },
 	{ "8086228E", LPSS_ADDR(bsw_spi_dev_desc) },
-	{ "808622C1", LPSS_ADDR(byt_i2c_dev_desc) },
+	{ "808622C0", LPSS_ADDR(lpss_dma_desc) },
+	{ "808622C1", LPSS_ADDR(bsw_i2c_dev_desc) },
 
+	/* Broadwell LPSS devices */
 	{ "INT3430", LPSS_ADDR(lpt_dev_desc) },
 	{ "INT3431", LPSS_ADDR(lpt_dev_desc) },
 	{ "INT3432", LPSS_ADDR(lpt_i2c_dev_desc) },
@@ -323,14 +347,14 @@ out:
 static int acpi_lpss_create_device(struct acpi_device *adev,
 				   const struct acpi_device_id *id)
 {
-	struct lpss_device_desc *dev_desc;
+	const struct lpss_device_desc *dev_desc;
 	struct lpss_private_data *pdata;
-	struct resource_list_entry *rentry;
+	struct resource_entry *rentry;
 	struct list_head resource_list;
 	struct platform_device *pdev;
 	int ret;
 
-	dev_desc = (struct lpss_device_desc *)id->driver_data;
+	dev_desc = (const struct lpss_device_desc *)id->driver_data;
 	if (!dev_desc) {
 		pdev = acpi_create_platform_device(adev);
 		return IS_ERR_OR_NULL(pdev) ? PTR_ERR(pdev) : 1;
@@ -345,17 +369,22 @@ static int acpi_lpss_create_device(struct acpi_device *adev,
 		goto err_out;
 
 	list_for_each_entry(rentry, &resource_list, node)
-		if (resource_type(&rentry->res) == IORESOURCE_MEM) {
+		if (resource_type(rentry->res) == IORESOURCE_MEM) {
 			if (dev_desc->prv_size_override)
 				pdata->mmio_size = dev_desc->prv_size_override;
 			else
-				pdata->mmio_size = resource_size(&rentry->res);
-			pdata->mmio_base = ioremap(rentry->res.start,
+				pdata->mmio_size = resource_size(rentry->res);
+			pdata->mmio_base = ioremap(rentry->res->start,
 						   pdata->mmio_size);
 			break;
 		}
 
 	acpi_dev_free_resource_list(&resource_list);
+
+	if (!pdata->mmio_base) {
+		ret = -ENOMEM;
+		goto err_out;
+	}
 
 	pdata->dev_desc = dev_desc;
 
@@ -376,12 +405,7 @@ static int acpi_lpss_create_device(struct acpi_device *adev,
 	 * have _PS0 and _PS3 without _PSC (and no power resources), so
 	 * acpi_bus_init_power() will assume that the BIOS has put them into D0.
 	 */
-	ret = acpi_device_fix_up_power(adev);
-	if (ret) {
-		/* Skip the device, but continue the namespace scan. */
-		ret = 0;
-		goto err_out;
-	}
+	acpi_device_fix_up_power(adev);
 
 	adev->driver_data = pdata;
 	pdev = acpi_create_platform_device(adev);
@@ -517,14 +541,15 @@ static void acpi_lpss_set_ltr(struct device *dev, s32 val)
 /**
  * acpi_lpss_save_ctx() - Save the private registers of LPSS device
  * @dev: LPSS device
+ * @pdata: pointer to the private data of the LPSS device
  *
  * Most LPSS devices have private registers which may loose their context when
  * the device is powered down. acpi_lpss_save_ctx() saves those registers into
  * prv_reg_ctx array.
  */
-static void acpi_lpss_save_ctx(struct device *dev)
+static void acpi_lpss_save_ctx(struct device *dev,
+			       struct lpss_private_data *pdata)
 {
-	struct lpss_private_data *pdata = acpi_driver_data(ACPI_COMPANION(dev));
 	unsigned int i;
 
 	for (i = 0; i < LPSS_PRV_REG_COUNT; i++) {
@@ -539,21 +564,27 @@ static void acpi_lpss_save_ctx(struct device *dev)
 /**
  * acpi_lpss_restore_ctx() - Restore the private registers of LPSS device
  * @dev: LPSS device
+ * @pdata: pointer to the private data of the LPSS device
  *
  * Restores the registers that were previously stored with acpi_lpss_save_ctx().
  */
-static void acpi_lpss_restore_ctx(struct device *dev)
+static void acpi_lpss_restore_ctx(struct device *dev,
+				  struct lpss_private_data *pdata)
 {
-	struct lpss_private_data *pdata = acpi_driver_data(ACPI_COMPANION(dev));
 	unsigned int i;
 
 	/*
 	 * The following delay is needed or the subsequent write operations may
 	 * fail. The LPSS devices are actually PCI devices and the PCI spec
 	 * expects 10ms delay before the device can be accessed after D3 to D0
-	 * transition.
+	 * transition. However some platforms like BSW does not need this delay.
 	 */
-	msleep(10);
+	unsigned int delay = 10;	/* default 10ms delay */
+
+	if (pdata->dev_desc->flags & LPSS_NO_D3_DELAY)
+		delay = 0;
+
+	msleep(delay);
 
 	for (i = 0; i < LPSS_PRV_REG_COUNT; i++) {
 		unsigned long offset = i * sizeof(u32);
@@ -567,57 +598,72 @@ static void acpi_lpss_restore_ctx(struct device *dev)
 #ifdef CONFIG_PM_SLEEP
 static int acpi_lpss_suspend_late(struct device *dev)
 {
-	int ret = pm_generic_suspend_late(dev);
+	struct lpss_private_data *pdata = acpi_driver_data(ACPI_COMPANION(dev));
+	int ret;
 
+	ret = pm_generic_suspend_late(dev);
 	if (ret)
 		return ret;
 
-	acpi_lpss_save_ctx(dev);
+	if (pdata->dev_desc->flags & LPSS_SAVE_CTX)
+		acpi_lpss_save_ctx(dev, pdata);
+
 	return acpi_dev_suspend_late(dev);
 }
 
 static int acpi_lpss_resume_early(struct device *dev)
 {
-	int ret = acpi_dev_resume_early(dev);
+	struct lpss_private_data *pdata = acpi_driver_data(ACPI_COMPANION(dev));
+	int ret;
 
+	ret = acpi_dev_resume_early(dev);
 	if (ret)
 		return ret;
 
-	acpi_lpss_restore_ctx(dev);
+	if (pdata->dev_desc->flags & LPSS_SAVE_CTX)
+		acpi_lpss_restore_ctx(dev, pdata);
+
 	return pm_generic_resume_early(dev);
 }
 #endif /* CONFIG_PM_SLEEP */
 
-#ifdef CONFIG_PM_RUNTIME
 static int acpi_lpss_runtime_suspend(struct device *dev)
 {
-	int ret = pm_generic_runtime_suspend(dev);
+	struct lpss_private_data *pdata = acpi_driver_data(ACPI_COMPANION(dev));
+	int ret;
 
+	ret = pm_generic_runtime_suspend(dev);
 	if (ret)
 		return ret;
 
-	acpi_lpss_save_ctx(dev);
+	if (pdata->dev_desc->flags & LPSS_SAVE_CTX)
+		acpi_lpss_save_ctx(dev, pdata);
+
 	return acpi_dev_runtime_suspend(dev);
 }
 
 static int acpi_lpss_runtime_resume(struct device *dev)
 {
-	int ret = acpi_dev_runtime_resume(dev);
+	struct lpss_private_data *pdata = acpi_driver_data(ACPI_COMPANION(dev));
+	int ret;
 
+	ret = acpi_dev_runtime_resume(dev);
 	if (ret)
 		return ret;
 
-	acpi_lpss_restore_ctx(dev);
+	if (pdata->dev_desc->flags & LPSS_SAVE_CTX)
+		acpi_lpss_restore_ctx(dev, pdata);
+
 	return pm_generic_runtime_resume(dev);
 }
-#endif /* CONFIG_PM_RUNTIME */
 #endif /* CONFIG_PM */
 
 static struct dev_pm_domain acpi_lpss_pm_domain = {
 	.ops = {
+#ifdef CONFIG_PM
 #ifdef CONFIG_PM_SLEEP
 		.prepare = acpi_subsys_prepare,
-		.complete = acpi_subsys_complete,
+		.complete = pm_complete_with_resume_check,
 		.suspend = acpi_subsys_suspend,
 		.suspend_late = acpi_lpss_suspend_late,
 		.resume_early = acpi_lpss_resume_early,
@@ -626,7 +672,6 @@ static struct dev_pm_domain acpi_lpss_pm_domain = {
 		.poweroff_late = acpi_lpss_suspend_late,
 		.restore_early = acpi_lpss_resume_early,
 #endif
-#ifdef CONFIG_PM_RUNTIME
 		.runtime_suspend = acpi_lpss_runtime_suspend,
 		.runtime_resume = acpi_lpss_runtime_resume,
 #endif
@@ -649,30 +694,31 @@ static int acpi_lpss_platform_notify(struct notifier_block *nb,
 		return 0;
 
 	pdata = acpi_driver_data(adev);
-	if (!pdata || !pdata->mmio_base)
+	if (!pdata)
 		return 0;
 
-	if (pdata->mmio_size < pdata->dev_desc->prv_offset + LPSS_LTR_SIZE) {
+	if (pdata->mmio_base &&
+	    pdata->mmio_size < pdata->dev_desc->prv_offset + LPSS_LTR_SIZE) {
 		dev_err(&pdev->dev, "MMIO size insufficient to access LTR\n");
 		return 0;
 	}
 
 	switch (action) {
 	case BUS_NOTIFY_BOUND_DRIVER:
-		if (pdata->dev_desc->flags & LPSS_SAVE_CTX)
-			pdev->dev.pm_domain = &acpi_lpss_pm_domain;
+		pdev->dev.pm_domain = &acpi_lpss_pm_domain;
 		break;
 	case BUS_NOTIFY_UNBOUND_DRIVER:
-		if (pdata->dev_desc->flags & LPSS_SAVE_CTX)
-			pdev->dev.pm_domain = NULL;
+		pdev->dev.pm_domain = NULL;
 		break;
 	case BUS_NOTIFY_ADD_DEVICE:
 		if (pdata->dev_desc->flags & LPSS_LTR)
 			return sysfs_create_group(&pdev->dev.kobj,
 						  &lpss_attr_group);
+		break;
 	case BUS_NOTIFY_DEL_DEVICE:
 		if (pdata->dev_desc->flags & LPSS_LTR)
 			sysfs_remove_group(&pdev->dev.kobj, &lpss_attr_group);
+		break;
 	default:
 		break;
 	}

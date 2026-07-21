@@ -28,6 +28,7 @@
 #include <linux/list.h>
 #include <linux/slab.h>
 #include <linux/compiler.h>
+#include <linux/ktime.h>
 
 #include <asm/uaccess.h>
 #include <asm/mmu_context.h>
@@ -764,9 +765,9 @@ static bool memory_bm_pfn_present(struct memory_bitmap *bm, unsigned long pfn)
  */
 static bool rtree_next_node(struct memory_bitmap *bm)
 {
-	bm->cur.node = list_entry(bm->cur.node->list.next,
-				  struct rtree_node, list);
-	if (&bm->cur.node->list != &bm->cur.zone->leaves) {
+	if (!list_is_last(&bm->cur.node->list, &bm->cur.zone->leaves)) {
+		bm->cur.node = list_entry(bm->cur.node->list.next,
+					  struct rtree_node, list);
 		bm->cur.node_pfn += BM_BITS_PER_BLOCK;
 		bm->cur.node_bit  = 0;
 		touch_softlockup_watchdog();
@@ -774,9 +775,9 @@ static bool rtree_next_node(struct memory_bitmap *bm)
 	}
 
 	/* No more nodes, goto next zone */
-	bm->cur.zone = list_entry(bm->cur.zone->list.next,
+	if (!list_is_last(&bm->cur.zone->list, &bm->zones)) {
+		bm->cur.zone = list_entry(bm->cur.zone->list.next,
 				  struct mem_zone_bm_rtree, list);
-	if (&bm->cur.zone->list != &bm->zones) {
 		bm->cur.node = list_entry(bm->cur.zone->leaves.next,
 					  struct rtree_node, list);
 		bm->cur.node_pfn = 0;
@@ -1452,9 +1453,9 @@ static inline unsigned long preallocate_highmem_fraction(unsigned long nr_pages,
 /**
  * free_unnecessary_pages - Release preallocated pages not needed for the image
  */
-static void free_unnecessary_pages(void)
+static unsigned long free_unnecessary_pages(void)
 {
-	unsigned long save, to_free_normal, to_free_highmem;
+	unsigned long save, to_free_normal, to_free_highmem, free;
 
 	save = count_data_pages();
 	if (alloc_normal >= save) {
@@ -1475,6 +1476,7 @@ static void free_unnecessary_pages(void)
 		else
 			to_free_normal = 0;
 	}
+	free = to_free_normal + to_free_highmem;
 
 	memory_bm_position_reset(&copy_bm);
 
@@ -1498,6 +1500,8 @@ static void free_unnecessary_pages(void)
 		swsusp_unset_page_free(page);
 		__free_page(page);
 	}
+
+	return free;
 }
 
 /**
@@ -1557,11 +1561,11 @@ int hibernate_preallocate_memory(void)
 	struct zone *zone;
 	unsigned long saveable, size, max_size, count, highmem, pages = 0;
 	unsigned long alloc, save_highmem, pages_highmem, avail_normal;
-	struct timeval start, stop;
+	ktime_t start, stop;
 	int error;
 
 	printk(KERN_INFO "PM: Preallocating image memory... ");
-	do_gettimeofday(&start);
+	start = ktime_get();
 
 	error = memory_bm_create(&orig_bm, GFP_IMAGE, PG_ANY);
 	if (error)
@@ -1687,12 +1691,12 @@ int hibernate_preallocate_memory(void)
 	 * pages in memory, but we have allocated more.  Release the excessive
 	 * ones now.
 	 */
-	free_unnecessary_pages();
+	pages -= free_unnecessary_pages();
 
  out:
-	do_gettimeofday(&stop);
+	stop = ktime_get();
 	printk(KERN_CONT "done (allocated %lu pages)\n", pages);
-	swsusp_show_speed(&start, &stop, pages, "Allocated");
+	swsusp_show_speed(start, stop, pages, "Allocated");
 
 	return 0;
 
@@ -1775,7 +1779,7 @@ alloc_highmem_pages(struct memory_bitmap *bm, unsigned int nr_highmem)
 	while (to_alloc-- > 0) {
 		struct page *page;
 
-		page = alloc_image_page(__GFP_HIGHMEM);
+		page = alloc_image_page(__GFP_HIGHMEM|__GFP_KSWAPD_RECLAIM);
 		memory_bm_set_bit(bm, page_to_pfn(page));
 	}
 	return nr_highmem;
@@ -2290,8 +2294,6 @@ static inline void free_highmem_data(void)
 		free_image_page(buffer, PG_UNSAFE_CLEAR);
 }
 #else
-static inline int get_safe_write_buffer(void) { return 0; }
-
 static unsigned int
 count_highmem_image_pages(struct memory_bitmap *bm) { return 0; }
 

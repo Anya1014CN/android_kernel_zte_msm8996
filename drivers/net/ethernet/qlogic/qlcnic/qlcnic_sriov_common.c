@@ -5,10 +5,11 @@
  * See LICENSE.qlcnic for copyright and licensing details.
  */
 
+#include <linux/types.h>
+
 #include "qlcnic_sriov.h"
 #include "qlcnic.h"
 #include "qlcnic_83xx_hw.h"
-#include <linux/types.h>
 
 #define QLC_BC_COMMAND	0
 #define QLC_BC_RESPONSE	1
@@ -126,6 +127,8 @@ static int qlcnic_sriov_virtid_fn(struct qlcnic_adapter *adapter, int vf_id)
 		return 0;
 
 	pos = pci_find_ext_capability(dev, PCI_EXT_CAP_ID_SRIOV);
+	if (!pos)
+		return 0;
 	pci_read_config_word(dev, pos + PCI_SRIOV_VF_OFFSET, &offset);
 	pci_read_config_word(dev, pos + PCI_SRIOV_VF_STRIDE, &stride);
 
@@ -424,7 +427,7 @@ static int qlcnic_sriov_set_guest_vlan_mode(struct qlcnic_adapter *adapter,
 					    struct qlcnic_cmd_args *cmd)
 {
 	struct qlcnic_sriov *sriov = adapter->ahw->sriov;
-	int i, num_vlans;
+	int i, num_vlans, ret;
 	u16 *vlans;
 
 	if (sriov->allowed_vlans)
@@ -435,7 +438,9 @@ static int qlcnic_sriov_set_guest_vlan_mode(struct qlcnic_adapter *adapter,
 	dev_info(&adapter->pdev->dev, "Number of allowed Guest VLANs = %d\n",
 		 sriov->num_allowed_vlans);
 
-	qlcnic_sriov_alloc_vlans(adapter);
+	ret = qlcnic_sriov_alloc_vlans(adapter);
+	if (ret)
+		return ret;
 
 	if (!sriov->any_vlan)
 		return 0;
@@ -728,8 +733,6 @@ static int qlcnic_sriov_alloc_bc_mbx_args(struct qlcnic_cmd_args *mbx, u32 type)
 				mbx->req.arg = NULL;
 				return -ENOMEM;
 			}
-			memset(mbx->req.arg, 0, sizeof(u32) * mbx->req.num);
-			memset(mbx->rsp.arg, 0, sizeof(u32) * mbx->rsp.num);
 			mbx->req.arg[0] = (type | (mbx->req.num << 16) |
 					   (3 << 29));
 			mbx->rsp.arg[0] = (type & 0xffff) | mbx->rsp.num << 16;
@@ -1489,7 +1492,8 @@ out:
 	return ret;
 }
 
-static void qlcnic_vf_add_mc_list(struct net_device *netdev, const u8 *mac)
+static void qlcnic_vf_add_mc_list(struct net_device *netdev, const u8 *mac,
+				  enum qlcnic_mac_type mac_type)
 {
 	struct qlcnic_adapter *adapter = netdev_priv(netdev);
 	struct qlcnic_sriov *sriov = adapter->ahw->sriov;
@@ -1500,17 +1504,18 @@ static void qlcnic_vf_add_mc_list(struct net_device *netdev, const u8 *mac)
 	vf = &adapter->ahw->sriov->vf_info[0];
 
 	if (!qlcnic_sriov_check_any_vlan(vf)) {
-		qlcnic_nic_add_mac(adapter, mac, 0);
+		qlcnic_nic_add_mac(adapter, mac, 0, mac_type);
 	} else {
 		spin_lock(&vf->vlan_list_lock);
 		for (i = 0; i < sriov->num_allowed_vlans; i++) {
 			vlan_id = vf->sriov_vlans[i];
 			if (vlan_id)
-				qlcnic_nic_add_mac(adapter, mac, vlan_id);
+				qlcnic_nic_add_mac(adapter, mac, vlan_id,
+						   mac_type);
 		}
 		spin_unlock(&vf->vlan_list_lock);
 		if (qlcnic_84xx_check(adapter))
-			qlcnic_nic_add_mac(adapter, mac, 0);
+			qlcnic_nic_add_mac(adapter, mac, 0, mac_type);
 	}
 }
 
@@ -1549,10 +1554,12 @@ void qlcnic_sriov_vf_set_multi(struct net_device *netdev)
 		   (netdev_mc_count(netdev) > ahw->max_mc_count)) {
 		mode = VPORT_MISS_MODE_ACCEPT_MULTI;
 	} else {
-		qlcnic_vf_add_mc_list(netdev, bcast_addr);
+		qlcnic_vf_add_mc_list(netdev, bcast_addr, QLCNIC_BROADCAST_MAC);
 		if (!netdev_mc_empty(netdev)) {
+			qlcnic_flush_mcast_mac(adapter);
 			netdev_for_each_mc_addr(ha, netdev)
-				qlcnic_vf_add_mc_list(netdev, ha->addr);
+				qlcnic_vf_add_mc_list(netdev, ha->addr,
+						      QLCNIC_MULTICAST_MAC);
 		}
 	}
 
@@ -1563,7 +1570,8 @@ void qlcnic_sriov_vf_set_multi(struct net_device *netdev)
 		mode = VPORT_MISS_MODE_ACCEPT_ALL;
 	} else if (!netdev_uc_empty(netdev)) {
 		netdev_for_each_uc_addr(ha, netdev)
-			qlcnic_vf_add_mc_list(netdev, ha->addr);
+			qlcnic_vf_add_mc_list(netdev, ha->addr,
+					      QLCNIC_UNICAST_MAC);
 	}
 
 	if (adapter->pdev->is_virtfn) {
@@ -2141,7 +2149,7 @@ static int qlcnic_sriov_vf_resume(struct qlcnic_adapter *adapter)
 	return err;
 }
 
-void qlcnic_sriov_alloc_vlans(struct qlcnic_adapter *adapter)
+int qlcnic_sriov_alloc_vlans(struct qlcnic_adapter *adapter)
 {
 	struct qlcnic_sriov *sriov = adapter->ahw->sriov;
 	struct qlcnic_vf_info *vf;
@@ -2151,7 +2159,11 @@ void qlcnic_sriov_alloc_vlans(struct qlcnic_adapter *adapter)
 		vf = &sriov->vf_info[i];
 		vf->sriov_vlans = kcalloc(sriov->num_allowed_vlans,
 					  sizeof(*vf->sriov_vlans), GFP_KERNEL);
+		if (!vf->sriov_vlans)
+			return -ENOMEM;
 	}
+
+	return 0;
 }
 
 void qlcnic_sriov_free_vlans(struct qlcnic_adapter *adapter)

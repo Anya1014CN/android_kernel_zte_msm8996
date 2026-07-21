@@ -1,4 +1,4 @@
-/* Copyright (c) 2015-2018 The Linux Foundation. All rights reserved.
+/* Copyright (c) 2015, 2017 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -56,9 +56,9 @@
 
 
 #define IPA_MHI_FUNC_ENTRY() \
-	IPA_MHI_DBG("ENTRY\n")
+	IPA_MHI_DBG_LOW("ENTRY\n")
 #define IPA_MHI_FUNC_EXIT() \
-	IPA_MHI_DBG("EXIT\n")
+	IPA_MHI_DBG_LOW("EXIT\n")
 
 #define IPA_MHI_MAX_UL_CHANNELS 1
 #define IPA_MHI_MAX_DL_CHANNELS 1
@@ -136,7 +136,7 @@ int ipa3_mhi_reset_channel_internal(enum ipa_client_type client)
 	res = ipa3_mhi_reset_gsi_channel(client);
 	if (res) {
 		IPAERR("ipa3_mhi_reset_gsi_channel failed\n");
-		BUG();
+		ipa_assert();
 		return res;
 	}
 
@@ -197,14 +197,14 @@ static int ipa_mhi_start_gsi_channel(enum ipa_client_type client,
 	struct gsi_chan_props ch_props;
 	union __packed gsi_channel_scratch ch_scratch;
 	struct ipa3_ep_context *ep;
-	const struct ipa_gsi_ep_config *ep_cfg;
+	struct ipa_gsi_ep_config *ep_cfg;
 
 	IPA_MHI_FUNC_ENTRY();
 
 	ep = &ipa3_ctx->ep[ipa_ep_idx];
 
 	msi = params->msi;
-	ep_cfg = ipa3_get_gsi_ep_info(client);
+	ep_cfg = ipa_get_gsi_ep_info(ipa_ep_idx);
 	if (!ep_cfg) {
 		IPA_MHI_ERR("Wrong parameter, ep_cfg is NULL\n");
 		return -EPERM;
@@ -347,7 +347,7 @@ int ipa3_mhi_init_engine(struct ipa_mhi_init_engine *params)
 {
 	int res;
 	struct gsi_device_scratch gsi_scratch;
-	const struct ipa_gsi_ep_config *gsi_ep_info;
+	struct ipa_gsi_ep_config *gsi_ep_info;
 
 	IPA_MHI_FUNC_ENTRY();
 
@@ -357,10 +357,11 @@ int ipa3_mhi_init_engine(struct ipa_mhi_init_engine *params)
 	}
 
 	/* Initialize IPA MHI engine */
-	gsi_ep_info = ipa3_get_gsi_ep_info(IPA_CLIENT_MHI_PROD);
+	gsi_ep_info = ipa_get_gsi_ep_info(
+		ipa_get_ep_mapping(IPA_CLIENT_MHI_PROD));
 	if (!gsi_ep_info) {
 		IPAERR("MHI PROD has no ep allocated\n");
-		BUG();
+		ipa_assert();
 	}
 	memset(&gsi_scratch, 0, sizeof(gsi_scratch));
 	gsi_scratch.mhi_base_chan_idx_valid = true;
@@ -537,7 +538,6 @@ int ipa3_mhi_resume_channels_internal(enum ipa_client_type client,
 	int res;
 	int ipa_ep_idx;
 	struct ipa3_ep_context *ep;
-	union __packed gsi_channel_scratch gsi_ch_scratch;
 
 	IPA_MHI_FUNC_ENTRY();
 
@@ -552,34 +552,11 @@ int ipa3_mhi_resume_channels_internal(enum ipa_client_type client,
 		/*
 		 * set polling mode bit to DB mode before
 		 * resuming the channel
-		 *
-		 * For MHI-->IPA pipes:
-		 * when resuming due to transition to M0,
-		 * set the polling mode bit to 0.
-		 * In other cases, restore it's value form
-		 * when you stopped the channel.
-		 * Here, after successful resume client move to M0 state.
-		 * So, by default setting polling mode bit to 0.
-		 *
-		 * For IPA-->MHI pipe:
-		 * always restore the polling mode bit.
 		 */
-
-		res = gsi_read_channel_scratch(
-			ep->gsi_chan_hdl, &gsi_ch_scratch);
-		if (res) {
-			IPA_MHI_ERR("Read ch scratch fail %d\n"
-				, res);
-			return res;
-		}
-
-		if (IPA_CLIENT_IS_PROD(client))
-			gsi_ch_scratch.mhi.polling_mode = false;
-
 		res = gsi_write_channel_scratch(
-			ep->gsi_chan_hdl, gsi_ch_scratch);
+			ep->gsi_chan_hdl, ch_scratch);
 		if (res) {
-			IPA_MHI_ERR("Write ch scratch fail %d\n"
+			IPA_MHI_ERR("write ch scratch fail %d\n"
 				, res);
 			return res;
 		}
@@ -630,7 +607,7 @@ bool ipa3_has_open_aggr_frame(enum ipa_client_type client)
 
 	ipa_ep_idx = ipa_get_ep_mapping(client);
 	if (ipa_ep_idx == -1) {
-		BUG();
+		ipa_assert();
 		return false;
 	}
 

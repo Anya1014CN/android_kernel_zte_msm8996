@@ -1,4 +1,4 @@
-/* Copyright (c) 2014-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -18,10 +18,13 @@
 #include <linux/slab.h>
 #include <linux/kmemleak.h>
 #include <linux/async.h>
+#include <linux/thread_info.h>
 #include <soc/qcom/memory_dump.h>
+#include <soc/qcom/minidump.h>
+#include <asm/sections.h>
 
 #define MISC_DUMP_DATA_LEN		4096
-#define PMIC_DUMP_DATA_LEN		4096
+#define PMIC_DUMP_DATA_LEN		(64 * 1024)
 #define VSENSE_DUMP_DATA_LEN		4096
 #define RPM_DUMP_DATA_LEN		(160 * 1024)
 
@@ -34,24 +37,20 @@ void register_misc_dump(void)
 
 	if (MSM_DUMP_MAJOR(msm_dump_table_version()) > 1) {
 		misc_data = kzalloc(sizeof(struct msm_dump_data), GFP_KERNEL);
-		if (!misc_data) {
-			pr_err("misc dump data structure allocation failed\n");
+		if (!misc_data)
 			return;
-		}
 		misc_buf = kzalloc(MISC_DUMP_DATA_LEN, GFP_KERNEL);
-		if (!misc_buf) {
-			pr_err("misc buffer space allocation failed\n");
+		if (!misc_buf)
 			goto err0;
-		}
+
+		strlcpy(misc_data->name, "KMISC", sizeof(misc_data->name));
 		misc_data->addr = virt_to_phys(misc_buf);
 		misc_data->len = MISC_DUMP_DATA_LEN;
 		dump_entry.id = MSM_DUMP_DATA_MISC;
 		dump_entry.addr = virt_to_phys(misc_data);
 		ret = msm_dump_data_register(MSM_DUMP_TABLE_APPS, &dump_entry);
-		if (ret) {
-			pr_err("Registering misc dump region failed\n");
+		if (ret)
 			goto err1;
-		}
 		return;
 err1:
 		kfree(misc_buf);
@@ -74,11 +73,10 @@ static void register_pmic_dump(void)
 			return;
 		}
 		dump_addr = kzalloc(PMIC_DUMP_DATA_LEN, GFP_KERNEL);
-		if (!dump_addr) {
-			pr_err("buffer space allocation failed\n");
+		if (!dump_addr)
 			goto err0;
-		}
 
+		strlcpy(dump_data->name, "KPMIC", sizeof(dump_data->name));
 		dump_data->addr = virt_to_phys(dump_addr);
 		dump_data->len = PMIC_DUMP_DATA_LEN;
 		dump_entry.id = MSM_DUMP_DATA_PMIC;
@@ -110,11 +108,11 @@ static void register_vsense_dump(void)
 			return;
 		}
 		dump_addr = kzalloc(VSENSE_DUMP_DATA_LEN, GFP_KERNEL);
-		if (!dump_addr) {
-			pr_err("buffer space allocation failed for vsense data\n");
+		if (!dump_addr)
 			goto err0;
-		}
 
+		strlcpy(dump_data->name, "KVSENSE",
+				sizeof(dump_data->name));
 		dump_data->addr = virt_to_phys(dump_addr);
 		dump_data->len = VSENSE_DUMP_DATA_LEN;
 		dump_entry.id = MSM_DUMP_DATA_VSENSE;
@@ -141,16 +139,13 @@ void register_rpm_dump(void)
 
 	if (MSM_DUMP_MAJOR(msm_dump_table_version()) > 1) {
 		dump_data = kzalloc(sizeof(struct msm_dump_data), GFP_KERNEL);
-		if (!dump_data) {
-			pr_err("rpm dump data structure allocation failed\n");
+		if (!dump_data)
 			return;
-		}
 		dump_addr = kzalloc(RPM_DUMP_DATA_LEN, GFP_KERNEL);
-		if (!dump_addr) {
-			pr_err("rpm dump buffer space allocation failed\n");
+		if (!dump_addr)
 			goto err0;
-		}
 
+		strlcpy(dump_data->name, "KRPM", sizeof(dump_data->name));
 		dump_data->addr = virt_to_phys(dump_addr);
 		dump_data->len = RPM_DUMP_DATA_LEN;
 		dump_entry.id = MSM_DUMP_DATA_RPM;
@@ -200,10 +195,8 @@ static void __init common_log_register_log_buf(void)
 	} else {
 		dump_data = kzalloc(sizeof(struct msm_dump_data),
 						GFP_KERNEL);
-		if (!dump_data) {
-			pr_err("Unable to alloc data space.\n");
+		if (!dump_data)
 			return;
-		}
 		dump_data->len = *log_buf_lenp;
 		dump_data->addr = virt_to_phys(*log_bufp);
 		entry_log_buf.id = MSM_DUMP_DATA_LOG_BUF;
@@ -218,10 +211,8 @@ static void __init common_log_register_log_buf(void)
 		if (fist_idxp) {
 			dump_data = kzalloc(sizeof(struct msm_dump_data),
 							GFP_KERNEL);
-			if (!dump_data) {
-				pr_err("Unable to alloc data space.\n");
+			if (!dump_data)
 				return;
-			}
 			dump_data->addr = virt_to_phys(fist_idxp);
 			entry_first_idx.id = MSM_DUMP_DATA_LOG_BUF_FIRST_IDX;
 			entry_first_idx.addr = virt_to_phys(dump_data);
@@ -236,8 +227,65 @@ static void __init common_log_register_log_buf(void)
 	}
 }
 
+static void __init register_kernel_sections(void)
+{
+	struct md_region ksec_entry;
+	char *data_name = "KDATABSS";
+	const size_t static_size = __per_cpu_end - __per_cpu_start;
+	void __percpu *base = (void __percpu *)__per_cpu_start;
+	unsigned int cpu;
+
+	strlcpy(ksec_entry.name, data_name, sizeof(ksec_entry.name));
+	ksec_entry.virt_addr = (uintptr_t)_sdata;
+	ksec_entry.phys_addr = virt_to_phys(_sdata);
+	ksec_entry.size = roundup((__bss_stop - _sdata), 4);
+	if (msm_minidump_add_region(&ksec_entry))
+		pr_err("Failed to add data section in Minidump\n");
+
+	/* Add percpu static sections */
+	for_each_possible_cpu(cpu) {
+		void *start = per_cpu_ptr(base, cpu);
+
+		memset(&ksec_entry, 0, sizeof(ksec_entry));
+		scnprintf(ksec_entry.name, sizeof(ksec_entry.name),
+			"KSPERCPU%d", cpu);
+		ksec_entry.virt_addr = (uintptr_t)start;
+		ksec_entry.phys_addr = per_cpu_ptr_to_phys(start);
+		ksec_entry.size = static_size;
+		if (msm_minidump_add_region(&ksec_entry))
+			pr_err("Failed to add percpu sections in Minidump\n");
+	}
+}
+
+#ifdef CONFIG_QCOM_MINIDUMP
+void dump_stack_minidump(u64 sp)
+{
+	struct md_region ksp_entry, ktsk_entry;
+	u32 cpu = smp_processor_id();
+
+	if (sp < KIMAGE_VADDR || sp > -256UL)
+		sp = current_stack_pointer;
+
+	sp &= ~(THREAD_SIZE - 1);
+	scnprintf(ksp_entry.name, sizeof(ksp_entry.name), "KSTACK%d", cpu);
+	ksp_entry.virt_addr = sp;
+	ksp_entry.phys_addr = virt_to_phys((uintptr_t *)sp);
+	ksp_entry.size = THREAD_SIZE;
+	if (msm_minidump_add_region(&ksp_entry))
+		pr_err("Failed to add stack of cpu %d in Minidump\n", cpu);
+
+	scnprintf(ktsk_entry.name, sizeof(ktsk_entry.name), "KTASK%d", cpu);
+	ktsk_entry.virt_addr = (u64)current;
+	ktsk_entry.phys_addr = virt_to_phys((uintptr_t *)current);
+	ktsk_entry.size = sizeof(struct task_struct);
+	if (msm_minidump_add_region(&ktsk_entry))
+		pr_err("Failed to add current task %d in Minidump\n", cpu);
+}
+#endif
+
 static void __init async_common_log_init(void *data, async_cookie_t cookie)
 {
+	register_kernel_sections();
 	common_log_register_log_buf();
 	register_misc_dump();
 	register_pmic_dump();

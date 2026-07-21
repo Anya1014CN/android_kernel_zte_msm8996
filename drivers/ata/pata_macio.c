@@ -507,7 +507,7 @@ static int pata_macio_cable_detect(struct ata_port *ap)
 	return ATA_CBL_PATA40;
 }
 
-static void pata_macio_qc_prep(struct ata_queued_cmd *qc)
+static enum ata_completion_errors pata_macio_qc_prep(struct ata_queued_cmd *qc)
 {
 	unsigned int write = (qc->tf.flags & ATA_TFLAG_WRITE);
 	struct ata_port *ap = qc->ap;
@@ -520,7 +520,7 @@ static void pata_macio_qc_prep(struct ata_queued_cmd *qc)
 		   __func__, qc, qc->flags, write, qc->dev->devno);
 
 	if (!(qc->flags & ATA_QCFLAG_DMAMAP))
-		return;
+		return AC_ERR_OK;
 
 	table = (struct dbdma_cmd *) priv->dma_table_cpu;
 
@@ -540,9 +540,9 @@ static void pata_macio_qc_prep(struct ata_queued_cmd *qc)
 			BUG_ON (pi++ >= MAX_DCMDS);
 
 			len = (sg_len < MAX_DBDMA_SEG) ? sg_len : MAX_DBDMA_SEG;
-			st_le16(&table->command, write ? OUTPUT_MORE: INPUT_MORE);
-			st_le16(&table->req_count, len);
-			st_le32(&table->phy_addr, addr);
+			table->command = cpu_to_le16(write ? OUTPUT_MORE: INPUT_MORE);
+			table->req_count = cpu_to_le16(len);
+			table->phy_addr = cpu_to_le32(addr);
 			table->cmd_dep = 0;
 			table->xfer_status = 0;
 			table->res_count = 0;
@@ -557,14 +557,16 @@ static void pata_macio_qc_prep(struct ata_queued_cmd *qc)
 
 	/* Convert the last command to an input/output */
 	table--;
-	st_le16(&table->command, write ? OUTPUT_LAST: INPUT_LAST);
+	table->command = cpu_to_le16(write ? OUTPUT_LAST: INPUT_LAST);
 	table++;
 
 	/* Add the stop command to the end of the list */
 	memset(table, 0, sizeof(struct dbdma_cmd));
-	st_le16(&table->command, DBDMA_STOP);
+	table->command = cpu_to_le16(DBDMA_STOP);
 
 	dev_dbgdma(priv->dev, "%s: %d DMA list entries\n", __func__, pi);
+
+	return AC_ERR_OK;
 }
 
 
@@ -1344,6 +1346,7 @@ static struct of_device_id pata_macio_match[] =
 	},
 	{},
 };
+MODULE_DEVICE_TABLE(of, pata_macio_match);
 
 static struct macio_driver pata_macio_driver =
 {

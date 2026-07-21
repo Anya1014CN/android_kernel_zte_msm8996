@@ -60,7 +60,6 @@ Configuration options:
 #define DT2815_STATUS 1
 
 struct dt2815_private {
-
 	const struct comedi_lrange *range_type_list[8];
 	unsigned int ao_readback[8];
 };
@@ -102,6 +101,7 @@ static int dt2815_ao_insn(struct comedi_device *dev, struct comedi_subdevice *s,
 	int ret;
 
 	for (i = 0; i < insn->n; i++) {
+		/* FIXME: lo bit 0 chooses voltage output or current output */
 		lo = ((data[i] & 0x0f) << 4) | (chan << 1) | 0x01;
 		hi = (data[i] & 0xff0) >> 4;
 
@@ -114,6 +114,8 @@ static int dt2815_ao_insn(struct comedi_device *dev, struct comedi_subdevice *s,
 		ret = comedi_timeout(dev, s, insn, dt2815_ao_status, 0x10);
 		if (ret)
 			return ret;
+
+		outb(hi, dev->iobase + DT2815_DATA);
 
 		devpriv->ao_readback[chan] = data[i];
 	}

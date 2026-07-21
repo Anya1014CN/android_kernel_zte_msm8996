@@ -436,7 +436,8 @@ static int recv_data(struct tpm_chip *chip, u8 *buf, size_t count)
 static int tpm_tis_i2c_recv(struct tpm_chip *chip, u8 *buf, size_t count)
 {
 	int size = 0;
-	int expected, status;
+	int status;
+	u32 expected;
 
 	if (count < TPM_HEADER_SIZE) {
 		size = -EIO;
@@ -446,12 +447,12 @@ static int tpm_tis_i2c_recv(struct tpm_chip *chip, u8 *buf, size_t count)
 	/* read first 10 bytes, including tag, paramsize, and result */
 	size = recv_data(chip, buf, TPM_HEADER_SIZE);
 	if (size < TPM_HEADER_SIZE) {
-		dev_err(chip->dev, "Unable to read header\n");
+		dev_err(&chip->dev, "Unable to read header\n");
 		goto out;
 	}
 
 	expected = be32_to_cpu(*(__be32 *)(buf + 2));
-	if ((size_t) expected > count) {
+	if (((size_t) expected > count) || (expected < TPM_HEADER_SIZE)) {
 		size = -EIO;
 		goto out;
 	}
@@ -459,14 +460,14 @@ static int tpm_tis_i2c_recv(struct tpm_chip *chip, u8 *buf, size_t count)
 	size += recv_data(chip, &buf[TPM_HEADER_SIZE],
 			  expected - TPM_HEADER_SIZE);
 	if (size < expected) {
-		dev_err(chip->dev, "Unable to read remainder of result\n");
+		dev_err(&chip->dev, "Unable to read remainder of result\n");
 		size = -ETIME;
 		goto out;
 	}
 
 	wait_for_stat(chip, TPM_STS_VALID, chip->vendor.timeout_c, &status);
 	if (status & TPM_STS_DATA_AVAIL) {	/* retry? */
-		dev_err(chip->dev, "Error left over data\n");
+		dev_err(&chip->dev, "Error left over data\n");
 		size = -EIO;
 		goto out;
 	}
@@ -581,12 +582,9 @@ static int tpm_tis_i2c_init(struct device *dev)
 	int rc = 0;
 	struct tpm_chip *chip;
 
-	chip = tpm_register_hardware(dev, &tpm_tis_i2c);
-	if (!chip) {
-		dev_err(dev, "could not register hardware\n");
-		rc = -ENODEV;
-		goto out_err;
-	}
+	chip = tpmm_chip_alloc(dev, &tpm_tis_i2c);
+	if (IS_ERR(chip))
+		return PTR_ERR(chip);
 
 	/* Disable interrupts */
 	chip->vendor.irq = 0;
@@ -600,7 +598,7 @@ static int tpm_tis_i2c_init(struct device *dev)
 	if (request_locality(chip, 0) != 0) {
 		dev_err(dev, "could not request locality\n");
 		rc = -ENODEV;
-		goto out_vendor;
+		goto out_err;
 	}
 
 	/* read four bytes from DID_VID register */
@@ -628,21 +626,9 @@ static int tpm_tis_i2c_init(struct device *dev)
 	tpm_get_timeouts(chip);
 	tpm_do_selftest(chip);
 
-	return 0;
-
+	return tpm_chip_register(chip);
 out_release:
 	release_locality(chip, chip->vendor.locality, 1);
-
-out_vendor:
-	/* close file handles */
-	tpm_dev_vendor_release(chip);
-
-	/* remove hardware */
-	tpm_remove_hardware(chip->dev);
-
-	/* reset these pointers, otherwise we oops */
-	chip->dev->release = NULL;
-	chip->release = NULL;
 	tpm_dev.client = NULL;
 out_err:
 	return rc;
@@ -712,17 +698,9 @@ static int tpm_tis_i2c_probe(struct i2c_client *client,
 static int tpm_tis_i2c_remove(struct i2c_client *client)
 {
 	struct tpm_chip *chip = tpm_dev.chip;
+
+	tpm_chip_unregister(chip);
 	release_locality(chip, chip->vendor.locality, 1);
-
-	/* close file handles */
-	tpm_dev_vendor_release(chip);
-
-	/* remove hardware */
-	tpm_remove_hardware(chip->dev);
-
-	/* reset these pointers, otherwise we oops */
-	chip->dev->release = NULL;
-	chip->release = NULL;
 	tpm_dev.client = NULL;
 
 	return 0;
@@ -734,7 +712,6 @@ static struct i2c_driver tpm_tis_i2c_driver = {
 	.remove = tpm_tis_i2c_remove,
 	.driver = {
 		   .name = "tpm_i2c_infineon",
-		   .owner = THIS_MODULE,
 		   .pm = &tpm_tis_i2c_ops,
 		   .of_match_table = of_match_ptr(tpm_tis_i2c_of_match),
 		   },

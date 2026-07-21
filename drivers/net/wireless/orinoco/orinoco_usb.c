@@ -364,9 +364,7 @@ static struct request_context *ezusb_alloc_ctx(struct ezusb_priv *upriv,
 	atomic_set(&ctx->refcount, 1);
 	init_completion(&ctx->done);
 
-	init_timer(&ctx->timer);
-	ctx->timer.function = ezusb_request_timerfn;
-	ctx->timer.data = (u_long) ctx;
+	setup_timer(&ctx->timer, ezusb_request_timerfn, (u_long)ctx);
 	return ctx;
 }
 
@@ -1226,19 +1224,19 @@ static netdev_tx_t ezusb_xmit(struct sk_buff *skb, struct net_device *dev)
 	if (skb->len < ETH_HLEN)
 		goto drop;
 
-	ctx = ezusb_alloc_ctx(upriv, EZUSB_RID_TX, 0);
-	if (!ctx)
-		goto busy;
-
-	memset(ctx->buf, 0, BULK_BUF_SIZE);
-	buf = ctx->buf->data;
-
 	tx_control = 0;
 
 	err = orinoco_process_xmit_skb(skb, dev, priv, &tx_control,
 				       &mic[0]);
 	if (err)
 		goto drop;
+
+	ctx = ezusb_alloc_ctx(upriv, EZUSB_RID_TX, 0);
+	if (!ctx)
+		goto drop;
+
+	memset(ctx->buf, 0, BULK_BUF_SIZE);
+	buf = ctx->buf->data;
 
 	{
 		__le16 *tx_cntl = (__le16 *)buf;
@@ -1353,7 +1351,8 @@ static int ezusb_init(struct hermes *hw)
 	int retval;
 
 	BUG_ON(in_interrupt());
-	BUG_ON(!upriv);
+	if (!upriv)
+		return -EINVAL;
 
 	upriv->reply_count = 0;
 	/* Write the MAGIC number on the simulated registers to keep
@@ -1504,6 +1503,7 @@ static inline void ezusb_delete(struct ezusb_priv *upriv)
 	if (upriv->dev) {
 		struct orinoco_private *priv = ndev_priv(upriv->dev);
 		orinoco_if_del(priv);
+		wiphy_unregister(priv_to_wiphy(upriv));
 		free_orinocodev(priv);
 	}
 }
@@ -1577,6 +1577,7 @@ static int ezusb_probe(struct usb_interface *interface,
 				ezusb_hard_reset, NULL);
 	if (!priv) {
 		err("Couldn't allocate orinocodev");
+		retval = -ENOMEM;
 		goto exit;
 	}
 
@@ -1601,9 +1602,9 @@ static int ezusb_probe(struct usb_interface *interface,
 	/* set up the endpoint information */
 	/* check out the endpoints */
 
-	iface_desc = &interface->altsetting[0].desc;
+	iface_desc = &interface->cur_altsetting->desc;
 	for (i = 0; i < iface_desc->bNumEndpoints; ++i) {
-		ep = &interface->altsetting[0].endpoint[i].desc;
+		ep = &interface->cur_altsetting->endpoint[i].desc;
 
 		if (usb_endpoint_is_bulk_in(ep)) {
 			/* we found a bulk in endpoint */
@@ -1697,6 +1698,7 @@ static int ezusb_probe(struct usb_interface *interface,
 	if (orinoco_if_add(priv, 0, 0, &ezusb_netdev_ops) != 0) {
 		upriv->dev = NULL;
 		err("%s: orinoco_if_add() failed", __func__);
+		wiphy_unregister(priv_to_wiphy(priv));
 		goto error;
 	}
 	upriv->dev = priv->ndev;

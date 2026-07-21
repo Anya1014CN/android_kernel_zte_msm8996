@@ -64,7 +64,7 @@ static int open_cgroup(char *name)
 	if (cgroupfs_find_mountpoint(mnt, PATH_MAX + 1))
 		return -1;
 
-	snprintf(path, PATH_MAX, "%s/%s", mnt, name);
+	scnprintf(path, PATH_MAX, "%s/%s", mnt, name);
 
 	fd = open(path, O_RDONLY);
 	if (fd == -1)
@@ -115,23 +115,19 @@ static int add_cgroup(struct perf_evlist *evlist, char *str)
 			goto found;
 		n++;
 	}
-	if (cgrp->refcnt == 0)
+	if (atomic_read(&cgrp->refcnt) == 0)
 		free(cgrp);
 
 	return -1;
 found:
-	cgrp->refcnt++;
+	atomic_inc(&cgrp->refcnt);
 	counter->cgrp = cgrp;
 	return 0;
 }
 
 void close_cgroup(struct cgroup_sel *cgrp)
 {
-	if (!cgrp)
-		return;
-
-	/* XXX: not reentrant */
-	if (--cgrp->refcnt == 0) {
+	if (cgrp && atomic_dec_and_test(&cgrp->refcnt)) {
 		close(cgrp->fd);
 		zfree(&cgrp->name);
 		free(cgrp);

@@ -112,7 +112,6 @@ extern int ql2xasynctmfenable;
 extern int ql2xgffidenable;
 extern int ql2xenabledif;
 extern int ql2xenablehba_err_chk;
-extern int ql2xtargetreset;
 extern int ql2xdontresethba;
 extern uint64_t ql2xmaxlun;
 extern int ql2xmdcapmask;
@@ -643,7 +642,6 @@ extern void qlafx00_abort_iocb(srb_t *, struct abort_iocb_entry_fx00 *);
 extern void qlafx00_fxdisc_iocb(srb_t *, struct fxdisc_entry_fx00 *);
 extern void qlafx00_timer_routine(scsi_qla_host_t *);
 extern int qlafx00_rescan_isp(scsi_qla_host_t *);
-extern int qlafx00_loop_reset(scsi_qla_host_t *vha);
 
 /* qla82xx related functions */
 
@@ -752,8 +750,6 @@ extern void qla8044_set_idc_dontreset(struct scsi_qla_host *ha);
 extern int qla8044_rd_direct(struct scsi_qla_host *vha, const uint32_t crb_reg);
 extern void qla8044_wr_direct(struct scsi_qla_host *vha,
 			      const uint32_t crb_reg, const uint32_t value);
-extern inline void qla8044_set_qsnt_ready(struct scsi_qla_host *vha);
-extern inline void qla8044_need_reset_handler(struct scsi_qla_host *vha);
 extern int qla8044_device_state_handler(struct scsi_qla_host *vha);
 extern void qla8044_clear_qsnt_ready(struct scsi_qla_host *vha);
 extern void qla8044_clear_drv_active(struct qla_hw_data *);

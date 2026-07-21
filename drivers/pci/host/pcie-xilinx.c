@@ -189,7 +189,7 @@ static bool xilinx_pcie_valid_device(struct pci_bus *bus, unsigned int devfn)
 }
 
 /**
- * xilinx_pcie_config_base - Get configuration base
+ * xilinx_pcie_map_bus - Get configuration base
  * @bus: PCI Bus structure
  * @devfn: Device/function
  * @where: Offset from base
@@ -197,11 +197,14 @@ static bool xilinx_pcie_valid_device(struct pci_bus *bus, unsigned int devfn)
  * Return: Base address of the configuration space needed to be
  *	   accessed.
  */
-static void __iomem *xilinx_pcie_config_base(struct pci_bus *bus,
-					     unsigned int devfn, int where)
+static void __iomem *xilinx_pcie_map_bus(struct pci_bus *bus,
+					 unsigned int devfn, int where)
 {
 	struct xilinx_pcie_port *port = sys_to_pcie(bus->sysdata);
 	int relbus;
+
+	if (!xilinx_pcie_valid_device(bus, devfn))
+		return NULL;
 
 	relbus = (bus->number << ECAM_BUS_NUM_SHIFT) |
 		 (devfn << ECAM_DEV_NUM_SHIFT);
@@ -209,84 +212,11 @@ static void __iomem *xilinx_pcie_config_base(struct pci_bus *bus,
 	return port->reg_base + relbus + where;
 }
 
-/**
- * xilinx_pcie_read_config - Read configuration space
- * @bus: PCI Bus structure
- * @devfn: Device/function
- * @where: Offset from base
- * @size: Byte/word/dword
- * @val: Value to be read
- *
- * Return: PCIBIOS_SUCCESSFUL on success
- *	   PCIBIOS_DEVICE_NOT_FOUND on failure
- */
-static int xilinx_pcie_read_config(struct pci_bus *bus, unsigned int devfn,
-				   int where, int size, u32 *val)
-{
-	void __iomem *addr;
-
-	if (!xilinx_pcie_valid_device(bus, devfn)) {
-		*val = 0xFFFFFFFF;
-		return PCIBIOS_DEVICE_NOT_FOUND;
-	}
-
-	addr = xilinx_pcie_config_base(bus, devfn, where);
-
-	switch (size) {
-	case 1:
-		*val = readb(addr);
-		break;
-	case 2:
-		*val = readw(addr);
-		break;
-	default:
-		*val = readl(addr);
-		break;
-	}
-
-	return PCIBIOS_SUCCESSFUL;
-}
-
-/**
- * xilinx_pcie_write_config - Write configuration space
- * @bus: PCI Bus structure
- * @devfn: Device/function
- * @where: Offset from base
- * @size: Byte/word/dword
- * @val: Value to be written to device
- *
- * Return: PCIBIOS_SUCCESSFUL on success
- *	   PCIBIOS_DEVICE_NOT_FOUND on failure
- */
-static int xilinx_pcie_write_config(struct pci_bus *bus, unsigned int devfn,
-				    int where, int size, u32 val)
-{
-	void __iomem *addr;
-
-	if (!xilinx_pcie_valid_device(bus, devfn))
-		return PCIBIOS_DEVICE_NOT_FOUND;
-
-	addr = xilinx_pcie_config_base(bus, devfn, where);
-
-	switch (size) {
-	case 1:
-		writeb(val, addr);
-		break;
-	case 2:
-		writew(val, addr);
-		break;
-	default:
-		writel(val, addr);
-		break;
-	}
-
-	return PCIBIOS_SUCCESSFUL;
-}
-
 /* PCIe operations */
 static struct pci_ops xilinx_pcie_ops = {
-	.read  = xilinx_pcie_read_config,
-	.write = xilinx_pcie_write_config,
+	.map_bus = xilinx_pcie_map_bus,
+	.read	= pci_generic_config_read,
+	.write	= pci_generic_config_write,
 };
 
 /* MSI functions */
@@ -406,7 +336,6 @@ static int xilinx_pcie_msi_map(struct irq_domain *domain, unsigned int irq,
 {
 	irq_set_chip_and_handler(irq, &xilinx_msi_irq_chip, handle_simple_irq);
 	irq_set_chip_data(irq, domain->host_data);
-	set_irq_flags(irq, IRQF_VALID);
 
 	return 0;
 }
@@ -420,14 +349,19 @@ static const struct irq_domain_ops msi_domain_ops = {
  * xilinx_pcie_enable_msi - Enable MSI support
  * @port: PCIe port information
  */
-static void xilinx_pcie_enable_msi(struct xilinx_pcie_port *port)
+static int xilinx_pcie_enable_msi(struct xilinx_pcie_port *port)
 {
 	phys_addr_t msg_addr;
 
 	port->msi_pages = __get_free_pages(GFP_KERNEL, 0);
+	if (!port->msi_pages)
+		return -ENOMEM;
+
 	msg_addr = virt_to_phys((void *)port->msi_pages);
 	pcie_write(port, 0x0, XILINX_PCIE_REG_MSIBASE1);
 	pcie_write(port, msg_addr, XILINX_PCIE_REG_MSIBASE2);
+
+	return 0;
 }
 
 /* INTx Functions */
@@ -445,7 +379,6 @@ static int xilinx_pcie_intx_map(struct irq_domain *domain, unsigned int irq,
 {
 	irq_set_chip_and_handler(irq, &dummy_irq_chip, handle_simple_irq);
 	irq_set_chip_data(irq, domain->host_data);
-	set_irq_flags(irq, IRQF_VALID);
 
 	return 0;
 }
@@ -517,14 +450,17 @@ static irqreturn_t xilinx_pcie_intr_handler(int irq, void *data)
 			return IRQ_HANDLED;
 		}
 
-		/* Clear interrupt FIFO register 1 */
-		pcie_write(port, XILINX_PCIE_RPIFR1_ALL_MASK,
-			   XILINX_PCIE_REG_RPIFR1);
+		if (!(val & XILINX_PCIE_RPIFR1_MSI_INTR)) {
+			/* Clear interrupt FIFO register 1 */
+			pcie_write(port, XILINX_PCIE_RPIFR1_ALL_MASK,
+				   XILINX_PCIE_REG_RPIFR1);
 
-		/* Handle INTx Interrupt */
-		val = ((val & XILINX_PCIE_RPIFR1_INTR_MASK) >>
-			XILINX_PCIE_RPIFR1_INTR_SHIFT) + 1;
-		generic_handle_irq(irq_find_mapping(port->irq_domain, val));
+			/* Handle INTx Interrupt */
+			val = ((val & XILINX_PCIE_RPIFR1_INTR_MASK) >>
+				XILINX_PCIE_RPIFR1_INTR_SHIFT) + 1;
+			generic_handle_irq(irq_find_mapping(port->irq_domain,
+							    val));
+		}
 	}
 
 	if (status & XILINX_PCIE_INTR_MSI) {
@@ -624,6 +560,7 @@ static int xilinx_pcie_init_irq_domain(struct xilinx_pcie_port *port)
 	struct device *dev = port->dev;
 	struct device_node *node = dev->of_node;
 	struct device_node *pcie_intc_node;
+	int ret;
 
 	/* Setup INTx */
 	pcie_intc_node = of_get_next_child(node, NULL);
@@ -651,7 +588,9 @@ static int xilinx_pcie_init_irq_domain(struct xilinx_pcie_port *port)
 			return PTR_ERR(port->irq_domain);
 		}
 
-		xilinx_pcie_enable_msi(port);
+		ret = xilinx_pcie_enable_msi(port);
+		if (ret)
+			return ret;
 	}
 
 	return 0;
@@ -715,9 +654,15 @@ static struct pci_bus *xilinx_pcie_scan_bus(int nr, struct pci_sys_data *sys)
 	struct pci_bus *bus;
 
 	port->root_busno = sys->busnr;
-	bus = pci_scan_root_bus(port->dev, sys->busnr, &xilinx_pcie_ops,
-				sys, &sys->resources);
 
+	if (IS_ENABLED(CONFIG_PCI_MSI))
+		bus = pci_scan_root_bus_msi(port->dev, sys->busnr,
+					    &xilinx_pcie_ops, sys,
+					    &sys->resources,
+					    &xilinx_pcie_msi_chip);
+	else
+		bus = pci_scan_root_bus(port->dev, sys->busnr,
+					&xilinx_pcie_ops, sys, &sys->resources);
 	return bus;
 }
 
@@ -735,7 +680,7 @@ static int xilinx_pcie_parse_and_add_res(struct xilinx_pcie_port *port)
 	resource_size_t offset;
 	struct of_pci_range_parser parser;
 	struct of_pci_range range;
-	struct pci_host_bridge_window *win;
+	struct resource_entry *win;
 	int err = 0, mem_resno = 0;
 
 	/* Get the ranges */
@@ -805,7 +750,7 @@ static int xilinx_pcie_parse_and_add_res(struct xilinx_pcie_port *port)
 
 free_resources:
 	release_child_resources(&iomem_resource);
-	list_for_each_entry(win, &port->resources, list)
+	resource_list_for_each_entry(win, &port->resources)
 		devm_kfree(dev, win->res);
 	pci_free_resource_list(&port->resources);
 
@@ -916,7 +861,6 @@ static int xilinx_pcie_probe(struct platform_device *pdev)
 
 #ifdef CONFIG_PCI_MSI
 	xilinx_pcie_msi_chip.dev = port->dev;
-	hw.msi_ctrl = &xilinx_pcie_msi_chip;
 #endif
 	pci_common_init_dev(dev, &hw);
 

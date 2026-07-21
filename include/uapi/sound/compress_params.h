@@ -105,7 +105,8 @@
 #define SND_AUDIOCODEC_DSD                   ((__u32) 0x00000021)
 #define SND_AUDIOCODEC_APTX                  ((__u32) 0x00000022)
 #define SND_AUDIOCODEC_TRUEHD                ((__u32) 0x00000023)
-#define SND_AUDIOCODEC_MAX                   SND_AUDIOCODEC_TRUEHD
+#define SND_AUDIOCODEC_APTXHD                ((__u32) 0x00000024)
+#define SND_AUDIOCODEC_MAX                   SND_AUDIOCODEC_APTXHD
 /*
  * Profile and modes are listed with bit masks. This allows for a
  * more compact representation of fields that will not evolve
@@ -416,7 +417,7 @@ union snd_codec_options {
 	struct snd_dec_alac alac;
 	struct snd_dec_ape ape;
 	struct snd_dec_aptx aptx_dec;
-} __attribute__((packed, aligned(4)));
+};
 
 /** struct snd_codec_desc - description of codec capabilities
  * @max_ch: Maximum number of audio channels
@@ -498,6 +499,15 @@ struct snd_codec {
 	__u32 reserved[2];
 } __attribute__((packed, aligned(4)));
 
+
+/** struct snd_codec_metadata
+ * @length: Length of the encoded buffer.
+ * @offset: Offset from the buffer address to the first byte of the first
+ *		encoded frame. All encoded frames are consecutive starting
+ *		from this offset.
+ * @timestamp: Session time in microseconds of the first sample in the buffer.
+ * @reserved: Reserved for future use.
+ */
 struct snd_codec_metadata {
 	__u32 length;
 	__u32 offset;

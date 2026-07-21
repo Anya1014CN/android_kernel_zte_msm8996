@@ -174,6 +174,8 @@ struct snd_usb_midi_in_endpoint {
 		u8 running_status_length;
 	} ports[0x10];
 	u8 seen_f5;
+	bool in_sysex;
+	u8 last_cin;
 	u8 error_resubmit;
 	int current_port;
 };
@@ -468,6 +470,39 @@ static void snd_usbmidi_maudio_broken_running_status_input(
 }
 
 /*
+ * QinHeng CH345 is buggy: every second packet inside a SysEx has not CIN 4
+ * but the previously seen CIN, but still with three data bytes.
+ */
+static void ch345_broken_sysex_input(struct snd_usb_midi_in_endpoint *ep,
+				     uint8_t *buffer, int buffer_length)
+{
+	unsigned int i, cin, length;
+
+	for (i = 0; i + 3 < buffer_length; i += 4) {
+		if (buffer[i] == 0 && i > 0)
+			break;
+		cin = buffer[i] & 0x0f;
+		if (ep->in_sysex &&
+		    cin == ep->last_cin &&
+		    (buffer[i + 1 + (cin == 0x6)] & 0x80) == 0)
+			cin = 0x4;
+#if 0
+		if (buffer[i + 1] == 0x90) {
+			/*
+			 * Either a corrupted running status or a real note-on
+			 * message; impossible to detect reliably.
+			 */
+		}
+#endif
+		length = snd_usbmidi_cin_length[cin];
+		snd_usbmidi_input_data(ep, 0, &buffer[i + 1], length);
+		ep->in_sysex = cin == 0x4;
+		if (!ep->in_sysex)
+			ep->last_cin = cin;
+	}
+}
+
+/*
  * CME protocol: like the standard protocol, but SysEx commands are sent as a
  * single USB packet preceded by a 0x0F byte.
  */
@@ -656,6 +691,12 @@ static struct usb_protocol_ops snd_usbmidi_maudio_broken_running_status_ops = {
 
 static struct usb_protocol_ops snd_usbmidi_cme_ops = {
 	.input = snd_usbmidi_cme_input,
+	.output = snd_usbmidi_standard_output,
+	.output_packet = snd_usbmidi_output_standard_packet,
+};
+
+static struct usb_protocol_ops snd_usbmidi_ch345_broken_sysex_ops = {
+	.input = ch345_broken_sysex_input,
 	.output = snd_usbmidi_standard_output,
 	.output_packet = snd_usbmidi_output_standard_packet,
 };
@@ -1341,6 +1382,7 @@ static int snd_usbmidi_out_endpoint_create(struct snd_usb_midi *umidi,
 		 * Various chips declare a packet size larger than 4 bytes, but
 		 * do not actually work with larger packets:
 		 */
+	case USB_ID(0x0a67, 0x5011): /* Medeli DD305 */
 	case USB_ID(0x0a92, 0x1020): /* ESI M4U */
 	case USB_ID(0x1430, 0x474b): /* RedOctane GH MIDI INTERFACE */
 	case USB_ID(0x15ca, 0x0101): /* Textech USB Midi Cable */
@@ -1433,6 +1475,8 @@ void snd_usbmidi_disconnect(struct list_head *p)
 	spin_unlock_irq(&umidi->disc_lock);
 	up_write(&umidi->disc_rwsem);
 
+	del_timer_sync(&umidi->error_timer);
+
 	for (i = 0; i < MIDI_MAX_ENDPOINTS; ++i) {
 		struct snd_usb_midi_endpoint *ep = &umidi->endpoints[i];
 		if (ep->out)
@@ -1459,7 +1503,6 @@ void snd_usbmidi_disconnect(struct list_head *p)
 			ep->in = NULL;
 		}
 	}
-	del_timer_sync(&umidi->error_timer);
 }
 EXPORT_SYMBOL(snd_usbmidi_disconnect);
 
@@ -1760,6 +1803,28 @@ static int snd_usbmidi_create_endpoints(struct snd_usb_midi *umidi,
 	return 0;
 }
 
+static struct usb_ms_endpoint_descriptor *find_usb_ms_endpoint_descriptor(
+					struct usb_host_endpoint *hostep)
+{
+	unsigned char *extra = hostep->extra;
+	int extralen = hostep->extralen;
+
+	while (extralen > 3) {
+		struct usb_ms_endpoint_descriptor *ms_ep =
+				(struct usb_ms_endpoint_descriptor *)extra;
+
+		if (ms_ep->bLength > 3 &&
+		    ms_ep->bDescriptorType == USB_DT_CS_ENDPOINT &&
+		    ms_ep->bDescriptorSubtype == UAC_MS_GENERAL)
+			return ms_ep;
+		if (!extra[0])
+			break;
+		extralen -= extra[0];
+		extra += extra[0];
+	}
+	return NULL;
+}
+
 /*
  * Returns MIDIStreaming device capabilities.
  */
@@ -1797,11 +1862,14 @@ static int snd_usbmidi_get_ms_info(struct snd_usb_midi *umidi,
 		ep = get_ep_desc(hostep);
 		if (!usb_endpoint_xfer_bulk(ep) && !usb_endpoint_xfer_int(ep))
 			continue;
-		ms_ep = (struct usb_ms_endpoint_descriptor *)hostep->extra;
-		if (hostep->extralen < 4 ||
-		    ms_ep->bLength < 4 ||
-		    ms_ep->bDescriptorType != USB_DT_CS_ENDPOINT ||
-		    ms_ep->bDescriptorSubtype != UAC_MS_GENERAL)
+		ms_ep = find_usb_ms_endpoint_descriptor(hostep);
+		if (!ms_ep)
+			continue;
+		if (ms_ep->bLength <= sizeof(*ms_ep))
+			continue;
+		if (ms_ep->bNumEmbMIDIJack > 0x10)
+			continue;
+		if (ms_ep->bLength < sizeof(*ms_ep) + ms_ep->bNumEmbMIDIJack)
 			continue;
 		if (usb_endpoint_dir_out(ep)) {
 			if (endpoints[epidx].out_ep) {
@@ -1903,11 +1971,14 @@ static void snd_usbmidi_switch_roland_altsetting(struct snd_usb_midi *umidi)
 
 	hostif = &intf->altsetting[1];
 	intfd = get_iface_desc(hostif);
+       /* If either or both of the endpoints support interrupt transfer,
+        * then use the alternate setting
+        */
 	if (intfd->bNumEndpoints != 2 ||
-	    (get_endpoint(hostif, 0)->bmAttributes &
-	     USB_ENDPOINT_XFERTYPE_MASK) != USB_ENDPOINT_XFER_BULK ||
-	    (get_endpoint(hostif, 1)->bmAttributes &
-	     USB_ENDPOINT_XFERTYPE_MASK) != USB_ENDPOINT_XFER_INT)
+	    !((get_endpoint(hostif, 0)->bmAttributes &
+	       USB_ENDPOINT_XFERTYPE_MASK) == USB_ENDPOINT_XFER_INT ||
+	      (get_endpoint(hostif, 1)->bmAttributes &
+	       USB_ENDPOINT_XFERTYPE_MASK) == USB_ENDPOINT_XFER_INT))
 		return;
 
 	dev_dbg(&umidi->dev->dev, "switching to altsetting %d with int ep\n",
@@ -2052,6 +2123,8 @@ static int snd_usbmidi_detect_roland(struct snd_usb_midi *umidi,
 		    cs_desc[1] == USB_DT_CS_INTERFACE &&
 		    cs_desc[2] == 0xf1 &&
 		    cs_desc[3] == 0x02) {
+			if (cs_desc[4] > 0x10 || cs_desc[5] > 0x10)
+				continue;
 			endpoint->in_cables  = (1 << cs_desc[4]) - 1;
 			endpoint->out_cables = (1 << cs_desc[5]) - 1;
 			return snd_usbmidi_detect_endpoints(umidi, endpoint, 1);
@@ -2213,16 +2286,22 @@ void snd_usbmidi_input_stop(struct list_head *p)
 }
 EXPORT_SYMBOL(snd_usbmidi_input_stop);
 
-static void snd_usbmidi_input_start_ep(struct snd_usb_midi_in_endpoint *ep)
+static void snd_usbmidi_input_start_ep(struct snd_usb_midi *umidi,
+				       struct snd_usb_midi_in_endpoint *ep)
 {
 	unsigned int i;
+	unsigned long flags;
 
 	if (!ep)
 		return;
 	for (i = 0; i < INPUT_URBS; ++i) {
 		struct urb *urb = ep->urbs[i];
-		urb->dev = ep->umidi->dev;
-		snd_usbmidi_submit_urb(urb, GFP_KERNEL);
+		spin_lock_irqsave(&umidi->disc_lock, flags);
+		if (!atomic_read(&urb->use_count)) {
+			urb->dev = ep->umidi->dev;
+			snd_usbmidi_submit_urb(urb, GFP_ATOMIC);
+		}
+		spin_unlock_irqrestore(&umidi->disc_lock, flags);
 	}
 }
 
@@ -2238,7 +2317,7 @@ void snd_usbmidi_input_start(struct list_head *p)
 	if (umidi->input_running || !umidi->opened[1])
 		return;
 	for (i = 0; i < MIDI_MAX_ENDPOINTS; ++i)
-		snd_usbmidi_input_start_ep(umidi->endpoints[i].in);
+		snd_usbmidi_input_start_ep(umidi, umidi->endpoints[i].in);
 	umidi->input_running = 1;
 }
 EXPORT_SYMBOL(snd_usbmidi_input_start);
@@ -2292,14 +2371,13 @@ int snd_usbmidi_create(struct snd_card *card,
 	umidi->iface = iface;
 	umidi->quirk = quirk;
 	umidi->usb_protocol_ops = &snd_usbmidi_standard_ops;
-	init_timer(&umidi->error_timer);
 	spin_lock_init(&umidi->disc_lock);
 	init_rwsem(&umidi->disc_rwsem);
 	mutex_init(&umidi->mutex);
 	umidi->usb_id = USB_ID(le16_to_cpu(umidi->dev->descriptor.idVendor),
 			       le16_to_cpu(umidi->dev->descriptor.idProduct));
-	umidi->error_timer.function = snd_usbmidi_error_timer;
-	umidi->error_timer.data = (unsigned long)umidi;
+	setup_timer(&umidi->error_timer, snd_usbmidi_error_timer,
+		    (unsigned long)umidi);
 
 	/* detect the endpoint(s) to use */
 	memset(endpoints, 0, sizeof(endpoints));
@@ -2374,6 +2452,10 @@ int snd_usbmidi_create(struct snd_card *card,
 		if (err < 0)
 			break;
 
+		err = snd_usbmidi_detect_per_port_endpoints(umidi, endpoints);
+		break;
+	case QUIRK_MIDI_CH345:
+		umidi->usb_protocol_ops = &snd_usbmidi_ch345_broken_sysex_ops;
 		err = snd_usbmidi_detect_per_port_endpoints(umidi, endpoints);
 		break;
 	default:

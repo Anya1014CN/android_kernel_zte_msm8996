@@ -12,13 +12,20 @@
 struct ovl_entry;
 
 enum ovl_path_type {
-	OVL_PATH_PURE_UPPER,
-	OVL_PATH_UPPER,
-	OVL_PATH_MERGE,
-	OVL_PATH_LOWER,
+	__OVL_PATH_PURE		= (1 << 0),
+	__OVL_PATH_UPPER	= (1 << 1),
+	__OVL_PATH_MERGE	= (1 << 2),
 };
 
-extern const char *ovl_opaque_xattr;
+#define OVL_TYPE_UPPER(type)	((type) & __OVL_PATH_UPPER)
+#define OVL_TYPE_MERGE(type)	((type) & __OVL_PATH_MERGE)
+#define OVL_TYPE_PURE_UPPER(type) ((type) & __OVL_PATH_PURE)
+#define OVL_TYPE_MERGE_OR_LOWER(type) \
+	(OVL_TYPE_MERGE(type) || !OVL_TYPE_UPPER(type))
+
+#define OVL_XATTR_PRE_NAME "trusted.overlay."
+#define OVL_XATTR_PRE_LEN  16
+#define OVL_XATTR_OPAQUE   OVL_XATTR_PRE_NAME"opaque"
 
 static inline int ovl_do_rmdir(struct inode *dir, struct dentry *dentry)
 {
@@ -130,6 +137,7 @@ void ovl_dentry_version_inc(struct dentry *dentry);
 void ovl_path_upper(struct dentry *dentry, struct path *path);
 void ovl_path_lower(struct dentry *dentry, struct path *path);
 enum ovl_path_type ovl_path_real(struct dentry *dentry, struct path *path);
+int ovl_path_next(int idx, struct dentry *dentry, struct path *path);
 struct dentry *ovl_dentry_upper(struct dentry *dentry);
 struct dentry *ovl_dentry_lower(struct dentry *dentry);
 struct dentry *ovl_dentry_real(struct dentry *dentry);
@@ -142,6 +150,8 @@ void ovl_drop_write(struct dentry *dentry);
 bool ovl_dentry_is_opaque(struct dentry *dentry);
 void ovl_dentry_set_opaque(struct dentry *dentry, bool opaque);
 bool ovl_is_whiteout(struct dentry *dentry);
+const struct cred *ovl_override_creds(struct super_block *sb);
+void ovl_revert_creds(const struct cred *oldcred);
 void ovl_dentry_update(struct dentry *dentry, struct dentry *upperdentry);
 struct dentry *ovl_lookup(struct inode *dir, struct dentry *dentry,
 			  unsigned int flags);
@@ -155,6 +165,9 @@ extern const struct file_operations ovl_dir_operations;
 int ovl_check_empty_dir(struct dentry *dentry, struct list_head *list);
 void ovl_cleanup_whiteouts(struct dentry *upper, struct list_head *list);
 void ovl_cache_free(struct list_head *list);
+int ovl_check_d_type_supported(struct path *realpath);
+void ovl_workdir_cleanup(struct inode *dir, struct vfsmount *mnt,
+			 struct dentry *dentry, int level);
 
 /* inode.c */
 int ovl_setattr(struct dentry *dentry, struct iattr *attr);
@@ -188,7 +201,6 @@ void ovl_cleanup(struct inode *dir, struct dentry *dentry);
 /* copy_up.c */
 int ovl_copy_up(struct dentry *dentry);
 int ovl_copy_up_one(struct dentry *parent, struct dentry *dentry,
-		    struct path *lowerpath, struct kstat *stat,
-		    struct iattr *attr);
+		    struct path *lowerpath, struct kstat *stat);
 int ovl_copy_xattr(struct dentry *old, struct dentry *new);
 int ovl_set_attr(struct dentry *upper, struct kstat *stat);

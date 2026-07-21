@@ -84,12 +84,28 @@ static void __usbhsp_pipe_xxx_set(struct usbhs_pipe *pipe,
 		usbhs_bset(priv, pipe_reg, mask, val);
 }
 
+static u16 __usbhsp_pipe_xxx_get(struct usbhs_pipe *pipe,
+				 u16 dcp_reg, u16 pipe_reg)
+{
+	struct usbhs_priv *priv = usbhs_pipe_to_priv(pipe);
+
+	if (usbhs_pipe_is_dcp(pipe))
+		return usbhs_read(priv, dcp_reg);
+	else
+		return usbhs_read(priv, pipe_reg);
+}
+
 /*
  *		DCPCFG/PIPECFG functions
  */
 static void usbhsp_pipe_cfg_set(struct usbhs_pipe *pipe, u16 mask, u16 val)
 {
 	__usbhsp_pipe_xxx_set(pipe, DCPCFG, PIPECFG, mask, val);
+}
+
+static u16 usbhsp_pipe_cfg_get(struct usbhs_pipe *pipe)
+{
+	return __usbhsp_pipe_xxx_get(pipe, DCPCFG, PIPECFG);
 }
 
 /*
@@ -261,6 +277,21 @@ int usbhs_pipe_is_accessible(struct usbhs_pipe *pipe)
 		return 0;
 
 	return -EBUSY;
+}
+
+bool usbhs_pipe_contains_transmittable_data(struct usbhs_pipe *pipe)
+{
+	u16 val;
+
+	/* Do not support for DCP pipe */
+	if (usbhs_pipe_is_dcp(pipe))
+		return false;
+
+	val = usbhsp_pipectrl_get(pipe);
+	if (val & INBUFM)
+		return true;
+
+	return false;
 }
 
 /*
@@ -616,10 +647,37 @@ void usbhs_pipe_data_sequence(struct usbhs_pipe *pipe, int sequence)
 	usbhsp_pipectrl_set(pipe, mask, val);
 }
 
+static int usbhs_pipe_get_data_sequence(struct usbhs_pipe *pipe)
+{
+	return !!(usbhsp_pipectrl_get(pipe) & SQMON);
+}
+
 void usbhs_pipe_clear(struct usbhs_pipe *pipe)
 {
-	usbhsp_pipectrl_set(pipe, ACLRM, ACLRM);
-	usbhsp_pipectrl_set(pipe, ACLRM, 0);
+	if (usbhs_pipe_is_dcp(pipe)) {
+		usbhs_fifo_clear_dcp(pipe);
+	} else {
+		usbhsp_pipectrl_set(pipe, ACLRM, ACLRM);
+		usbhsp_pipectrl_set(pipe, ACLRM, 0);
+	}
+}
+
+void usbhs_pipe_config_change_bfre(struct usbhs_pipe *pipe, int enable)
+{
+	int sequence;
+
+	if (usbhs_pipe_is_dcp(pipe))
+		return;
+
+	usbhsp_pipe_select(pipe);
+	/* check if the driver needs to change the BFRE value */
+	if (!(enable ^ !!(usbhsp_pipe_cfg_get(pipe) & BFRE)))
+		return;
+
+	sequence = usbhs_pipe_get_data_sequence(pipe);
+	usbhsp_pipe_cfg_set(pipe, BFRE, enable ? BFRE : 0);
+	usbhs_pipe_clear(pipe);
+	usbhs_pipe_data_sequence(pipe, sequence);
 }
 
 static struct usbhs_pipe *usbhsp_get_pipe(struct usbhs_priv *priv, u32 type)
@@ -747,6 +805,8 @@ struct usbhs_pipe *usbhs_pipe_malloc(struct usbhs_priv *priv,
 
 void usbhs_pipe_free(struct usbhs_pipe *pipe)
 {
+	usbhsp_pipe_select(pipe);
+	usbhsp_pipe_cfg_set(pipe, 0xFFFF, 0);
 	usbhsp_put_pipe(pipe);
 }
 

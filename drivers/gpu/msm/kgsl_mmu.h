@@ -81,6 +81,7 @@ struct kgsl_mmu_ops {
 	struct kgsl_pagetable * (*mmu_getpagetable)(struct kgsl_mmu *mmu,
 			unsigned long name);
 	struct kgsl_memdesc* (*mmu_get_qdss_global_entry)(void);
+	struct kgsl_memdesc* (*mmu_get_qtimer_global_entry)(void);
 };
 
 struct kgsl_mmu_pt_ops {
@@ -106,6 +107,9 @@ struct kgsl_mmu_pt_ops {
 	int (*mmu_unmap_offset)(struct kgsl_pagetable *pt,
 			struct kgsl_memdesc *memdesc, uint64_t addr,
 			uint64_t offset, uint64_t size);
+	int (*mmu_sparse_dummy_map)(struct kgsl_pagetable *pt,
+			struct kgsl_memdesc *memdesc, uint64_t offset,
+			uint64_t size);
 };
 
 /*
@@ -127,8 +131,6 @@ struct kgsl_mmu_pt_ops {
 #define KGSL_MMU_FORCE_32BIT BIT(5)
 /* 64 bit address is live */
 #define KGSL_MMU_64BIT BIT(6)
-/* MMU can do coherent hardware table walks */
-#define KGSL_MMU_COHERENT_HTW BIT(7)
 /* The MMU supports non-contigious pages */
 #define KGSL_MMU_PAGED BIT(8)
 /* The device requires a guard page */
@@ -229,6 +231,12 @@ int kgsl_mmu_unmap_offset(struct kgsl_pagetable *pagetable,
 		uint64_t size);
 
 struct kgsl_memdesc *kgsl_mmu_get_qdss_global_entry(struct kgsl_device *device);
+
+struct kgsl_memdesc *kgsl_mmu_get_qtimer_global_entry(
+		struct kgsl_device *device);
+
+int kgsl_mmu_sparse_dummy_map(struct kgsl_pagetable *pagetable,
+		struct kgsl_memdesc *memdesc, uint64_t offset, uint64_t size);
 
 /*
  * Static inline functions of MMU that simply call the SMMU specific
@@ -380,7 +388,7 @@ kgsl_mmu_pagetable_get_contextidr(struct kgsl_pagetable *pagetable)
 	return 0;
 }
 
-#ifdef CONFIG_MSM_IOMMU
+#ifdef CONFIG_QCOM_IOMMU
 #include <linux/qcom_iommu.h>
 #ifndef CONFIG_ARM_SMMU
 static inline bool kgsl_mmu_bus_secured(struct device *dev)

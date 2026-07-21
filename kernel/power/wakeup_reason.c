@@ -27,8 +27,6 @@
 #include <linux/notifier.h>
 #include <linux/suspend.h>
 #include <linux/slab.h>
-#include <linux/debugfs.h>
-#include <linux/debugfs.h>
 
 #define MAX_WAKEUP_REASON_IRQS 32
 static bool suspend_abort;
@@ -49,9 +47,6 @@ static ktime_t last_monotime; /* monotonic time before last suspend */
 static ktime_t curr_monotime; /* monotonic time after last suspend */
 static ktime_t last_stime; /* monotonic boottime offset before last suspend */
 static ktime_t curr_stime; /* monotonic boottime offset after last suspend */
-#if IS_ENABLED(CONFIG_SUSPEND_TIME)
-static unsigned int time_in_suspend_bins[32];
-#endif
 
 static void init_wakeup_irq_node(struct wakeup_irq_node *p, int irq)
 {
@@ -166,7 +161,7 @@ static void print_wakeup_sources(void)
 	const struct list_head *wakeups;
 
 	if (suspend_abort) {
-		pr_info("Abort: %s", abort_reason);
+		pr_info("Abort: %s\n", abort_reason);
 		return;
 	}
 
@@ -409,7 +404,7 @@ static void log_possible_wakeup_reason_complete(struct wakeup_irq_node *n,
 
 bool log_possible_wakeup_reason(int irq,
 			struct irq_desc *desc,
-			bool (*handler)(unsigned int, struct irq_desc *))
+			bool (*handler)(struct irq_desc *))
 {
 	static DEFINE_PER_CPU(unsigned int, depth);
 
@@ -422,7 +417,7 @@ bool log_possible_wakeup_reason(int irq,
 
 	n = log_possible_wakeup_reason_start(irq, desc, d);
 
-	handled = handler(irq, desc);
+	handled = handler(desc);
 
 	d = --get_cpu_var(depth);
 	put_cpu_var(depth);
@@ -441,12 +436,13 @@ bool log_possible_wakeup_reason(int irq,
 void log_suspend_abort_reason(const char *fmt, ...)
 {
 	va_list args;
+	unsigned long flags;
 
-	spin_lock(&resume_reason_lock);
+	spin_lock_irqsave(&resume_reason_lock, flags);
 
 	//Suspend abort reason has already been logged.
 	if (suspend_abort) {
-		spin_unlock(&resume_reason_lock);
+		spin_unlock_irqrestore(&resume_reason_lock, flags);
 		return;
 	}
 
@@ -455,7 +451,7 @@ void log_suspend_abort_reason(const char *fmt, ...)
 	vsnprintf(abort_reason, MAX_SUSPEND_ABORT_LEN, fmt, args);
 	va_end(args);
 
-	spin_unlock(&resume_reason_lock);
+	spin_unlock_irqrestore(&resume_reason_lock, flags);
 }
 
 static bool match_node(struct wakeup_irq_node *n, void *_p)
@@ -467,9 +463,10 @@ static bool match_node(struct wakeup_irq_node *n, void *_p)
 int check_wakeup_reason(int irq)
 {
 	bool found;
-	spin_lock(&resume_reason_lock);
+	unsigned long flags;
+	spin_lock_irqsave(&resume_reason_lock, flags);
 	found = !walk_irq_node_tree(base_irq_nodes, match_node, &irq);
-	spin_unlock(&resume_reason_lock);
+	spin_unlock_irqrestore(&resume_reason_lock, flags);
 	return found;
 }
 
@@ -549,11 +546,12 @@ void clear_wakeup_reasons(void)
 static int wakeup_reason_pm_event(struct notifier_block *notifier,
 		unsigned long pm_event, void *unused)
 {
+	unsigned long flags;
 	switch (pm_event) {
 	case PM_SUSPEND_PREPARE:
-		spin_lock(&resume_reason_lock);
+		spin_lock_irqsave(&resume_reason_lock, flags);
 		suspend_abort = false;
-		spin_unlock(&resume_reason_lock);
+		spin_unlock_irqrestore(&resume_reason_lock, flags);
 		/* monotonic time since boot */
 		last_monotime = ktime_get();
 		/* monotonic time since boot including the time spent in suspend */
@@ -565,7 +563,6 @@ static int wakeup_reason_pm_event(struct notifier_block *notifier,
 		curr_monotime = ktime_get();
 		/* monotonic time since boot including the time spent in suspend */
 		curr_stime = ktime_get_boottime();
-
 #ifdef CONFIG_DEDUCE_WAKEUP_REASONS
 		/* log_wakeups should have been cleared by now. */
 		if (WARN_ON(logging_wakeup_reasons())) {
@@ -586,54 +583,6 @@ static struct notifier_block wakeup_reason_pm_notifier_block = {
 	.notifier_call = wakeup_reason_pm_event,
 };
 
-#if IS_ENABLED(CONFIG_DEBUG_FS) && IS_ENABLED(CONFIG_SUSPEND_TIME)
-static int suspend_time_debug_show(struct seq_file *s, void *data)
-{
-	int bin;
-	seq_printf(s, "time (secs)  count\n");
-	seq_printf(s, "------------------\n");
-	for (bin = 0; bin < 32; bin++) {
-		if (time_in_suspend_bins[bin] == 0)
-			continue;
-		seq_printf(s, "%4d - %4d %4u\n",
-			bin ? 1 << (bin - 1) : 0, 1 << bin,
-				time_in_suspend_bins[bin]);
-	}
-	return 0;
-}
-
-static int suspend_time_debug_open(struct inode *inode, struct file *file)
-{
-	return single_open(file, suspend_time_debug_show, NULL);
-}
-
-static const struct file_operations suspend_time_debug_fops = {
-	.open		= suspend_time_debug_open,
-	.read		= seq_read,
-	.llseek		= seq_lseek,
-	.release	= single_release,
-};
-
-static int __init suspend_time_debug_init(void)
-{
-	struct dentry *d;
-
-	d = debugfs_create_file("suspend_time", 0755, NULL, NULL,
-		&suspend_time_debug_fops);
-	if (!d) {
-		pr_err("Failed to create suspend_time debug file\n");
-		return -ENOMEM;
-	}
-
-	return 0;
-}
-
-late_initcall(suspend_time_debug_init);
-#endif
-
-/* Initializes the sysfs parameter
- * registers the pm_event notifier
- */
 int __init wakeup_reason_init(void)
 {
 	spin_lock_init(&resume_reason_lock);

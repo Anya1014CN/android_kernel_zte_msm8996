@@ -1,4 +1,4 @@
-/* Copyright (c) 2016-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2016-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -30,18 +30,24 @@ struct qvm_channel {
 	struct tasklet_struct task;
 	struct guest_shm_factory *guest_factory;
 	struct guest_shm_control *guest_ctrl;
+	/* cached guest ctrl idx value to prevent trap when accessed */
 	uint32_t idx;
 
 	int channel;
 	int coid;
 
+	/* Guest VM */
 	unsigned int guest_intr;
 	unsigned int guest_iid;
+	unsigned int factory_addr;
+	unsigned int irq;
+
 };
 
 /* Shared mem size in each direction for communication pipe */
 #define PIPE_SHMEM_SIZE (128 * 1024)
 
 void *qnx_hyp_rx_dispatch(void *data);
-
+void hab_pipe_reset(struct physical_channel *pchan);
+void habhyp_notify(void *commdev);
 #endif /* __HAB_QNX_H */

@@ -20,6 +20,7 @@
 #include <linux/usb.h>
 #include <linux/usb/audio.h>
 #include <linux/usb/audio-v2.h>
+#include <linux/usb/audio-v3.h>
 
 #include <sound/core.h>
 #include <sound/pcm.h>
@@ -69,9 +70,14 @@ static void snd_usb_audio_stream_free(struct snd_usb_stream *stream)
 static void snd_usb_audio_pcm_free(struct snd_pcm *pcm)
 {
 	struct snd_usb_stream *stream = pcm->private_data;
+	struct snd_usb_audio *chip;
+
 	if (stream) {
+		mutex_lock(&stream->chip->dev_lock);
+		chip = stream->chip;
 		stream->pcm = NULL;
 		snd_usb_audio_stream_free(stream);
+		mutex_unlock(&chip->dev_lock);
 	}
 }
 
@@ -92,8 +98,10 @@ static void snd_usb_init_substream(struct snd_usb_stream *as,
 	subs->direction = stream;
 	subs->dev = as->chip->dev;
 	subs->txfr_quirk = as->chip->txfr_quirk;
+	subs->tx_length_quirk = as->chip->tx_length_quirk;
 	subs->speed = snd_usb_get_speed(subs->dev);
 	subs->pkt_offset_adj = 0;
+	subs->stream_offset_adj = 0;
 
 	snd_usb_set_pcm_ops(as->pcm, stream);
 
@@ -185,16 +193,16 @@ static int usb_chmap_ctl_get(struct snd_kcontrol *kcontrol,
 	struct snd_pcm_chmap *info = snd_kcontrol_chip(kcontrol);
 	struct snd_usb_substream *subs = info->private_data;
 	struct snd_pcm_chmap_elem *chmap = NULL;
-	int i;
+	int i = 0;
 
-	memset(ucontrol->value.integer.value, 0,
-	       sizeof(ucontrol->value.integer.value));
 	if (subs->cur_audiofmt)
 		chmap = subs->cur_audiofmt->chmap;
 	if (chmap) {
 		for (i = 0; i < chmap->channels; i++)
 			ucontrol->value.integer.value[i] = chmap->map[i];
 	}
+	for (; i < subs->channels_max; i++)
+		ucontrol->value.integer.value[i] = 0;
 	return 0;
 }
 
@@ -278,8 +286,6 @@ static struct snd_pcm_chmap_elem *convert_chmap(int channels, unsigned int bits,
 		0 /* terminator */
 	};
 	struct snd_pcm_chmap_elem *chmap;
-	const unsigned int *maps;
-	int c;
 
 	if (channels > ARRAY_SIZE(chmap->map))
 		return NULL;
@@ -288,26 +294,41 @@ static struct snd_pcm_chmap_elem *convert_chmap(int channels, unsigned int bits,
 	if (!chmap)
 		return NULL;
 
-	maps = protocol == UAC_VERSION_2 ? uac2_maps : uac1_maps;
 	chmap->channels = channels;
-	c = 0;
 
-	if (bits) {
-		for (; bits && *maps; maps++, bits >>= 1)
-			if (bits & 1)
-				chmap->map[c++] = *maps;
+	if (protocol == UAC_VERSION_3) {
+		switch (channels) {
+		case 1:
+			chmap->map[0] = SNDRV_CHMAP_MONO;
+			break;
+		case 2:
+			chmap->map[0] = SNDRV_CHMAP_FL;
+			chmap->map[1] = SNDRV_CHMAP_FR;
+			break;
+		}
 	} else {
-		/* If we're missing wChannelConfig, then guess something
-		    to make sure the channel map is not skipped entirely */
-		if (channels == 1)
-			chmap->map[c++] = SNDRV_CHMAP_MONO;
-		else
-			for (; c < channels && *maps; maps++)
-				chmap->map[c++] = *maps;
-	}
+		int c = 0;
+		const unsigned int *maps =
+			protocol == UAC_VERSION_2 ? uac2_maps : uac1_maps;
 
-	for (; c < channels; c++)
-		chmap->map[c] = SNDRV_CHMAP_UNKNOWN;
+		if (bits) {
+			for (; bits && *maps; maps++, bits >>= 1)
+				if (bits & 1)
+					chmap->map[c++] = *maps;
+		} else {
+			/*
+			 * If we're missing wChannelConfig, then guess something
+			 * to make sure the channel map is not skipped entirely
+			 */
+			if (channels == 1)
+				chmap->map[c++] = SNDRV_CHMAP_MONO;
+			else
+				for (; c < channels && *maps; maps++)
+					chmap->map[c++] = *maps;
+		}
+		for (; c < channels; c++)
+			chmap->map[c] = SNDRV_CHMAP_UNKNOWN;
+	}
 
 	return chmap;
 }
@@ -379,7 +400,15 @@ int snd_usb_add_audio_stream(struct snd_usb_audio *chip,
 
 	snd_usb_init_substream(as, stream, fp);
 
-	list_add(&as->list, &chip->pcm_list);
+	/*
+	 * Keep using head insertion for M-Audio Audiophile USB (tm) which has a
+	 * fix to swap capture stream order in conf/cards/USB-audio.conf
+	 */
+	if (chip->usb_id == USB_ID(0x0763, 0x2003))
+		list_add(&as->list, &chip->pcm_list);
+	else
+		list_add_tail(&as->list, &chip->pcm_list);
+
 	chip->pcm_devs++;
 
 	snd_usb_proc_pcm_format_add(as);
@@ -396,6 +425,9 @@ static int parse_uac_endpoint_attributes(struct snd_usb_audio *chip,
 	struct uac_iso_endpoint_descriptor *csep;
 	struct usb_interface_descriptor *altsd = get_iface_desc(alts);
 	int attributes = 0;
+
+	if (protocol == UAC_VERSION_3)
+		return 0;
 
 	csep = snd_usb_find_desc(alts->endpoint[0].extra, alts->endpoint[0].extralen, NULL, USB_DT_CS_ENDPOINT);
 
@@ -617,6 +649,50 @@ int snd_usb_parse_audio_interface(struct snd_usb_audio *chip, int iface_no)
 				iface_no, altno, as->bTerminalLink);
 			continue;
 		}
+
+		case UAC_VERSION_3: {
+			int wMaxPacketSize;
+
+			/*
+			 * Allocate a dummy instance of fmt and set format type
+			 * to UAC_FORMAT_TYPE_I for BADD support; free fmt
+			 * after its last usage
+			 */
+			fmt = kzalloc(sizeof(*fmt), GFP_KERNEL);
+			if (!fmt)
+				return -ENOMEM;
+
+			fmt->bFormatType = UAC_FORMAT_TYPE_I;
+			format = UAC_FORMAT_TYPE_I_PCM;
+			clock = BADD_CLOCK_SOURCE;
+			wMaxPacketSize = le16_to_cpu(get_endpoint(alts, 0)
+							->wMaxPacketSize);
+			switch (wMaxPacketSize) {
+			case BADD_MAXPSIZE_SYNC_MONO_16:
+			case BADD_MAXPSIZE_SYNC_MONO_24:
+			case BADD_MAXPSIZE_ASYNC_MONO_16:
+			case BADD_MAXPSIZE_ASYNC_MONO_24: {
+				num_channels = NUM_CHANNELS_MONO;
+				chconfig = BADD_CH_CONFIG_MONO;
+				goto populate_fp;
+			}
+
+			case BADD_MAXPSIZE_SYNC_STEREO_16:
+			case BADD_MAXPSIZE_SYNC_STEREO_24:
+			case BADD_MAXPSIZE_ASYNC_STEREO_16:
+			case BADD_MAXPSIZE_ASYNC_STEREO_24: {
+				num_channels = NUM_CHANNELS_STEREO;
+				chconfig = BADD_CH_CONFIG_STEREO;
+				goto populate_fp;
+			}
+			default:
+				dev_err(&dev->dev,
+					"%u:%d: invalid wMaxPacketSize\n",
+					iface_no, altno);
+				kfree(fmt);
+				continue;
+			}
+		}
 		}
 
 		/* get format type */
@@ -650,6 +726,7 @@ int snd_usb_parse_audio_interface(struct snd_usb_audio *chip, int iface_no)
 							fp->maxpacksize * 2)
 			continue;
 
+populate_fp:
 		fp = kzalloc(sizeof(*fp), GFP_KERNEL);
 		if (! fp) {
 			dev_err(&dev->dev, "cannot malloc\n");
@@ -711,6 +788,8 @@ int snd_usb_parse_audio_interface(struct snd_usb_audio *chip, int iface_no)
 			continue;
 		}
 
+		if (protocol == UAC_VERSION_3)
+			kfree(fmt);
 		/* Create chmap */
 		if (fp->channels != num_channels)
 			chconfig = 0;

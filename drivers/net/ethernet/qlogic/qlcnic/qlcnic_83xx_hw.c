@@ -5,13 +5,14 @@
  * See LICENSE.qlcnic for copyright and licensing details.
  */
 
-#include "qlcnic.h"
-#include "qlcnic_sriov.h"
 #include <linux/if_vlan.h>
 #include <linux/ipv6.h>
 #include <linux/ethtool.h>
 #include <linux/interrupt.h>
 #include <linux/aer.h>
+
+#include "qlcnic.h"
+#include "qlcnic_sriov.h"
 
 static void __qlcnic_83xx_process_aen(struct qlcnic_adapter *);
 static int qlcnic_83xx_clear_lb_mode(struct qlcnic_adapter *, u8);
@@ -118,6 +119,7 @@ static const struct qlcnic_mailbox_metadata qlcnic_83xx_mbx_tbl[] = {
 	{QLCNIC_CMD_DCB_QUERY_CAP, 1, 2},
 	{QLCNIC_CMD_DCB_QUERY_PARAM, 1, 50},
 	{QLCNIC_CMD_SET_INGRESS_ENCAP, 2, 1},
+	{QLCNIC_CMD_83XX_EXTEND_ISCSI_DUMP_CAP, 4, 1},
 };
 
 const u32 qlcnic_83xx_ext_reg_tbl[] = {
@@ -916,8 +918,6 @@ int qlcnic_83xx_alloc_mbx_args(struct qlcnic_cmd_args *mbx,
 				mbx->req.arg = NULL;
 				return -ENOMEM;
 			}
-			memset(mbx->req.arg, 0, sizeof(u32) * mbx->req.num);
-			memset(mbx->rsp.arg, 0, sizeof(u32) * mbx->rsp.num);
 			temp = adapter->ahw->fw_hal_version << 29;
 			mbx->req.arg[0] = (type | (mbx->req.num << 16) | temp);
 			mbx->cmd_op = type;
@@ -1076,8 +1076,14 @@ static int qlcnic_83xx_add_rings(struct qlcnic_adapter *adapter)
 	sds_mbx_size = sizeof(struct qlcnic_sds_mbx);
 	context_id = recv_ctx->context_id;
 	num_sds = adapter->drv_sds_rings - QLCNIC_MAX_SDS_RINGS;
-	ahw->hw_ops->alloc_mbx_args(&cmd, adapter,
-				    QLCNIC_CMD_ADD_RCV_RINGS);
+	err = ahw->hw_ops->alloc_mbx_args(&cmd, adapter,
+					QLCNIC_CMD_ADD_RCV_RINGS);
+	if (err) {
+		dev_err(&adapter->pdev->dev,
+			"Failed to alloc mbx args %d\n", err);
+		return err;
+	}
+
 	cmd.req.arg[1] = 0 | (num_sds << 8) | (context_id << 16);
 
 	/* set up status rings, mbx 2-81 */
@@ -2132,7 +2138,8 @@ out:
 }
 
 void qlcnic_83xx_change_l2_filter(struct qlcnic_adapter *adapter, u64 *addr,
-				  u16 vlan_id)
+				  u16 vlan_id,
+				  struct qlcnic_host_tx_ring *tx_ring)
 {
 	u8 mac[ETH_ALEN];
 	memcpy(&mac, addr, ETH_ALEN);
@@ -3155,8 +3162,10 @@ int qlcnic_83xx_flash_read32(struct qlcnic_adapter *adapter, u32 flash_addr,
 
 		indirect_addr = QLC_83XX_FLASH_DIRECT_DATA(addr);
 		ret = QLCRD32(adapter, indirect_addr, &err);
-		if (err == -EIO)
+		if (err == -EIO) {
+			qlcnic_83xx_unlock_flash(adapter);
 			return err;
+		}
 
 		word = ret;
 		*(u32 *)p_data  = word;
@@ -3517,6 +3526,31 @@ out:
 	qlcnic_free_mbx_args(&cmd);
 }
 
+#define QLCNIC_83XX_ADD_PORT0		BIT_0
+#define QLCNIC_83XX_ADD_PORT1		BIT_1
+#define QLCNIC_83XX_EXTENDED_MEM_SIZE	13 /* In MB */
+int qlcnic_83xx_extend_md_capab(struct qlcnic_adapter *adapter)
+{
+	struct qlcnic_cmd_args cmd;
+	int err;
+
+	err = qlcnic_alloc_mbx_args(&cmd, adapter,
+				    QLCNIC_CMD_83XX_EXTEND_ISCSI_DUMP_CAP);
+	if (err)
+		return err;
+
+	cmd.req.arg[1] = (QLCNIC_83XX_ADD_PORT0 | QLCNIC_83XX_ADD_PORT1);
+	cmd.req.arg[2] = QLCNIC_83XX_EXTENDED_MEM_SIZE;
+	cmd.req.arg[3] = QLCNIC_83XX_EXTENDED_MEM_SIZE;
+
+	err = qlcnic_issue_cmd(adapter, &cmd);
+	if (err)
+		dev_err(&adapter->pdev->dev,
+			"failed to issue extend iSCSI minidump capability\n");
+
+	return err;
+}
+
 int qlcnic_83xx_reg_test(struct qlcnic_adapter *adapter)
 {
 	u32 major, minor, sub;
@@ -3583,7 +3617,7 @@ int qlcnic_83xx_interrupt_test(struct net_device *netdev)
 	ahw->diag_cnt = 0;
 	ret = qlcnic_alloc_mbx_args(&cmd, adapter, QLCNIC_CMD_INTRPT_TEST);
 	if (ret)
-		goto fail_diag_irq;
+		goto fail_mbx_args;
 
 	if (adapter->flags & QLCNIC_MSIX_ENABLED)
 		intrpt_id = ahw->intr_tbl[0].id;
@@ -3613,6 +3647,8 @@ int qlcnic_83xx_interrupt_test(struct net_device *netdev)
 
 done:
 	qlcnic_free_mbx_args(&cmd);
+
+fail_mbx_args:
 	qlcnic_83xx_diag_free_res(netdev, drv_sds_rings);
 
 fail_diag_irq:
@@ -3825,7 +3861,7 @@ static void qlcnic_83xx_flush_mbx_queue(struct qlcnic_adapter *adapter)
 	struct list_head *head = &mbx->cmd_q;
 	struct qlcnic_cmd_args *cmd = NULL;
 
-	spin_lock(&mbx->queue_lock);
+	spin_lock_bh(&mbx->queue_lock);
 
 	while (!list_empty(head)) {
 		cmd = list_entry(head->next, struct qlcnic_cmd_args, list);
@@ -3836,7 +3872,7 @@ static void qlcnic_83xx_flush_mbx_queue(struct qlcnic_adapter *adapter)
 		qlcnic_83xx_notify_cmd_completion(adapter, cmd);
 	}
 
-	spin_unlock(&mbx->queue_lock);
+	spin_unlock_bh(&mbx->queue_lock);
 }
 
 static int qlcnic_83xx_check_mbx_status(struct qlcnic_adapter *adapter)
@@ -3872,12 +3908,12 @@ static void qlcnic_83xx_dequeue_mbx_cmd(struct qlcnic_adapter *adapter,
 {
 	struct qlcnic_mailbox *mbx = adapter->ahw->mailbox;
 
-	spin_lock(&mbx->queue_lock);
+	spin_lock_bh(&mbx->queue_lock);
 
 	list_del(&cmd->list);
 	mbx->num_cmds--;
 
-	spin_unlock(&mbx->queue_lock);
+	spin_unlock_bh(&mbx->queue_lock);
 
 	qlcnic_83xx_notify_cmd_completion(adapter, cmd);
 }
@@ -3942,7 +3978,7 @@ static int qlcnic_83xx_enqueue_mbx_cmd(struct qlcnic_adapter *adapter,
 		init_completion(&cmd->completion);
 		cmd->rsp_opcode = QLC_83XX_MBX_RESPONSE_UNKNOWN;
 
-		spin_lock(&mbx->queue_lock);
+		spin_lock_bh(&mbx->queue_lock);
 
 		list_add_tail(&cmd->list, &mbx->cmd_q);
 		mbx->num_cmds++;
@@ -3950,7 +3986,7 @@ static int qlcnic_83xx_enqueue_mbx_cmd(struct qlcnic_adapter *adapter,
 		*timeout = cmd->total_cmds * QLC_83XX_MBX_TIMEOUT;
 		queue_work(mbx->work_q, &mbx->work);
 
-		spin_unlock(&mbx->queue_lock);
+		spin_unlock_bh(&mbx->queue_lock);
 
 		return 0;
 	}
@@ -4027,7 +4063,7 @@ static void qlcnic_83xx_mailbox_worker(struct work_struct *work)
 	struct qlcnic_mailbox *mbx = container_of(work, struct qlcnic_mailbox,
 						  work);
 	struct qlcnic_adapter *adapter = mbx->adapter;
-	struct qlcnic_mbx_ops *mbx_ops = mbx->ops;
+	const struct qlcnic_mbx_ops *mbx_ops = mbx->ops;
 	struct device *dev = &adapter->pdev->dev;
 	struct list_head *head = &mbx->cmd_q;
 	struct qlcnic_hardware_context *ahw;
@@ -4046,15 +4082,15 @@ static void qlcnic_83xx_mailbox_worker(struct work_struct *work)
 		mbx->rsp_status = QLC_83XX_MBX_RESPONSE_WAIT;
 		spin_unlock_irqrestore(&mbx->aen_lock, flags);
 
-		spin_lock(&mbx->queue_lock);
+		spin_lock_bh(&mbx->queue_lock);
 
 		if (list_empty(head)) {
-			spin_unlock(&mbx->queue_lock);
+			spin_unlock_bh(&mbx->queue_lock);
 			return;
 		}
 		cmd = list_entry(head->next, struct qlcnic_cmd_args, list);
 
-		spin_unlock(&mbx->queue_lock);
+		spin_unlock_bh(&mbx->queue_lock);
 
 		mbx_ops->encode_cmd(adapter, cmd);
 		mbx_ops->nofity_fw(adapter, QLC_83XX_MBX_REQUEST);
@@ -4079,7 +4115,7 @@ static void qlcnic_83xx_mailbox_worker(struct work_struct *work)
 	}
 }
 
-static struct qlcnic_mbx_ops qlcnic_83xx_mbx_ops = {
+static const struct qlcnic_mbx_ops qlcnic_83xx_mbx_ops = {
 	.enqueue_cmd    = qlcnic_83xx_enqueue_mbx_cmd,
 	.dequeue_cmd    = qlcnic_83xx_dequeue_mbx_cmd,
 	.decode_resp    = qlcnic_83xx_decode_mbx_rsp,

@@ -671,7 +671,6 @@ send_cmd:
 				 * assert to check why cmd send failed.
 				 */
 				ipa_assert();
-				return -EFAULT;
 			} else {
 				/* sleep for short period to flush IPA */
 				usleep_range(IPA_UC_WAIT_MIN_SLEEP,
@@ -790,8 +789,12 @@ int ipa_uc_monitor_holb(enum ipa_client_type ipa_client, bool enable)
 	int ep_idx;
 	int ret;
 
-	/* HOLB monitoring is applicable only to 2.6L. */
-	if (ipa_ctx->ipa_hw_type != IPA_HW_v2_6L) {
+	/*
+	 * HOLB monitoring is applicable to 2.6L.
+	 * And also could be enabled from dtsi node.
+	 */
+	if (ipa_ctx->ipa_hw_type != IPA_HW_v2_6L ||
+		!ipa_ctx->ipa_uc_monitor_holb) {
 		IPADBG("Not applicable on this target\n");
 		return 0;
 	}

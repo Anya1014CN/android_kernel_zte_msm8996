@@ -1,4 +1,4 @@
-/* Copyright (c) 2015-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -25,6 +25,8 @@
 #include <linux/of_platform.h>
 #include <linux/msm-bus.h>
 #include "cam_soc_api.h"
+#include "msm_camera_diag_util.h"
+#include <linux/clk/msm-clock-generic.h>
 
 struct msm_cam_bus_pscale_data {
 	struct msm_bus_scale_pdata *pdata;
@@ -36,7 +38,7 @@ struct msm_cam_bus_pscale_data {
 	struct mutex lock;
 };
 
-struct msm_cam_bus_pscale_data g_cv[CAM_BUS_CLIENT_MAX];
+static struct msm_cam_bus_pscale_data g_cv[CAM_BUS_CLIENT_MAX];
 
 /* Get all clocks from DT */
 static int msm_camera_get_clk_info_internal(struct device *dev,
@@ -56,18 +58,21 @@ static int msm_camera_get_clk_info_internal(struct device *dev,
 	cnt = of_property_count_strings(of_node, "clock-names");
 	if (cnt <= 0) {
 		pr_err("err: No clocks found in DT=%zu\n", cnt);
+		*clk_info = NULL;
 		return -EINVAL;
 	}
 
 	tmp = of_property_count_u32_elems(of_node, "qcom,clock-rates");
 	if (tmp <= 0) {
 		pr_err("err: No clk rates device tree, count=%zu", tmp);
+		*clk_info = NULL;
 		return -EINVAL;
 	}
 
 	if (cnt != tmp) {
 		pr_err("err: clk name/rates mismatch, strings=%zu, rates=%zu\n",
 			cnt, tmp);
+		*clk_info = NULL;
 		return -EINVAL;
 	}
 
@@ -77,11 +82,13 @@ static int msm_camera_get_clk_info_internal(struct device *dev,
 		if (tmp <= 0) {
 			pr_err("err: control strings not found in DT count=%zu",
 				tmp);
+			*clk_info = NULL;
 			return -EINVAL;
 		}
 		if (cnt != tmp) {
 			pr_err("err: controls mismatch, strings=%zu, ctl=%zu\n",
 				cnt, tmp);
+			*clk_info = NULL;
 			return -EINVAL;
 		}
 		clock_cntl_support = true;
@@ -203,7 +210,7 @@ int msm_camera_get_clk_info(struct platform_device *pdev,
 {
 	int rc = 0;
 
-	if (!pdev || !&pdev->dev || !clk_info || !clk_ptr || !num_clk)
+	if (!pdev || !clk_info || !clk_ptr || !num_clk)
 		return -EINVAL;
 
 	rc = msm_camera_get_clk_info_internal(&pdev->dev,
@@ -361,6 +368,7 @@ int msm_camera_clk_enable(struct device *dev,
 						   clk_info[i].clk_name);
 					goto cam_clk_set_err;
 				}
+				clk_ptr[i]->flags |= CLKFLAG_NO_RATE_CACHE;
 				rc = clk_set_rate(clk_ptr[i],
 					clk_rate);
 				if (rc < 0) {
@@ -374,18 +382,21 @@ int msm_camera_clk_enable(struct device *dev,
 				if (clk_rate == 0) {
 					clk_rate =
 						  clk_round_rate(clk_ptr[i], 0);
+
+
 					if (clk_rate < 0) {
 						pr_err("%s round rate failed\n",
 							  clk_info[i].clk_name);
 						goto cam_clk_set_err;
 					}
-					rc = clk_set_rate(clk_ptr[i],
-								clk_rate);
-					if (rc < 0) {
-						pr_err("%s set rate failed\n",
-							  clk_info[i].clk_name);
-						goto cam_clk_set_err;
-					}
+				}
+				clk_ptr[i]->flags |= CLKFLAG_NO_RATE_CACHE;
+				rc = clk_set_rate(clk_ptr[i],
+							clk_rate);
+				if (rc < 0) {
+					pr_err("%s set rate failed\n",
+						  clk_info[i].clk_name);
+					goto cam_clk_set_err;
 				}
 			}
 			rc = clk_prepare_enable(clk_ptr[i]);
@@ -410,6 +421,8 @@ int msm_camera_clk_enable(struct device *dev,
 			}
 		}
 	}
+
+	msm_camera_diag_update_clklist(clk_info, clk_ptr, num_clk, enable);
 	return rc;
 
 cam_clk_enable_err:
@@ -662,9 +675,10 @@ void msm_camera_put_regulators(struct platform_device *pdev,
 	}
 
 	for (i = cnt - 1; i >= 0; i--) {
-		if (vdd_info[i] && !IS_ERR_OR_NULL(vdd_info[i]->vdd))
+		if (vdd_info[i] && !IS_ERR_OR_NULL(vdd_info[i]->vdd)) {
 			devm_regulator_put(vdd_info[i]->vdd);
 			CDBG("vdd ptr[%d] :%pK\n", i, vdd_info[i]->vdd);
+		}
 	}
 
 	devm_kfree(&pdev->dev, *vdd_info);
@@ -771,7 +785,7 @@ void __iomem *msm_camera_get_reg_base(struct platform_device *pdev,
 		char *device_name, int reserve_mem)
 {
 	struct resource *mem;
-	void *base;
+	void __iomem *base;
 
 	if (!pdev || !device_name) {
 		pr_err("Invalid params\n");

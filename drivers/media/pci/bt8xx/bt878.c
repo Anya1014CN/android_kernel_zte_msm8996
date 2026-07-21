@@ -416,17 +416,13 @@ static int bt878_probe(struct pci_dev *dev, const struct pci_device_id *pci_id)
 	int result = 0;
 	unsigned char lat;
 	struct bt878 *bt;
-#if defined(__powerpc__)
-	unsigned int cmd;
-#endif
 	unsigned int cardid;
 
 	printk(KERN_INFO "bt878: Bt878 AUDIO function found (%d).\n",
 	       bt878_num);
 	if (bt878_num >= BT878_MAX) {
 		printk(KERN_ERR "bt878: Too many devices inserted\n");
-		result = -ENOMEM;
-		goto fail0;
+		return -ENOMEM;
 	}
 	if (pci_enable_device(dev))
 		return -EIO;
@@ -460,15 +456,6 @@ static int bt878_probe(struct pci_dev *dev, const struct pci_device_id *pci_id)
 	       PCI_SLOT(dev->devfn), PCI_FUNC(dev->devfn));
 	printk("irq: %d, latency: %d, memory: 0x%lx\n",
 	       bt->irq, lat, bt->bt878_adr);
-
-
-#if defined(__powerpc__)
-	/* on OpenFirmware machines (PowerMac at least), PCI memory cycle */
-	/* response on cards with no firmware is not enabled by OF */
-	pci_read_config_dword(dev, PCI_COMMAND, &cmd);
-	cmd = (cmd | PCI_COMMAND_MEMORY);
-	pci_write_config_dword(dev, PCI_COMMAND, cmd);
-#endif
 
 #ifdef __sparc__
 	bt->bt878_mem = (unsigned char *) bt->bt878_adr;
@@ -506,6 +493,9 @@ static int bt878_probe(struct pci_dev *dev, const struct pci_device_id *pci_id)
 	bt878_make_risc(bt);
 	btwrite(0, BT878_AINT_MASK);
 	bt878_num++;
+
+	if (!bt->tasklet.func)
+		tasklet_disable(&bt->tasklet);
 
 	return 0;
 
@@ -590,9 +580,3 @@ module_init(bt878_init_module);
 module_exit(bt878_cleanup_module);
 
 MODULE_LICENSE("GPL");
-
-/*
- * Local variables:
- * c-basic-offset: 8
- * End:
- */

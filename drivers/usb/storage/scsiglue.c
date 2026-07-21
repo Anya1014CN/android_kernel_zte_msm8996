@@ -223,8 +223,12 @@ static int slave_configure(struct scsi_device *sdev)
 		if (!(us->fflags & US_FL_NEEDS_CAP16))
 			sdev->try_rc_10_first = 1;
 
-		/* assume SPC3 or latter devices support sense size > 18 */
-		if (sdev->scsi_level > SCSI_SPC_2)
+		/*
+		 * assume SPC3 or latter devices support sense size > 18
+		 * unless US_FL_BAD_SENSE quirk is specified.
+		 */
+		if (sdev->scsi_level > SCSI_SPC_2 &&
+		    !(us->fflags & US_FL_BAD_SENSE))
 			us->fflags |= US_FL_SANE_SENSE;
 
 		/* USB-IDE bridges tend to report SK = 0x04 (Non-recoverable
@@ -328,7 +332,7 @@ static int queuecommand_lck(struct scsi_cmnd *srb,
 
 	/* check for state-transition errors */
 	if (us->srb != NULL) {
-		printk(KERN_ERR USB_STORAGE "Error in %s: us->srb = %pK\n",
+		printk(KERN_ERR USB_STORAGE "Error in %s: us->srb = %p\n",
 			__func__, us->srb);
 		return SCSI_MLQUEUE_HOST_BUSY;
 	}
@@ -337,6 +341,15 @@ static int queuecommand_lck(struct scsi_cmnd *srb,
 	if (test_bit(US_FLIDX_DISCONNECTING, &us->dflags)) {
 		usb_stor_dbg(us, "Fail command during disconnect\n");
 		srb->result = DID_NO_CONNECT << 16;
+		done(srb);
+		return 0;
+	}
+
+	if ((us->fflags & US_FL_NO_ATA_1X) &&
+			(srb->cmnd[0] == ATA_12 || srb->cmnd[0] == ATA_16)) {
+		memcpy(srb->sense_buffer, usb_stor_sense_invalidCDB,
+		       sizeof(usb_stor_sense_invalidCDB));
+		srb->result = SAM_STAT_CHECK_CONDITION;
 		done(srb);
 		return 0;
 	}
@@ -456,17 +469,13 @@ static int write_info(struct Scsi_Host *host, char *buffer, int length)
 	return length;
 }
 
-/* we use this macro to help us write into the buffer */
-#undef SPRINTF
-#define SPRINTF(args...) seq_printf(m, ## args)
-
 static int show_info (struct seq_file *m, struct Scsi_Host *host)
 {
 	struct us_data *us = host_to_us(host);
 	const char *string;
 
 	/* print the controller name */
-	SPRINTF("   Host scsi%d: usb-storage\n", host->host_no);
+	seq_printf(m, "   Host scsi%d: usb-storage\n", host->host_no);
 
 	/* print product, vendor, and serial number strings */
 	if (us->pusb_dev->manufacturer)
@@ -475,26 +484,26 @@ static int show_info (struct seq_file *m, struct Scsi_Host *host)
 		string = us->unusual_dev->vendorName;
 	else
 		string = "Unknown";
-	SPRINTF("       Vendor: %s\n", string);
+	seq_printf(m, "       Vendor: %s\n", string);
 	if (us->pusb_dev->product)
 		string = us->pusb_dev->product;
 	else if (us->unusual_dev->productName)
 		string = us->unusual_dev->productName;
 	else
 		string = "Unknown";
-	SPRINTF("      Product: %s\n", string);
+	seq_printf(m, "      Product: %s\n", string);
 	if (us->pusb_dev->serial)
 		string = us->pusb_dev->serial;
 	else
 		string = "None";
-	SPRINTF("Serial Number: %s\n", string);
+	seq_printf(m, "Serial Number: %s\n", string);
 
 	/* show the protocol and transport */
-	SPRINTF("     Protocol: %s\n", us->protocol_name);
-	SPRINTF("    Transport: %s\n", us->transport_name);
+	seq_printf(m, "     Protocol: %s\n", us->protocol_name);
+	seq_printf(m, "    Transport: %s\n", us->transport_name);
 
 	/* show the device flags */
-	SPRINTF("       Quirks:");
+	seq_printf(m, "       Quirks:");
 
 #define US_FLAG(name, value) \
 	if (us->fflags & value) seq_printf(m, " " #name);
@@ -540,7 +549,7 @@ static struct device_attribute *sysfs_device_attr_list[] = {
  * this defines our host template, with which we'll allocate hosts
  */
 
-struct scsi_host_template usb_stor_host_template = {
+static const struct scsi_host_template usb_stor_host_template = {
 	/* basic userland interface stuff */
 	.name =				"usb-storage",
 	.proc_name =			"usb-storage",
@@ -558,7 +567,6 @@ struct scsi_host_template usb_stor_host_template = {
 
 	/* queue commands only, only one command per LUN */
 	.can_queue =			1,
-	.cmd_per_lun =			1,
 
 	/* unknown initiator id */
 	.this_id =			-1,
@@ -591,6 +599,16 @@ struct scsi_host_template usb_stor_host_template = {
 	/* module management */
 	.module =			THIS_MODULE
 };
+
+void usb_stor_host_template_init(struct scsi_host_template *sht,
+				 const char *name, struct module *owner)
+{
+	*sht = usb_stor_host_template;
+	sht->name = name;
+	sht->proc_name = name;
+	sht->module = owner;
+}
+EXPORT_SYMBOL_GPL(usb_stor_host_template_init);
 
 /* To Report "Illegal Request: Invalid Field in CDB */
 unsigned char usb_stor_sense_invalidCDB[18] = {
