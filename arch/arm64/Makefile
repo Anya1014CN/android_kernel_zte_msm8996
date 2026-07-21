@@ -47,7 +47,7 @@ else
 TEXT_OFFSET := 0x00080000
 endif
 
-ifeq ($(cc-name),clang)
+ifeq ($(COMPILER),clang)
 KBUILD_CFLAGS += $(call cc-disable-warning, asm-operand-widths)
 endif
 
