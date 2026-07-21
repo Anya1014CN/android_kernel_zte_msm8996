@@ -1448,7 +1448,8 @@ static int tfa98xx_info_profile(struct snd_kcontrol *kcontrol,
 	if (err != 0)
 		return -EINVAL;
 
-	strlcpy(uinfo->value.enumerated.name, profile_name, sizeof(profile_name));
+	strlcpy(uinfo->value.enumerated.name, profile_name,
+		sizeof(uinfo->value.enumerated.name));
 
 	return 0;
 }
@@ -3465,6 +3466,5 @@ module_exit(tfa98xx_i2c_exit);
 
 MODULE_DESCRIPTION("ASoC TFA98XX driver");
 MODULE_LICENSE("GPL");
-
 
 
