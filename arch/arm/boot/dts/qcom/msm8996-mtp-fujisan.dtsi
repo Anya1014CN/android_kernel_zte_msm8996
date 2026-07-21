@@ -24,7 +24,15 @@
 	ramoops_mem: ramoops_region@bfc00000 {
 		compatible = "removed-dma-pool";
 		no-map;
-		reg = <0x0 0xbfc00000 0x0 0x00400000>;
+		/* Keep the production/recovery ramoops layout. */
+		reg = <0x0 0xbfc00000 0x0 0x00140000>;
+	};
+
+	/* Reserved by the bootloader but not used by the production layout. */
+	ramoops_unused: ramoops_unused@bfd40000 {
+		compatible = "removed-dma-pool";
+		no-map;
+		reg = <0x0 0xbfd40000 0x0 0x002c0000>;
 	};
 };
 
@@ -52,10 +60,9 @@
 	ramoops {
 		compatible = "ramoops";
 		memory-region = <&ramoops_mem>;
-		console-size = <0x0 0x00100000>;
+		console-size = <0x0 0x000c0000>;
 		record-size = <0x0 0x00008000>;
-		ftrace-size = <0x0 0x00100000>;
-		pmsg-size = <0x0 0x00100000>;
+		ftrace-size = <0x0 0x00040000>;
 	};
 };
 
