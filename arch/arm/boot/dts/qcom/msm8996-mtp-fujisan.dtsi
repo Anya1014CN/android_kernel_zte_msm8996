@@ -28,6 +28,19 @@
 	};
 };
 
+/*
+ * Fujisan predates Treble and has no vendor, dtbo, or vbmeta partitions.
+ * The 4.4 msm8996 base declares those partitions in its generic Android DT
+ * nodes, causing Android 12 first-stage init to wait for devices which do
+ * not exist.  Use the boot ramdisk fstab instead.
+ */
+&firmware {
+	android {
+		/delete-node/ fstab;
+		/delete-node/ vbmeta;
+	};
+};
+
 &soc {
 	ramoops {
 		compatible = "ramoops";
