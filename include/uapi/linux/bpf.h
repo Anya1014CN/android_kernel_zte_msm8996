@@ -111,10 +111,13 @@ enum bpf_cmd {
 
 enum bpf_map_type {
 	BPF_MAP_TYPE_UNSPEC,
+	BPF_MAP_TYPE_HASH,
+	BPF_MAP_TYPE_ARRAY,
 };
 
 enum bpf_prog_type {
 	BPF_PROG_TYPE_UNSPEC,
+	BPF_PROG_TYPE_SOCKET_FILTER,
 };
 
 union bpf_attr {
