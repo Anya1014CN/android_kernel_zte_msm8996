@@ -689,6 +689,10 @@ static int ramoops_probe(struct platform_device *pdev)
 		goto fail_buf;
 	}
 
+#ifdef CONFIG_MACH_ZTE_FUJISAN
+	panic("Fujisan bring-up: ramoops probe reached");
+#endif
+
 	/*
 	 * Update the module parameter variables as well so they are visible
 	 * through /sys/module/ramoops/parameters/
