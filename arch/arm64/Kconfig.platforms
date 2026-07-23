@@ -70,6 +70,13 @@ config ARCH_MSM8996
 	This enables support for the MSM8996 chipset. If you do not
 	wish to build a kernel that runs on this chipset, say 'N' here.
 
+config BOARD_FUJISAN
+	bool "ZTE FUJISAN (Axon M) board support"
+	depends on ARCH_MSM8996
+	help
+	  Enable ZTE Axon M / Fujisan dual-panel board quirks
+	  (dual Synaptics touch, secondary backlight, dual DSI helpers).
+
 config ARCH_MSM8998
         bool "Enable Support for Qualcomm MSM8998"
 	depends on ARCH_QCOM

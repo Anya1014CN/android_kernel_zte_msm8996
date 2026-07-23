@@ -58,6 +58,9 @@
 
 #include "mdss_livedisplay.h"
 
+#ifdef CONFIG_BOARD_FUJISAN
+u32 zte_bl_brightness_2;
+#endif
 #ifdef CONFIG_FB_MSM_TRIPLE_BUFFER
 #define MDSS_FB_NUM 3
 #else
@@ -275,6 +278,42 @@ static int mdss_fb_notify_update(struct msm_fb_data_type *mfd,
 
 static int lcd_backlight_registered;
 
+#ifdef CONFIG_BOARD_FUJISAN
+static int lcd_backlight_2_registered;
+static void mdss_fb_set_bl_brightness_2(struct led_classdev *led_cdev,
+				      enum led_brightness value)
+{
+	struct msm_fb_data_type *mfd;
+	int bl_lvl;
+	int i;
+
+	/* Preserve OEM fold-mode flag used by dual-panel DSI backlight paths. */
+	if (value == 1)
+		zte_bl_brightness_2 = 1;
+	else
+		zte_bl_brightness_2 = 0;
+
+	/* Also apply brightness to secondary framebuffer when present. */
+	for (i = 0; i < fbi_list_index; i++) {
+		if (!fbi_list[i])
+			continue;
+		mfd = (struct msm_fb_data_type *)fbi_list[i]->par;
+		if (!mfd || mfd->index != 1 || !mfd->panel_info)
+			continue;
+		if (value > mfd->panel_info->brightness_max)
+			value = mfd->panel_info->brightness_max;
+		MDSS_BRIGHT_TO_BL(bl_lvl, value, mfd->panel_info->bl_max,
+				mfd->panel_info->brightness_max);
+		if (!bl_lvl && value)
+			bl_lvl = 1;
+		mutex_lock(&mfd->bl_lock);
+		mdss_fb_set_backlight(mfd, bl_lvl);
+		mutex_unlock(&mfd->bl_lock);
+		mfd->bl_level_usr = bl_lvl;
+		break;
+	}
+}
+#endif
 static void mdss_fb_set_bl_brightness(struct led_classdev *led_cdev,
 				      enum led_brightness value)
 {
@@ -325,6 +364,14 @@ static struct led_classdev backlight_led = {
 	.brightness_get = mdss_fb_get_bl_brightness,
 	.max_brightness = MDSS_MAX_BL_BRIGHTNESS,
 };
+#ifdef CONFIG_BOARD_FUJISAN
+static struct led_classdev backlight_led_2 = {
+	.name           = "lcd-backlight-2",
+	.brightness     = MDSS_MAX_BL_BRIGHTNESS / 2,
+	.brightness_set = mdss_fb_set_bl_brightness_2,
+	.max_brightness = MDSS_MAX_BL_BRIGHTNESS,
+};
+#endif
 
 static ssize_t mdss_fb_get_type(struct device *dev,
 				struct device_attribute *attr, char *buf)
@@ -1392,12 +1439,33 @@ static int mdss_fb_probe(struct platform_device *pdev)
 	pm_runtime_enable(mfd->fbi->dev);
 
 	/* android supports only one lcd-backlight/lcd for now */
+#ifdef CONFIG_BOARD_FUJISAN
+	if (!lcd_backlight_registered && mfd->index == 0) {
+		backlight_led.brightness = mfd->panel_info->brightness_max;
+		backlight_led.max_brightness = mfd->panel_info->brightness_max;
+		if (led_classdev_register(&pdev->dev, &backlight_led))
+			pr_err("led_classdev_register failed\n");
+		else
+			lcd_backlight_registered = 1;
+	}
+	if (!lcd_backlight_2_registered && mfd->index == 1) {
+		backlight_led_2.brightness = mfd->panel_info->brightness_max;
+		backlight_led_2.max_brightness = mfd->panel_info->brightness_max;
+		pr_info("%s: register lcd-backlight-2 mfd->index=%d\n",
+			__func__, mfd->index);
+		if (led_classdev_register(&pdev->dev, &backlight_led_2))
+			pr_err("led_classdev_register backlight_2 failed\n");
+		else
+			lcd_backlight_2_registered = 1;
+	}
+#else
 	if (!lcd_backlight_registered) {
 		if (led_classdev_register(&pdev->dev, &backlight_led))
 			pr_err("led_classdev_register failed\n");
 		else
 			lcd_backlight_registered = 1;
 	}
+#endif
 
 	mdss_fb_init_panel_modes(mfd, pdata);
 
@@ -1499,10 +1567,20 @@ static int mdss_fb_remove(struct platform_device *pdev)
 	/* remove /dev/fb* */
 	unregister_framebuffer(mfd->fbi);
 
+#ifdef CONFIG_BOARD_FUJISAN
+	if (lcd_backlight_registered && mfd->index == 0) {
+#else
 	if (lcd_backlight_registered) {
+#endif
 		lcd_backlight_registered = 0;
 		led_classdev_unregister(&backlight_led);
 	}
+#ifdef CONFIG_BOARD_FUJISAN
+	if (lcd_backlight_2_registered && mfd->index == 1) {
+		lcd_backlight_2_registered = 0;
+		led_classdev_unregister(&backlight_led_2);
+	}
+#endif
 
 	return 0;
 }
@@ -1819,8 +1897,19 @@ void mdss_fb_update_backlight(struct msm_fb_data_type *mfd)
 	u32 temp;
 	bool bl_notify = false;
 
+#ifdef CONFIG_BOARD_FUJISAN
+	if (mfd->unset_bl_level == U32_MAX) {
+		if (!mfd->allow_bl_update) {
+			mutex_lock(&mfd->bl_lock);
+			mfd->allow_bl_update = true;
+			mutex_unlock(&mfd->bl_lock);
+		}
+		return;
+	}
+#else
 	if (mfd->unset_bl_level == U32_MAX)
 		return;
+#endif
 	mutex_lock(&mfd->bl_lock);
 	if (!mfd->allow_bl_update) {
 		pdata = dev_get_platdata(&mfd->pdev->dev);
@@ -2031,8 +2120,15 @@ static int mdss_fb_blank_unblank(struct msm_fb_data_type *mfd)
 			if (IS_CALIB_MODE_BL(mfd))
 				mdss_fb_set_backlight(mfd, mfd->calib_mode_bl);
 			else if ((!mfd->panel_info->mipi.post_init_delay) &&
-				(mfd->unset_bl_level != U32_MAX))
+				(mfd->unset_bl_level != U32_MAX)) {
+#ifdef CONFIG_BOARD_FUJISAN
+				if (mfd->index == 1)
+					mfd->unset_bl_level = 0;
+				pr_info("%s: mfd->index:%d mfd->unset_bl_level:%d\n",
+					__func__, mfd->index, mfd->unset_bl_level);
+#endif
 				mdss_fb_set_backlight(mfd, mfd->unset_bl_level);
+			}
 
 			/*
 			 * it blocks the backlight update between unblank and
@@ -2849,7 +2945,11 @@ static int mdss_fb_open(struct fb_info *info, int user)
 		goto pm_error;
 	}
 
+#ifdef CONFIG_BOARD_FUJISAN
+	if (!mfd->ref_cnt && mfd->index != 1) {
+#else
 	if (!mfd->ref_cnt) {
+#endif
 		result = mdss_fb_blank_sub(FB_BLANK_UNBLANK, info,
 					   mfd->op_enable);
 		if (result) {
