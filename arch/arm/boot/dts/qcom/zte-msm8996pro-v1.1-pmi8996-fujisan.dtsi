@@ -415,3 +415,11 @@
 	};
 };
 
+
+
+/* Fujisan: gpio69 is secondary panel reset, not SPKR I2S */
+&clock_audio {
+	/delete-property/ pinctrl-names;
+	/delete-property/ pinctrl-0;
+	/delete-property/ pinctrl-1;
+};

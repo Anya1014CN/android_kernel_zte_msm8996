@@ -521,6 +521,12 @@ config AXP20X_POWER
 	  This driver provides support for the power supply features of
 	  AXP20x PMIC.
 
+config ZTE_HALL_AVAILABLE
+	tristate "ZTE hall sensor (open/close)"
+	depends on OF && INPUT
+	help
+	  Simple ZTE hall GPIO driver for lid/hinge open-close events.
+
 source "drivers/power/reset/Kconfig"
 source "drivers/power/supply/Kconfig"
 
