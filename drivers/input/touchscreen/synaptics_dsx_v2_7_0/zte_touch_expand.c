@@ -270,6 +270,12 @@ static int zte_touch_expand_init(void)
 
 	TEB_INFO("into!!!\n");
 
+	/* Lineage dual-display path uses per-panel inputs + idc displayId. */
+	if (separate_inputs) {
+		TEB_INFO("separate_inputs=1, skip combined expand input\n");
+		return 0;
+	}
+
 	input_dev = input_allocate_device();
 	if (input_dev == NULL) {
 		TEB_ERROR("Failed to allocate input device\n");

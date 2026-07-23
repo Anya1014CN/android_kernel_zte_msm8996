@@ -50,7 +50,7 @@
 #include <linux/input/mt.h>
 #endif
 
-#define INPUT_PHYS_NAME "synaptics_dsx/touch_input"
+#define INPUT_PHYS_NAME "synaptics_dsx/touch_input_2nd"
 #define STYLUS_PHYS_NAME "synaptics_dsx/stylus"
 
 #define VIRTUAL_KEY_MAP_FILE_NAME "virtualkeys." PLATFORM_DRIVER_NAME
@@ -3515,6 +3515,7 @@ static int synaptics_rmi4_set_input_dev(struct synaptics_rmi4_data *rmi4_data)
 
 	rmi4_data->input_dev->name = PLATFORM_DRIVER_NAME;
 	rmi4_data->input_dev->phys = INPUT_PHYS_NAME;
+	rmi4_data->input_dev->uniq = "2nd";
 	rmi4_data->input_dev->id.product = SYNAPTICS_DSX_DRIVER_PRODUCT;
 	rmi4_data->input_dev->id.version = SYNAPTICS_DSX_DRIVER_VERSION;
 	rmi4_data->input_dev->dev.parent = rmi4_data->pdev->dev.parent;
