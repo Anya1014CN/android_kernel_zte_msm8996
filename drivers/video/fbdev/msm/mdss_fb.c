@@ -2472,6 +2472,7 @@ int mdss_fb_alloc_fb_ion_memory(struct msm_fb_data_type *mfd, size_t fb_size)
 
 	mfd->fbi->screen_base = (char *) vaddr;
 	mfd->fbi->fix.smem_len = fb_size;
+	mfd->fb_mmap_type = MDP_FB_MMAP_ION_ALLOC;
 
 	return rc;
 
@@ -2653,12 +2654,21 @@ static int mdss_fb_mmap(struct fb_info *info, struct vm_area_struct *vma)
 	} else if (mfd->fb_mmap_type == MDP_FB_MMAP_PHYSICAL_ALLOC) {
 		rc = mdss_fb_physical_mmap(info, vma);
 	} else {
-		if (!info->fix.smem_start && !mfd->fb_ion_handle) {
+		/*
+		 * Fujisan secondary FB solid-fill allocates ION memory with
+		 * fb_ion_handle set but smem_start left at 0. The stock
+		 * branch treated "ion handle present" as physical mmap and
+		 * permanently failed with -ENOMEM. Prefer ION whenever there
+		 * is no physical smem (or an ion handle already exists).
+		 */
+		if (mfd->fb_ion_handle || !info->fix.smem_start) {
 			rc = mdss_fb_fbmem_ion_mmap(info, vma);
-			mfd->fb_mmap_type = MDP_FB_MMAP_ION_ALLOC;
+			if (!rc)
+				mfd->fb_mmap_type = MDP_FB_MMAP_ION_ALLOC;
 		} else {
 			rc = mdss_fb_physical_mmap(info, vma);
-			mfd->fb_mmap_type = MDP_FB_MMAP_PHYSICAL_ALLOC;
+			if (!rc)
+				mfd->fb_mmap_type = MDP_FB_MMAP_PHYSICAL_ALLOC;
 		}
 	}
 	if (rc < 0)
