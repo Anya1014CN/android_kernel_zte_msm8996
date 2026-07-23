@@ -4569,6 +4569,40 @@ static int mdss_dsi_parse_gpio_params(struct platform_device *ctrl_pdev,
 		pr_err("%s:%d, reset gpio not specified\n",
 						__func__, __LINE__);
 
+#ifdef CONFIG_BOARD_FUJISAN
+	ctrl_pdata->rst2_gpio = of_get_named_gpio(ctrl_pdev->dev.of_node,
+			"qcom,platform-reset2-gpio", 0);
+	if (!gpio_is_valid(ctrl_pdata->rst2_gpio))
+		pr_err("%s:%d, reset2 gpio not specified\n",
+						__func__, __LINE__);
+
+	ctrl_pdata->lcd_5v_vsp_en_gpio = of_get_named_gpio(ctrl_pdev->dev.of_node,
+			"zte,lcd-5v-vsp-enable-gpio", 0);
+	if (!gpio_is_valid(ctrl_pdata->lcd_5v_vsp_en_gpio))
+		pr_info("%s: lcd-5v-vsp-enable-gpio not specified\n", __func__);
+
+	ctrl_pdata->lcd_5v_vsn_en_gpio = of_get_named_gpio(ctrl_pdev->dev.of_node,
+			"zte,lcd-5v-vsn-enable-gpio", 0);
+	if (!gpio_is_valid(ctrl_pdata->lcd_5v_vsn_en_gpio))
+		pr_info("%s: lcd-5v-vsn-enable-gpio not specified\n", __func__);
+
+	ctrl_pdata->lcd2_5v_vsp_reg = regulator_get(&ctrl_pdev->dev, "lcd2_5v_vsp");
+	if (IS_ERR(ctrl_pdata->lcd2_5v_vsp_reg)) {
+		pr_info("%s: lcd2_5v_vsp regulator not available\n", __func__);
+		ctrl_pdata->lcd2_5v_vsp_reg = NULL;
+	}
+	ctrl_pdata->lcd2_5v_vsn_reg = regulator_get(&ctrl_pdev->dev, "lcd2_5v_vsn");
+	if (IS_ERR(ctrl_pdata->lcd2_5v_vsn_reg)) {
+		pr_info("%s: lcd2_5v_vsn regulator not available\n", __func__);
+		ctrl_pdata->lcd2_5v_vsn_reg = NULL;
+	}
+
+	pr_info("%s: ndx=%d rst=%d rst2=%d vsp_en=%d vsn_en=%d\n",
+		__func__, ctrl_pdata->ndx, ctrl_pdata->rst_gpio,
+		ctrl_pdata->rst2_gpio, ctrl_pdata->lcd_5v_vsp_en_gpio,
+		ctrl_pdata->lcd_5v_vsn_en_gpio);
+#endif
+
 	ctrl_pdata->lcd_mode_sel_gpio = of_get_named_gpio(
 			ctrl_pdev->dev.of_node, "qcom,panel-mode-gpio", 0);
 	if (!gpio_is_valid(ctrl_pdata->lcd_mode_sel_gpio)) {

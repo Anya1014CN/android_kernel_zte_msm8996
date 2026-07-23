@@ -801,6 +801,8 @@
 		qcom,master-id = <86>;
 		qcom,clk-freq-out = <400000>;
 		qcom,clk-freq-in = <19200000>;
+		qcom,fs-clk-div = <21>;
+		qcom,high-time-clk-div = <21>;
 		clock-names = "iface_clk", "core_clk";
 		clocks = <&clock_gcc clk_gcc_blsp1_ahb_clk>,
 			<&clock_gcc clk_gcc_blsp1_qup3_i2c_apps_clk>;

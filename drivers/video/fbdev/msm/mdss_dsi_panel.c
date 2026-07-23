@@ -35,6 +35,102 @@
 
 DEFINE_LED_TRIGGER(bl_led_trigger);
 
+#ifdef CONFIG_BOARD_FUJISAN
+static struct mdss_panel_data *zte_panel_data;
+static char is_td4322_panel;
+static char is_2nd_td4322_fw_update;
+
+static void fujisan_gpio_set_out(int gpio, const char *name, int val)
+{
+	int rc;
+
+	if (!gpio_is_valid(gpio))
+		return;
+	rc = gpio_request(gpio, name);
+	if (rc && rc != -EBUSY)
+		pr_err("%s: gpio %d request failed %d\n", __func__, gpio, rc);
+	gpio_direction_output(gpio, val);
+}
+
+static void fujisan_secondary_5v_power(struct mdss_dsi_ctrl_pdata *ctrl, int enable)
+{
+	int ret;
+
+	if (!ctrl)
+		return;
+
+	if (enable) {
+		fujisan_gpio_set_out(ctrl->lcd_5v_vsp_en_gpio, "lcd_5v_vsp_en", 1);
+		if (ctrl->lcd2_5v_vsp_reg) {
+			ret = regulator_enable(ctrl->lcd2_5v_vsp_reg);
+			if (ret)
+				pr_err("%s: lcd2_5v_vsp enable failed %d\n", __func__, ret);
+		}
+		msleep(20);
+		fujisan_gpio_set_out(ctrl->lcd_5v_vsn_en_gpio, "lcd_5v_vsn_en", 1);
+		if (ctrl->lcd2_5v_vsn_reg) {
+			ret = regulator_enable(ctrl->lcd2_5v_vsn_reg);
+			if (ret)
+				pr_err("%s: lcd2_5v_vsn enable failed %d\n", __func__, ret);
+		}
+		msleep(20);
+	} else {
+		if (ctrl->lcd2_5v_vsn_reg)
+			regulator_disable(ctrl->lcd2_5v_vsn_reg);
+		if (gpio_is_valid(ctrl->lcd_5v_vsn_en_gpio))
+			gpio_set_value(ctrl->lcd_5v_vsn_en_gpio, 0);
+		msleep(20);
+		if (ctrl->lcd2_5v_vsp_reg)
+			regulator_disable(ctrl->lcd2_5v_vsp_reg);
+		if (gpio_is_valid(ctrl->lcd_5v_vsp_en_gpio))
+			gpio_set_value(ctrl->lcd_5v_vsp_en_gpio, 0);
+		msleep(20);
+	}
+}
+
+char zte_ts_is_td4322(void)
+{
+	return is_td4322_panel ? 1 : 0;
+}
+EXPORT_SYMBOL(zte_ts_is_td4322);
+
+void zte_lcd_power_ctrl_func(int enable)
+{
+	struct mdss_dsi_ctrl_pdata *ctrl;
+
+	pr_info("%s: td4322=%d data=%p enable=%d\n", __func__,
+		is_td4322_panel, zte_panel_data, enable);
+
+	if (!is_td4322_panel || !zte_panel_data) {
+		msleep(200);
+		return;
+	}
+
+	ctrl = container_of(zte_panel_data, struct mdss_dsi_ctrl_pdata, panel_data);
+
+	/* Always ensure secondary rails/reset for 2nd TDDI touch bring-up. */
+	if (enable) {
+		is_2nd_td4322_fw_update = 1;
+		fujisan_secondary_5v_power(ctrl, 1);
+		if (gpio_is_valid(ctrl->rst2_gpio)) {
+			fujisan_gpio_set_out(ctrl->rst2_gpio, "disp_rst2_n", 0);
+			msleep(20);
+			gpio_set_value(ctrl->rst2_gpio, 1);
+			msleep(50);
+		}
+	} else {
+		if (gpio_is_valid(ctrl->rst2_gpio)) {
+			gpio_set_value(ctrl->rst2_gpio, 0);
+			gpio_free(ctrl->rst2_gpio);
+		}
+		fujisan_secondary_5v_power(ctrl, 0);
+		is_2nd_td4322_fw_update = 0;
+	}
+	msleep(200);
+}
+EXPORT_SYMBOL(zte_lcd_power_ctrl_func);
+#endif
+
 static bool mdss_panel_reset_skip;
 static struct mdss_panel_info *mdss_pinfo = NULL;
 
@@ -290,12 +386,31 @@ static int mdss_dsi_request_gpios(struct mdss_dsi_ctrl_pdata *ctrl_pdata)
 			goto disp_en_gpio_err;
 		}
 	}
+#ifdef CONFIG_BOARD_FUJISAN
+	if (ctrl_pdata->ndx == DSI_CTRL_LEFT) {
+		rc = gpio_request(ctrl_pdata->rst_gpio, "disp_rst_n");
+		if (rc) {
+			pr_err("%s: request reset gpio failed, rc=%d\n",
+				__func__, rc);
+			goto rst_gpio_err;
+		}
+	} else if (gpio_is_valid(ctrl_pdata->rst2_gpio)) {
+		rc = gpio_request(ctrl_pdata->rst2_gpio, "disp_rst2_n");
+		if (rc) {
+			pr_err("%s: request reset2 gpio failed, rc=%d\n",
+				__func__, rc);
+			/* continue; may already be requested by touch power path */
+			rc = 0;
+		}
+	}
+#else
 	rc = gpio_request(ctrl_pdata->rst_gpio, "disp_rst_n");
 	if (rc) {
 		pr_err("request reset gpio failed, rc=%d\n",
 			rc);
 		goto rst_gpio_err;
 	}
+#endif
 	if (gpio_is_valid(ctrl_pdata->avdd_en_gpio)) {
 		rc = gpio_request(ctrl_pdata->avdd_en_gpio,
 						"avdd_enable");
@@ -443,11 +558,26 @@ int mdss_dsi_panel_reset(struct mdss_panel_data *pdata, int enable)
 			   __func__, __LINE__);
 	}
 
+#ifdef CONFIG_BOARD_FUJISAN
+	if (ctrl_pdata->ndx == DSI_CTRL_RIGHT) {
+		if (!gpio_is_valid(ctrl_pdata->rst2_gpio) &&
+		    !gpio_is_valid(ctrl_pdata->rst_gpio)) {
+			pr_debug("%s:%d, reset2 line not configured\n",
+				   __func__, __LINE__);
+			return rc;
+		}
+	} else if (!gpio_is_valid(ctrl_pdata->rst_gpio)) {
+		pr_debug("%s:%d, reset line not configured\n",
+			   __func__, __LINE__);
+		return rc;
+	}
+#else
 	if (!gpio_is_valid(ctrl_pdata->rst_gpio)) {
 		pr_debug("%s:%d, reset line not configured\n",
 			   __func__, __LINE__);
 		return rc;
 	}
+#endif
 
 	pr_debug("%s: enable = %d\n", __func__, enable);
 
@@ -468,6 +598,35 @@ int mdss_dsi_panel_reset(struct mdss_panel_data *pdata, int enable)
 				}
 			}
 
+#ifdef CONFIG_BOARD_FUJISAN
+			{
+				int rst = ctrl_pdata->rst_gpio;
+
+				if (ctrl_pdata->ndx == DSI_CTRL_RIGHT &&
+				    gpio_is_valid(ctrl_pdata->rst2_gpio)) {
+					rst = ctrl_pdata->rst2_gpio;
+					fujisan_secondary_5v_power(ctrl_pdata, 1);
+				}
+				pr_info("%s: ndx=%d reset gpio=%d\n",
+					__func__, ctrl_pdata->ndx, rst);
+				if (pdata->panel_info.rst_seq_len) {
+					rc = gpio_direction_output(rst,
+						pdata->panel_info.rst_seq[0]);
+					if (rc) {
+						pr_err("%s: unable to set dir for rst gpio\n",
+							__func__);
+						goto exit;
+					}
+				}
+				for (i = 0; i < pdata->panel_info.rst_seq_len; ++i) {
+					gpio_set_value(rst,
+						pdata->panel_info.rst_seq[i]);
+					if (pdata->panel_info.rst_seq[++i])
+						usleep_range(pinfo->rst_seq[i] * 1000,
+							pinfo->rst_seq[i] * 1000);
+				}
+			}
+#else
 			if (pdata->panel_info.rst_seq_len) {
 				rc = gpio_direction_output(ctrl_pdata->rst_gpio,
 					pdata->panel_info.rst_seq[0]);
@@ -484,6 +643,7 @@ int mdss_dsi_panel_reset(struct mdss_panel_data *pdata, int enable)
 				if (pdata->panel_info.rst_seq[++i])
 					usleep_range(pinfo->rst_seq[i] * 1000, pinfo->rst_seq[i] * 1000);
 			}
+#endif
 
 			if (gpio_is_valid(ctrl_pdata->avdd_en_gpio)) {
 				if (ctrl_pdata->avdd_en_gpio_invert) {
@@ -539,8 +699,20 @@ int mdss_dsi_panel_reset(struct mdss_panel_data *pdata, int enable)
 			gpio_set_value((ctrl_pdata->disp_en_gpio), 0);
 			gpio_free(ctrl_pdata->disp_en_gpio);
 		}
+#ifdef CONFIG_BOARD_FUJISAN
+		if (ctrl_pdata->ndx == DSI_CTRL_RIGHT &&
+		    gpio_is_valid(ctrl_pdata->rst2_gpio)) {
+			gpio_set_value(ctrl_pdata->rst2_gpio, 0);
+			gpio_free(ctrl_pdata->rst2_gpio);
+			fujisan_secondary_5v_power(ctrl_pdata, 0);
+		} else {
+			gpio_set_value((ctrl_pdata->rst_gpio), 0);
+			gpio_free(ctrl_pdata->rst_gpio);
+		}
+#else
 		gpio_set_value((ctrl_pdata->rst_gpio), 0);
 		gpio_free(ctrl_pdata->rst_gpio);
+#endif
 		if (gpio_is_valid(ctrl_pdata->lcd_mode_sel_gpio)) {
 			gpio_set_value(ctrl_pdata->lcd_mode_sel_gpio, 0);
 			gpio_free(ctrl_pdata->lcd_mode_sel_gpio);
@@ -3059,7 +3231,18 @@ int mdss_dsi_panel_init(struct device_node *node,
 	} else {
 		pr_info("%s: Panel Name = %s\n", __func__, panel_name);
 		strlcpy(&pinfo->panel_name[0], panel_name, MDSS_MAX_PANEL_LEN);
+#ifdef CONFIG_BOARD_FUJISAN
+		if (strnstr(panel_name, "td4322", MDSS_MAX_PANEL_LEN))
+			is_td4322_panel = 1;
+#endif
 	}
+#ifdef CONFIG_BOARD_FUJISAN
+	if (ndx == DSI_CTRL_RIGHT) {
+		zte_panel_data = &ctrl_pdata->panel_data;
+		is_2nd_td4322_fw_update = 0;
+		pr_info("%s: captured secondary panel data\n", __func__);
+	}
+#endif
 	rc = mdss_panel_parse_dt(node, ctrl_pdata);
 	if (rc) {
 		pr_err("%s:%d panel dt parse failed\n", __func__, __LINE__);

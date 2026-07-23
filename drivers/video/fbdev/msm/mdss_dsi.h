@@ -451,6 +451,13 @@ struct mdss_dsi_ctrl_pdata {
 	int irq_cnt;
 	int disp_te_gpio;
 	int rst_gpio;
+#ifdef CONFIG_BOARD_FUJISAN
+	int rst2_gpio;
+	int lcd_5v_vsp_en_gpio;
+	int lcd_5v_vsn_en_gpio;
+	struct regulator *lcd2_5v_vsp_reg;
+	struct regulator *lcd2_5v_vsn_reg;
+#endif
 	int disp_en_gpio;
 	int bklt_en_gpio;
 	bool bklt_en_gpio_invert;
