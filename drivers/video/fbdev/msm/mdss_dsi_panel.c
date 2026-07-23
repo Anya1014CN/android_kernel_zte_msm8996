@@ -432,16 +432,30 @@ void mdss_dsi_panel_cmds_send(struct mdss_dsi_ctrl_pdata *ctrl,
 	mdss_dsi_cmdlist_put(ctrl, &cmdreq);
 }
 
-static char led_pwm1[2] = {0x51, 0x0};	/* DTYPE_DCS_WRITE1 */
-static struct dsi_cmd_desc backlight_cmd = {
-	{DTYPE_DCS_WRITE1, 1, 0, 0, 1, sizeof(led_pwm1)},
-	led_pwm1
+static char led_pwm1[2] = {0x51, 0x0};	/* Write Display Brightness */
+static char led_pwm2[2] = {0x53, 0x2c};	/* Write Control Display */
+static struct dsi_cmd_desc backlight_cmd[] = {
+	{{DTYPE_DCS_WRITE1, 0, 0, 0, 0, sizeof(led_pwm1)}, led_pwm1},
+	{{DTYPE_DCS_WRITE1, 0, 0, 0, 0, sizeof(led_pwm1)}, led_pwm1},
+	{{DTYPE_DCS_WRITE1, 0, 0, 0, 0, sizeof(led_pwm1)}, led_pwm1},
+	{{DTYPE_DCS_WRITE1, 1, 0, 0, 0, sizeof(led_pwm2)}, led_pwm2},
 };
+
+#ifdef CONFIG_BOARD_FUJISAN
+static int fujisan_bl_power_on_flag;
+extern u32 zte_bl_brightness_2;
+#endif
 
 static void mdss_dsi_panel_bklt_dcs(struct mdss_dsi_ctrl_pdata *ctrl, int level)
 {
 	struct dcs_cmd_req cmdreq;
 	struct mdss_panel_info *pinfo;
+	int bl_level = level;
+
+	if (!ctrl) {
+		pr_err("%s: invalid ctrl\n", __func__);
+		return;
+	}
 
 	pinfo = &(ctrl->panel_data.panel_info);
 	if (pinfo->dcs_cmd_by_left) {
@@ -449,23 +463,51 @@ static void mdss_dsi_panel_bklt_dcs(struct mdss_dsi_ctrl_pdata *ctrl, int level)
 			return;
 	}
 
-	pr_debug("%s: level=%d\n", __func__, level);
+	if (bl_level != 0 && bl_level < 3)
+		bl_level = 3;
 
-	led_pwm1[1] = (unsigned char)level;
+	pr_info("%s: ndx=%d level=%d\n", __func__, ctrl->ndx, bl_level);
+
+	led_pwm1[1] = (unsigned char)bl_level;
+
+#ifdef CONFIG_BOARD_FUJISAN
+	/*
+	 * OEM TD4322 sequence: write 0x51 thrice, then 0x53 control display.
+	 * 0x53 bit2 (0x04) enables BL; 0x2c/0x24 used around first frames.
+	 */
+	if (fujisan_bl_power_on_flag == 1) {
+		led_pwm2[1] = 0x24;
+		fujisan_bl_power_on_flag = 2;
+	} else if (fujisan_bl_power_on_flag == 2) {
+		led_pwm2[1] = 0x24;
+		fujisan_bl_power_on_flag = 0;
+	} else {
+		led_pwm2[1] = 0x2c;
+	}
+	if (bl_level == 0)
+		led_pwm2[1] = 0x0;
+
+	if (ctrl->ndx == DSI_CTRL_LEFT && zte_bl_brightness_2 == 1) {
+		/* Closed-book mode: force primary BL off. */
+		led_pwm1[1] = 0;
+	}
+#else
+	led_pwm2[1] = bl_level ? 0x2c : 0x0;
+#endif
 
 	memset(&cmdreq, 0, sizeof(cmdreq));
-	cmdreq.cmds = &backlight_cmd;
-	cmdreq.cmds_cnt = 1;
-	cmdreq.flags = CMD_REQ_COMMIT | CMD_CLK_CTRL | CMD_REQ_DCS;
+	cmdreq.cmds = backlight_cmd;
+	cmdreq.cmds_cnt = 4;
+	cmdreq.flags = CMD_REQ_COMMIT | CMD_CLK_CTRL | CMD_REQ_HS_MODE;
 	cmdreq.rlen = 0;
 	cmdreq.cb = NULL;
 
-	if (ctrl->bklt_dcs_op_mode == DSI_HS_MODE)
-		cmdreq.flags |= CMD_REQ_HS_MODE;
-	else
-		cmdreq.flags |= CMD_REQ_LP_MODE;
-
 	mdss_dsi_cmdlist_put(ctrl, &cmdreq);
+
+#ifdef CONFIG_BOARD_FUJISAN
+	if (ctrl->ndx == DSI_CTRL_LEFT && zte_bl_brightness_2 == 1)
+		led_pwm1[1] = (unsigned char)bl_level;
+#endif
 }
 
 static int mdss_dsi_request_gpios(struct mdss_dsi_ctrl_pdata *ctrl_pdata)
@@ -1258,6 +1300,11 @@ static int mdss_dsi_panel_on(struct mdss_panel_data *pdata)
 
 	if (on_cmds->cmd_cnt)
 		mdss_dsi_panel_cmds_send(ctrl, on_cmds, CMD_REQ_COMMIT);
+
+#ifdef CONFIG_BOARD_FUJISAN
+	/* Trigger OEM first-frame backlight control display values. */
+	fujisan_bl_power_on_flag = 1;
+#endif
 
 	if (pinfo->compression_mode == COMPRESSION_DSC)
 		mdss_dsi_panel_dsc_pps_send(ctrl, pinfo);

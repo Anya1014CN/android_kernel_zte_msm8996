@@ -14,7 +14,8 @@
 	dsi_dual_zte_truly_td4322_5p5_fhd_cmd2: qcom,mdss_dsi_zte_truly_td4322_5p5_fhd_dualmipi_cmd2 {
 		qcom,mdss-dsi-panel-name = "zteTruly_td4322_5P2Inch2";
 		qcom,mdss-dsi-panel-type = "dsi_cmd_mode";
-		qcom,cont-splash-enabled;
+		/* cont-splash disabled: secondary not initialized by bootloader */
+		//qcom,cont-splash-enabled;
 		qcom,mdss-dsi-panel-framerate = <60>;
 		qcom,mdss-dsi-virtual-channel-id = <0>;
 		qcom,mdss-dsi-stream = <0>;

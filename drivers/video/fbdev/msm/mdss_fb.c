@@ -306,6 +306,9 @@ static void mdss_fb_set_bl_brightness_2(struct led_classdev *led_cdev,
 				mfd->panel_info->brightness_max);
 		if (!bl_lvl && value)
 			bl_lvl = 1;
+		/* Secondary has no bootloader splash consumer; always allow BL. */
+		mfd->allow_bl_update = true;
+		mfd->panel_info->cont_splash_enabled = false;
 		mutex_lock(&mfd->bl_lock);
 		mdss_fb_set_backlight(mfd, bl_lvl);
 		mutex_unlock(&mfd->bl_lock);
@@ -1455,8 +1458,12 @@ static int mdss_fb_probe(struct platform_device *pdev)
 			__func__, mfd->index);
 		if (led_classdev_register(&pdev->dev, &backlight_led_2))
 			pr_err("led_classdev_register backlight_2 failed\n");
-		else
+		else {
 			lcd_backlight_2_registered = 1;
+			/* Secondary is not driven by bootloader splash. */
+			mfd->panel_info->cont_splash_enabled = false;
+			mfd->allow_bl_update = true;
+		}
 	}
 #else
 	if (!lcd_backlight_registered) {
@@ -1847,7 +1854,11 @@ void mdss_fb_set_backlight(struct msm_fb_data_type *mfd, u32 bkl_lvl)
 
 	if ((((mdss_fb_is_power_off(mfd) && mfd->dcm_state != DCM_ENTER)
 		|| !mfd->allow_bl_update) && !IS_CALIB_MODE_BL(mfd)) ||
-		mfd->panel_info->cont_splash_enabled) {
+		(mfd->panel_info->cont_splash_enabled
+#ifdef CONFIG_BOARD_FUJISAN
+		 && mfd->index == 0
+#endif
+		)) {
 		mfd->unset_bl_level = bkl_lvl;
 		return;
 	} else if (mdss_fb_is_power_on(mfd) && mfd->panel_info->panel_dead) {
