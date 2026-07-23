@@ -75,6 +75,7 @@ obj-$(CONFIG_TOUCHSCREEN_SYNAPTICS_DSX) += synaptics_dsx/
 obj-$(CONFIG_TOUCHSCREEN_SYNAPTICS_DSX_FORCE) += synaptics_dsx_force/
 obj-$(CONFIG_TOUCHSCREEN_SYNAPTICS_DSX_V27) += synaptics_dsx_v2_7_0/
 obj-$(CONFIG_TOUCHSCREEN_SYNAPTICS_DSX_V27_2ND) += synaptics_dsx_v2_7_0_2nd/
+obj-$(CONFIG_ZTE_TS_PINCTRL) += zte_touchscreen_pinctrl.o
 obj-$(CONFIG_TOUCHSCREEN_TI_AM335X_TSC)	+= ti_am335x_tsc.o
 obj-$(CONFIG_TOUCHSCREEN_TOUCHIT213)	+= touchit213.o
 obj-$(CONFIG_TOUCHSCREEN_TOUCHRIGHT)	+= touchright.o

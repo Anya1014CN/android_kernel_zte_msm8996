@@ -1242,4 +1242,11 @@ source "drivers/input/touchscreen/st/Kconfig"
 
 source "drivers/input/touchscreen/ft5x46/Kconfig"
 
+config ZTE_TS_PINCTRL
+	bool "ZTE touchscreen pinctrl"
+	depends on I2C && INPUT
+	help
+	  Shared pinctrl helpers for ZTE dual Synaptics touchscreens.
+
+
 endif

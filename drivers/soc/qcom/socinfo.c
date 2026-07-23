@@ -753,6 +753,16 @@ enum msm_cpu socinfo_get_msm_cpu(void)
 }
 EXPORT_SYMBOL_GPL(socinfo_get_msm_cpu);
 
+/*
+ * ZTE touch firmware update path expects this. Treat all boots as normal
+ * on the 4.4 fujisan port unless a full boot-mode tracker is restored.
+ */
+int socinfo_get_normal_flag(void)
+{
+	return 1;
+}
+EXPORT_SYMBOL(socinfo_get_normal_flag);
+
 static ssize_t
 msm_get_vendor(struct device *dev,
 		struct device_attribute *attr,
