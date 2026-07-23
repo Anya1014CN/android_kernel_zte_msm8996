@@ -65,6 +65,26 @@
 #define M1120_EVENT_DATA_CAPABILITY_MAX			(32767)
 #define M1120_TIMEOUT_WAKELOCK					(10)
 
+/* Exported for userspace / stock-compat ah1898 module:
+ * 1=A (0° closed, panel A out), 2=B (open / mid), 3=C (180° closed, panel B out)
+ */
+static int g_m1120_hall_status = M1120_RESULT_STATUS_A;
+module_param_named(hall_status, g_m1120_hall_status, int, 0444);
+MODULE_PARM_DESC(hall_status, "Fujisan hall posture: 1=A 2=B(open) 3=C");
+
+void m1120_export_hall_status_set(int status)
+{
+	g_m1120_hall_status = status;
+}
+EXPORT_SYMBOL_GPL(m1120_export_hall_status_set);
+
+int m1120_export_hall_status_get(void)
+{
+	return g_m1120_hall_status;
+}
+EXPORT_SYMBOL_GPL(m1120_export_hall_status_get);
+
+
 /*MagnaChip Hall Sensor power supply VDD 2.7V~3.6V, VIO 1.65~VDD */
 #define M1120_VDD_MIN_UV	   2700000
 #define M1120_VDD_MAX_UV	   3600000
@@ -113,6 +133,22 @@ static int	m1120_i2c_set_reg(struct i2c_client *client, u8 reg, u8 wdata);
 static int m1120_set_power(struct device *dev, bool on);
 /* scheduled work */
 static void m1120_work_func(struct work_struct *work);
+
+static void m1120_publish_status(m1120_data_t *p_data, int status)
+{
+	int lid_closed;
+
+	if (!p_data || !p_data->input_dev)
+		return;
+
+	g_m1120_hall_status = status;
+	/* STATUS_B (~open/mid): lid open. A/C: closed on A or B face. */
+	lid_closed = (status != M1120_RESULT_STATUS_B);
+	input_report_switch(p_data->input_dev, SW_LID, lid_closed);
+	input_report_rel(p_data->input_dev, M1120_EVENT_CODE, status);
+	input_sync(p_data->input_dev);
+}
+
 static void m1120_work_hallswitch_func(struct work_struct *work_hallswitch);
 /* interrupt handler */
 static irqreturn_t m1120_irq_handler(int irq, void *dev_id);
@@ -322,15 +358,7 @@ static void m1120_work_func(struct work_struct *work)
 			p_data->last_data = (int)raw;
 		}
 
-#if (M1120_EVENT_TYPE == EV_REL)
-		input_report_rel(p_data->input_dev, M1120_EVENT_CODE, p_data->last_data);
-#elif (M1120_EVENT_TYPE == EV_KEY)
-		input_report_key(p_data->input_dev, M1120_EVENT_CODE, p_data->last_data);
-#else
-#error("[ERR] M1120_EVENT_TYPE is not defined.")
-#endif
-
-		input_sync(p_data->input_dev);
+		m1120_publish_status(p_data, p_data->last_data);
 		p_data->pre_data = p_data->last_data;
 	}
 
@@ -373,8 +401,7 @@ static void mxm_dev_poll(struct work_struct *work)
 		m1120_measure_drdy(p_data, &rawdata);
 		p_data->last_data = m1120_get_result_status(p_data, rawdata);
 		if (p_data->last_data != p_data->pre_data) {
-			input_report_rel(p_data->input_dev, M1120_EVENT_CODE, p_data->last_data);
-			input_sync(p_data->input_dev);
+			m1120_publish_status(p_data, p_data->last_data);
 			p_data->pre_data = p_data->last_data;
 		}
 	}
@@ -410,8 +437,7 @@ static void m1120_work_hallswitch_func(struct work_struct *work_hallswitch)
 		p_data->last_data = M1120_RESULT_STATUS_B;
 	}
 	if (p_data->last_data != p_data->pre_data) {
-		input_report_rel(p_data->input_dev, M1120_EVENT_CODE, p_data->last_data);
-		input_sync(p_data->input_dev);
+		m1120_publish_status(p_data, p_data->last_data);
 		p_data->pre_data = p_data->last_data;
 		pr_info("m1120_work_hallswitch_func : status = %d\n", p_data->last_data);
 	}
@@ -450,8 +476,7 @@ static void m1120_set_init_state(struct device *dev)
 			if (p_data->hallswitchstate == 0) {
 				p_data->last_data = M1120_RESULT_STATUS_A;
 			}
-			input_report_rel(p_data->input_dev, M1120_EVENT_CODE, p_data->last_data);
-			input_sync(p_data->input_dev);
+			m1120_publish_status(p_data, p_data->last_data);
 			p_data->pre_data = p_data->last_data;
 		}
 	} else {
@@ -1240,6 +1265,8 @@ static int m1120_input_dev_init(m1120_data_t *p_data)
 
 	input_set_drvdata(dev, p_data);
 	input_set_capability(dev, M1120_EVENT_TYPE, M1120_EVENT_CODE);
+	/* Lid switch for Android DeviceStateProvider (open=B, closed=A/C). */
+	input_set_capability(dev, EV_SW, SW_LID);
 
 	err = input_register_device(dev);
 	if (err < 0) {
