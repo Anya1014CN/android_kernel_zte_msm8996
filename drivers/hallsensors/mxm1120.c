@@ -1992,15 +1992,16 @@ static int m1120_i2c_drv_remove(struct i2c_client *client)
 	return 0;
 }
 
-static int m1120_i2c_drv_suspend(struct i2c_client *client, pm_message_t mesg)
+static int m1120_i2c_drv_suspend(struct device *dev)
 {
+	struct i2c_client *client = to_i2c_client(dev);
 	m1120_data_t *p_data = i2c_get_clientdata(client);
 
 	dbg_func_in();
 
 	mutex_lock(&p_data->mtx.enable);
 
-	if (m1120_get_enable(&client->dev)) {
+	if (m1120_get_enable(dev)) {
 		if (!(p_data->reg.map.intsrs & M1120_DETECTION_MODE_INTERRUPT)) {
 			cancel_delayed_work_sync(&p_data->work);
 		}
@@ -2016,15 +2017,16 @@ static int m1120_i2c_drv_suspend(struct i2c_client *client, pm_message_t mesg)
 	return 0;
 }
 
-static int m1120_i2c_drv_resume(struct i2c_client *client)
+static int m1120_i2c_drv_resume(struct device *dev)
 {
+	struct i2c_client *client = to_i2c_client(dev);
 	m1120_data_t *p_data = i2c_get_clientdata(client);
 
 	dbg_func_in();
 
 	mutex_lock(&p_data->mtx.enable);
 
-	if (m1120_get_enable(&client->dev)) {
+	if (m1120_get_enable(dev)) {
 		if (!(p_data->reg.map.intsrs & M1120_DETECTION_MODE_INTERRUPT)) {
 			schedule_delayed_work(&p_data->work, 0);
 		}
@@ -2041,6 +2043,8 @@ static int m1120_i2c_drv_resume(struct i2c_client *client)
 	return 0;
 }
 
+static SIMPLE_DEV_PM_OPS(m1120_pm_ops, m1120_i2c_drv_suspend, m1120_i2c_drv_resume);
+
 static const struct i2c_device_id m1120_i2c_drv_id_table[] = {
 	{M1120_DRIVER_NAME, 0 },
 	{ }
@@ -2056,12 +2060,11 @@ static struct i2c_driver m1120_driver = {
 		.owner	= THIS_MODULE,
 		.name	= M1120_DRIVER_NAME,
 		.of_match_table = m1120_of_match,
+		.pm	= &m1120_pm_ops,
 	},
 	.probe		= m1120_i2c_drv_probe,
 	.remove		= m1120_i2c_drv_remove,
 	.id_table	= m1120_i2c_drv_id_table,
-	.suspend	= m1120_i2c_drv_suspend,
-	.resume		= m1120_i2c_drv_resume,
 };
 
 static int __init m1120_driver_init(void)
