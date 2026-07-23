@@ -49,44 +49,139 @@ static void fujisan_gpio_set_out(int gpio, const char *name, int val)
 	rc = gpio_request(gpio, name);
 	if (rc && rc != -EBUSY)
 		pr_err("%s: gpio %d request failed %d\n", __func__, gpio, rc);
-	gpio_direction_output(gpio, val);
+	rc = gpio_direction_output(gpio, val);
+	if (rc)
+		pr_err("%s: gpio %d direction/output %d failed %d\n",
+			__func__, gpio, val, rc);
 }
 
-static void fujisan_secondary_5v_power(struct mdss_dsi_ctrl_pdata *ctrl, int enable)
+/*
+ * Secondary (RIGHT) panel rails:
+ *  - lcd2_2p8  -> pm8994_l17 (panel IO)
+ *  - lcd2_5v_* -> TPS65132 pos/neg (EN gpios 31/32 owned by regulator driver)
+ * Do not bang EN gpios directly when TPS65132 is present.
+ */
+static void fujisan_lazy_get_reg(struct mdss_dsi_ctrl_pdata *ctrl,
+				 struct regulator **reg, const char *id)
+{
+	struct regulator *r;
+
+	if (!ctrl || !reg || *reg || !ctrl->panel_reg_dev)
+		return;
+	r = regulator_get(ctrl->panel_reg_dev, id);
+	if (IS_ERR(r)) {
+		pr_info("%s: %s still unavailable (%ld)\n",
+			__func__, id, PTR_ERR(r));
+		return;
+	}
+	*reg = r;
+	pr_info("%s: got %s\n", __func__, id);
+}
+
+static void fujisan_lazy_get_secondary_rails(struct mdss_dsi_ctrl_pdata *ctrl)
+{
+	if (!ctrl)
+		return;
+	fujisan_lazy_get_reg(ctrl, &ctrl->lcd2_2p8_reg, "lcd2_2p8");
+	fujisan_lazy_get_reg(ctrl, &ctrl->lcd2_5v_vsp_reg, "lcd2_5v_vsp");
+	fujisan_lazy_get_reg(ctrl, &ctrl->lcd2_5v_vsn_reg, "lcd2_5v_vsn");
+	fujisan_lazy_get_reg(ctrl, &ctrl->lcd_2p8_reg, "lcd_2p8");
+}
+
+static void fujisan_secondary_panel_rails(struct mdss_dsi_ctrl_pdata *ctrl, int enable)
 {
 	int ret;
 
 	if (!ctrl)
 		return;
 
+	fujisan_lazy_get_secondary_rails(ctrl);
+
 	if (enable) {
-		fujisan_gpio_set_out(ctrl->lcd_5v_vsp_en_gpio, "lcd_5v_vsp_en", 1);
+		if (ctrl->lcd2_2p8_reg) {
+			ret = regulator_enable(ctrl->lcd2_2p8_reg);
+			if (ret)
+				pr_err("%s: lcd2_2p8 enable failed %d\n", __func__, ret);
+			else
+				pr_info("%s: lcd2_2p8 enabled\n", __func__);
+			msleep(5);
+		} else {
+			pr_err("%s: lcd2_2p8_reg missing\n", __func__);
+		}
+
 		if (ctrl->lcd2_5v_vsp_reg) {
 			ret = regulator_enable(ctrl->lcd2_5v_vsp_reg);
 			if (ret)
 				pr_err("%s: lcd2_5v_vsp enable failed %d\n", __func__, ret);
+			else
+				pr_info("%s: lcd2_5v_vsp enabled\n", __func__);
+		} else {
+			/* Fallback if TPS driver/reg not ready */
+			pr_err("%s: lcd2_5v_vsp_reg missing, gpio fallback\n", __func__);
+			fujisan_gpio_set_out(ctrl->lcd_5v_vsp_en_gpio, "lcd_5v_vsp_en", 1);
 		}
 		msleep(20);
-		fujisan_gpio_set_out(ctrl->lcd_5v_vsn_en_gpio, "lcd_5v_vsn_en", 1);
+
 		if (ctrl->lcd2_5v_vsn_reg) {
 			ret = regulator_enable(ctrl->lcd2_5v_vsn_reg);
 			if (ret)
 				pr_err("%s: lcd2_5v_vsn enable failed %d\n", __func__, ret);
+			else
+				pr_info("%s: lcd2_5v_vsn enabled\n", __func__);
+		} else {
+			pr_err("%s: lcd2_5v_vsn_reg missing, gpio fallback\n", __func__);
+			fujisan_gpio_set_out(ctrl->lcd_5v_vsn_en_gpio, "lcd_5v_vsn_en", 1);
 		}
 		msleep(20);
 	} else {
 		if (ctrl->lcd2_5v_vsn_reg)
 			regulator_disable(ctrl->lcd2_5v_vsn_reg);
-		if (gpio_is_valid(ctrl->lcd_5v_vsn_en_gpio))
+		else if (gpio_is_valid(ctrl->lcd_5v_vsn_en_gpio))
 			gpio_set_value(ctrl->lcd_5v_vsn_en_gpio, 0);
 		msleep(20);
+
 		if (ctrl->lcd2_5v_vsp_reg)
 			regulator_disable(ctrl->lcd2_5v_vsp_reg);
-		if (gpio_is_valid(ctrl->lcd_5v_vsp_en_gpio))
+		else if (gpio_is_valid(ctrl->lcd_5v_vsp_en_gpio))
 			gpio_set_value(ctrl->lcd_5v_vsp_en_gpio, 0);
-		msleep(20);
+		msleep(5);
+
+		if (ctrl->lcd2_2p8_reg)
+			regulator_disable(ctrl->lcd2_2p8_reg);
+		msleep(2);
 	}
 }
+
+void mdss_dsi_panel_3v_power(struct mdss_panel_data *pdata, int enable)
+{
+	struct mdss_dsi_ctrl_pdata *ctrl_pdata;
+	int ret;
+
+	if (!pdata)
+		return;
+
+	ctrl_pdata = container_of(pdata, struct mdss_dsi_ctrl_pdata, panel_data);
+	pr_info("%s: ndx=%d enable=%d\n", __func__, ctrl_pdata->ndx, enable);
+
+	if (enable) {
+		if (ctrl_pdata->ndx == DSI_CTRL_LEFT) {
+			if (ctrl_pdata->lcd_2p8_reg) {
+				ret = regulator_enable(ctrl_pdata->lcd_2p8_reg);
+				if (ret)
+					pr_err("%s: lcd_2p8 enable failed %d\n", __func__, ret);
+			}
+			msleep(5);
+		} else if (ctrl_pdata->ndx == DSI_CTRL_RIGHT) {
+			fujisan_secondary_panel_rails(ctrl_pdata, 1);
+		}
+	} else {
+		if (ctrl_pdata->ndx == DSI_CTRL_RIGHT)
+			fujisan_secondary_panel_rails(ctrl_pdata, 0);
+		else if (ctrl_pdata->ndx == DSI_CTRL_LEFT && ctrl_pdata->lcd_2p8_reg)
+			regulator_disable(ctrl_pdata->lcd_2p8_reg);
+	}
+}
+EXPORT_SYMBOL(mdss_dsi_panel_3v_power);
 
 char zte_ts_is_td4322(void)
 {
@@ -108,10 +203,10 @@ void zte_lcd_power_ctrl_func(int enable)
 
 	ctrl = container_of(zte_panel_data, struct mdss_dsi_ctrl_pdata, panel_data);
 
-	/* Always ensure secondary rails/reset for 2nd TDDI touch bring-up. */
+	/* Touch bring-up path for secondary TDDI (uses RIGHT ctrl data). */
 	if (enable) {
 		is_2nd_td4322_fw_update = 1;
-		fujisan_secondary_5v_power(ctrl, 1);
+		fujisan_secondary_panel_rails(ctrl, 1);
 		if (gpio_is_valid(ctrl->rst2_gpio)) {
 			fujisan_gpio_set_out(ctrl->rst2_gpio, "disp_rst2_n", 0);
 			msleep(20);
@@ -121,9 +216,9 @@ void zte_lcd_power_ctrl_func(int enable)
 	} else {
 		if (gpio_is_valid(ctrl->rst2_gpio)) {
 			gpio_set_value(ctrl->rst2_gpio, 0);
-			gpio_free(ctrl->rst2_gpio);
+			/* keep gpio requested for later panel_reset */
 		}
-		fujisan_secondary_5v_power(ctrl, 0);
+		fujisan_secondary_panel_rails(ctrl, 0);
 		is_2nd_td4322_fw_update = 0;
 	}
 	msleep(200);
@@ -605,7 +700,7 @@ int mdss_dsi_panel_reset(struct mdss_panel_data *pdata, int enable)
 				if (ctrl_pdata->ndx == DSI_CTRL_RIGHT &&
 				    gpio_is_valid(ctrl_pdata->rst2_gpio)) {
 					rst = ctrl_pdata->rst2_gpio;
-					fujisan_secondary_5v_power(ctrl_pdata, 1);
+					fujisan_secondary_panel_rails(ctrl_pdata, 1);
 				}
 				pr_info("%s: ndx=%d reset gpio=%d\n",
 					__func__, ctrl_pdata->ndx, rst);
@@ -704,7 +799,6 @@ int mdss_dsi_panel_reset(struct mdss_panel_data *pdata, int enable)
 		    gpio_is_valid(ctrl_pdata->rst2_gpio)) {
 			gpio_set_value(ctrl_pdata->rst2_gpio, 0);
 			gpio_free(ctrl_pdata->rst2_gpio);
-			fujisan_secondary_5v_power(ctrl_pdata, 0);
 		} else {
 			gpio_set_value((ctrl_pdata->rst_gpio), 0);
 			gpio_free(ctrl_pdata->rst_gpio);

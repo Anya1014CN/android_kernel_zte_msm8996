@@ -387,6 +387,10 @@ static int mdss_dsi_panel_power_off(struct mdss_panel_data *pdata)
 	if (mdss_dsi_pinctrl_set_state(ctrl_pdata, false))
 		pr_debug("reset disable: pinctrl not enabled\n");
 
+#ifdef CONFIG_BOARD_FUJISAN
+	mdss_dsi_panel_3v_power(pdata, 0);
+#endif
+
 	ret = msm_dss_enable_vreg(
 		ctrl_pdata->panel_power_data.vreg_config,
 		ctrl_pdata->panel_power_data.num_vreg, 0);
@@ -419,6 +423,11 @@ static int mdss_dsi_panel_power_on(struct mdss_panel_data *pdata)
 			__func__, __mdss_dsi_pm_name(DSI_PANEL_PM));
 		return ret;
 	}
+
+#ifdef CONFIG_BOARD_FUJISAN
+	/* 2.8V + TPS65132 +/-5V for secondary; 2.8V for primary. */
+	mdss_dsi_panel_3v_power(pdata, 1);
+#endif
 
 	/*
 	 * If continuous splash screen feature is enabled, then we need to
@@ -4586,21 +4595,39 @@ static int mdss_dsi_parse_gpio_params(struct platform_device *ctrl_pdev,
 	if (!gpio_is_valid(ctrl_pdata->lcd_5v_vsn_en_gpio))
 		pr_info("%s: lcd-5v-vsn-enable-gpio not specified\n", __func__);
 
+	ctrl_pdata->panel_reg_dev = &ctrl_pdev->dev;
+
+	ctrl_pdata->lcd_2p8_reg = regulator_get(&ctrl_pdev->dev, "lcd_2p8");
+	if (IS_ERR(ctrl_pdata->lcd_2p8_reg)) {
+		pr_info("%s: lcd_2p8 regulator not available (%ld)\n",
+			__func__, PTR_ERR(ctrl_pdata->lcd_2p8_reg));
+		ctrl_pdata->lcd_2p8_reg = NULL;
+	}
+	ctrl_pdata->lcd2_2p8_reg = regulator_get(&ctrl_pdev->dev, "lcd2_2p8");
+	if (IS_ERR(ctrl_pdata->lcd2_2p8_reg)) {
+		pr_info("%s: lcd2_2p8 regulator not available (%ld)\n",
+			__func__, PTR_ERR(ctrl_pdata->lcd2_2p8_reg));
+		ctrl_pdata->lcd2_2p8_reg = NULL;
+	}
 	ctrl_pdata->lcd2_5v_vsp_reg = regulator_get(&ctrl_pdev->dev, "lcd2_5v_vsp");
 	if (IS_ERR(ctrl_pdata->lcd2_5v_vsp_reg)) {
-		pr_info("%s: lcd2_5v_vsp regulator not available\n", __func__);
+		pr_info("%s: lcd2_5v_vsp regulator not available (%ld)\n",
+			__func__, PTR_ERR(ctrl_pdata->lcd2_5v_vsp_reg));
 		ctrl_pdata->lcd2_5v_vsp_reg = NULL;
 	}
 	ctrl_pdata->lcd2_5v_vsn_reg = regulator_get(&ctrl_pdev->dev, "lcd2_5v_vsn");
 	if (IS_ERR(ctrl_pdata->lcd2_5v_vsn_reg)) {
-		pr_info("%s: lcd2_5v_vsn regulator not available\n", __func__);
+		pr_info("%s: lcd2_5v_vsn regulator not available (%ld)\n",
+			__func__, PTR_ERR(ctrl_pdata->lcd2_5v_vsn_reg));
 		ctrl_pdata->lcd2_5v_vsn_reg = NULL;
 	}
 
-	pr_info("%s: ndx=%d rst=%d rst2=%d vsp_en=%d vsn_en=%d\n",
+	pr_info("%s: ndx=%d rst=%d rst2=%d vsp_en=%d vsn_en=%d 2p8=%d 2p8b=%d 5vp=%d 5vn=%d\n",
 		__func__, ctrl_pdata->ndx, ctrl_pdata->rst_gpio,
 		ctrl_pdata->rst2_gpio, ctrl_pdata->lcd_5v_vsp_en_gpio,
-		ctrl_pdata->lcd_5v_vsn_en_gpio);
+		ctrl_pdata->lcd_5v_vsn_en_gpio,
+		!!ctrl_pdata->lcd_2p8_reg, !!ctrl_pdata->lcd2_2p8_reg,
+		!!ctrl_pdata->lcd2_5v_vsp_reg, !!ctrl_pdata->lcd2_5v_vsn_reg);
 #endif
 
 	ctrl_pdata->lcd_mode_sel_gpio = of_get_named_gpio(
