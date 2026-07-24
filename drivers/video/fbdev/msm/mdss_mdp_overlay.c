@@ -761,12 +761,26 @@ int mdss_mdp_overlay_pipe_setup(struct msm_fb_data_type *mfd,
 	}
 
 	ret = mdss_mdp_ov_xres_check(mfd, req);
-	if (ret)
+	if (ret) {
+		pr_err("fujisan-dual: fb%d ctl%d xres check failed=%d fmt=%u src=%ux%u rect=%d,%d,%d,%d dst=%d,%d,%d,%d flags=%#x type=%u\n",
+			mfd->index, mdp5_data->ctl->num, ret, req->src.format,
+			req->src.width, req->src.height, req->src_rect.x,
+			req->src_rect.y, req->src_rect.w, req->src_rect.h,
+			req->dst_rect.x, req->dst_rect.y, req->dst_rect.w,
+			req->dst_rect.h, req->flags, req->pipe_type);
 		return ret;
+	}
 
 	ret = mdss_mdp_overlay_req_check(mfd, req, fmt);
-	if (ret)
+	if (ret) {
+		pr_err("fujisan-dual: fb%d ctl%d request check failed=%d fmt=%u src=%ux%u rect=%d,%d,%d,%d dst=%d,%d,%d,%d flags=%#x type=%u\n",
+			mfd->index, mdp5_data->ctl->num, ret, req->src.format,
+			req->src.width, req->src.height, req->src_rect.x,
+			req->src_rect.y, req->src_rect.w, req->src_rect.h,
+			req->dst_rect.x, req->dst_rect.y, req->dst_rect.w,
+			req->dst_rect.h, req->flags, req->pipe_type);
 		return ret;
+	}
 
 	mixer = mdss_mdp_mixer_get(mdp5_data->ctl, mixer_mux);
 	if (!mixer) {
@@ -1141,6 +1155,14 @@ static int mdss_mdp_overlay_set(struct msm_fb_data_type *mfd,
 		req->z_order += MDSS_MDP_STAGE_0;
 
 		ret = mdss_mdp_overlay_pipe_setup(mfd, req, &pipe, NULL, false);
+		if (ret)
+			pr_err("fujisan-dual: overlay set failed fb%d ctl%d ret=%d id=%#x fmt=%u src=%ux%u rect=%d,%d,%d,%d dst=%d,%d,%d,%d flags=%#x type=%u\n",
+				mfd->index, mdp5_data->ctl ? mdp5_data->ctl->num : -1,
+				ret, req->id, req->src.format, req->src.width,
+				req->src.height, req->src_rect.x, req->src_rect.y,
+				req->src_rect.w, req->src_rect.h, req->dst_rect.x,
+				req->dst_rect.y, req->dst_rect.w, req->dst_rect.h,
+				req->flags, req->pipe_type);
 
 		req->z_order -= MDSS_MDP_STAGE_0;
 	}

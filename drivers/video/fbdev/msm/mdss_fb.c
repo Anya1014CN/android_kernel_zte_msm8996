@@ -5205,7 +5205,13 @@ int mdss_fb_do_ioctl(struct fb_info *info, unsigned int cmd,
 	if (!pdata || pdata->panel_info.dynamic_switch_pending)
 		return -EPERM;
 
-	if (check_not_supported_ioctl(cmd)) {
+	/*
+	 * Fujisan's second physical panel is driven by a small HWC wrapper which
+	 * uses the legacy MDSS overlay ABI to submit SurfaceFlinger's dma-buf.
+	 * The generic fbdev gate below otherwise rejects that ABI before the MDP
+	 * overlay implementation sees it.  Keep it disabled on every other fb.
+	 */
+	if (check_not_supported_ioctl(cmd) && mfd->index != 1) {
 		pr_err("Unsupported ioctl\n");
 		return -EINVAL;
 	}
