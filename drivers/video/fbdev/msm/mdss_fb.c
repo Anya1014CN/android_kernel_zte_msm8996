@@ -2060,44 +2060,6 @@ static int mdss_fb_blank_blank(struct msm_fb_data_type *mfd,
 	return ret;
 }
 
-#ifdef CONFIG_BOARD_FUJISAN
-/* Solid-fill secondary FB so B shows something without HWC multi-display. */
-static void fujisan_fb1_solid_fill(struct msm_fb_data_type *mfd, u32 argb)
-{
-	struct fb_info *fbi;
-	u32 *px;
-	size_t count, i;
-
-	if (!mfd || mfd->index != 1)
-		return;
-	fbi = mfd->fbi;
-	if (!fbi)
-		return;
-	if (!fbi->screen_base || !fbi->fix.smem_len) {
-		/* Ensure ion/fbmem is allocated for secondary. */
-		if (mdss_fb_alloc_fb_ion_memory(mfd, fbi->fix.smem_len ?
-					fbi->fix.smem_len :
-					PAGE_ALIGN(fbi->fix.line_length *
-						fbi->var.yres) * mfd->fb_page))
-			pr_err("%s: alloc fb1 memory failed\n", __func__);
-	}
-	if (!fbi->screen_base || !fbi->fix.smem_len) {
-		pr_err("%s: fb1 has no screen_base\n", __func__);
-		return;
-	}
-	px = (u32 *)fbi->screen_base;
-	count = fbi->fix.smem_len / sizeof(u32);
-	for (i = 0; i < count; i++)
-		px[i] = argb;
-	/* Push frame through MDP if available. */
-	if (mfd->mdp.dma_fnc)
-		mfd->mdp.dma_fnc(mfd);
-	else
-		pr_warn("%s: no dma_fnc for fb1\n", __func__);
-	pr_info("%s: solid fill 0x%08x pixels=%zu\n", __func__, argb, count);
-}
-#endif
-
 static int mdss_fb_blank_unblank(struct msm_fb_data_type *mfd)
 {
 	int ret = 0;
@@ -2143,14 +2105,12 @@ static int mdss_fb_blank_unblank(struct msm_fb_data_type *mfd)
 		mutex_unlock(&mfd->update.lock);
 
 #ifdef CONFIG_BOARD_FUJISAN
+		/* Secondary panel: no SF ownership. Do not force content or BL.
+		 * halld/HWC decide when B is on.
+		 */
 		if (mfd->index == 1) {
 			mfd->allow_bl_update = true;
 			mfd->panel_info->cont_splash_enabled = false;
-			/* Magenta solid so B content is obvious. */
-			fujisan_fb1_solid_fill(mfd, 0xFFFF00FF);
-			if (mfd->unset_bl_level == 0 ||
-			    mfd->unset_bl_level == U32_MAX)
-				mfd->unset_bl_level = 180;
 		}
 #endif
 
@@ -2183,12 +2143,7 @@ static int mdss_fb_blank_unblank(struct msm_fb_data_type *mfd)
 			else if ((!mfd->panel_info->mipi.post_init_delay) &&
 				(mfd->unset_bl_level != U32_MAX)) {
 #ifdef CONFIG_BOARD_FUJISAN
-				if (mfd->index == 1 &&
-				    (mfd->unset_bl_level == 0 ||
-				     mfd->unset_bl_level == U32_MAX))
-					mfd->unset_bl_level = 180;
-				pr_info("%s: mfd->index:%d mfd->unset_bl_level:%d\n",
-					__func__, mfd->index, mfd->unset_bl_level);
+				/* Do not force secondary backlight on. */
 #endif
 				mdss_fb_set_backlight(mfd, mfd->unset_bl_level);
 			}
@@ -3112,16 +3067,7 @@ static int mdss_fb_release_all(struct fb_info *info, bool release_all)
 
 	if (!mfd->ref_cnt || release_all) {
 #ifdef CONFIG_BOARD_FUJISAN
-		/*
-		 * Keep secondary panel powered for L1 dual-screen bring-up.
-		 * SurfaceFlinger does not own fb1; fill/mirror helpers would
-		 * otherwise power it down on process exit.
-		 */
-		if (mfd->index == 1 && !release_all) {
-			pr_info("%s: keep fb1 powered (ref=0)\n", __func__);
-			atomic_set(&mfd->ioctl_ref_cnt, 0);
-			return 0;
-		}
+		/* Allow fb1 to power down with last closer (halld/HWC/blank). */
 #endif
 		/* resources (if any) will be released during blank */
 		if (mfd->mdp.release_fnc)
