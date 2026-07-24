@@ -5226,6 +5226,17 @@ static int synaptics_rmi4_s3330_power_later(struct device *dev)
 static int synaptics_rmi4_fb_notifier_cb(struct notifier_block *self,
 		unsigned long event, void *data)
 {
+	/*
+	 * fb1 is a legacy scanout endpoint, not the power authority for the
+	 * inside-right panel.  In the dual-screen compositor it may remain
+	 * blank while B is visibly active; following that blank notification
+	 * powers down this controller and leaves event2 silent forever because
+	 * unblanking fb1 can deadlock MDSS.  Hall/backlight policy owns panel
+	 * visibility, so keep the secondary touch controller awake here.
+	 */
+	return NOTIFY_DONE;
+
+#if 0
 	int *transition;
 	struct fb_event *evdata = data;
 	struct fb_info *fb_infos = NULL;
@@ -5283,6 +5294,7 @@ static int synaptics_rmi4_fb_notifier_cb(struct notifier_block *self,
 		}
 	}
 	return 0;
+#endif
 }
 #endif
 
