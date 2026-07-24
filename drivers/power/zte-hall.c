@@ -386,9 +386,10 @@ static int  zte_hall_probe(struct platform_device *pdev)
 	} else
 		pr_info("could not get hall sysnumber byname\n");
 
-	if (socinfo_get_pv_flag()) {
-		pr_info("%s: pv-version,set hall_current_factory_mode=1\n"
-					, __func__);
+	/* Kernel exposes socinfo_get_normal_flag(); PV/factory builds return 0. */
+	if (!socinfo_get_normal_flag()) {
+		pr_info("%s: non-normal/pv build, set hall_current_factory_mode=1\n",
+			__func__);
 		hall_current_factory_mode = 1;
 	}
 
