@@ -327,7 +327,17 @@ module_param_named(
 	first_est_dump, fg_est_dump, int, 00600
 );
 
+/*
+ * Fujisan ships the P996A20 pack.  Its battery-ID line is not reliable
+ * during early boot on this board, so the generic 4.4 selector can leave
+ * the fuel gauge without a profile and report its 50% fallback value.
+ * The ZTE 3.18 kernel deliberately forced this verified pack profile.
+ */
+#ifdef CONFIG_BOARD_FUJISAN
+static char *fg_batt_type = "ZTE_BATTERY_DATA_ID_2";
+#else
 static char *fg_batt_type;
+#endif
 module_param_named(
 	battery_type, fg_batt_type, charp, 00600
 );
