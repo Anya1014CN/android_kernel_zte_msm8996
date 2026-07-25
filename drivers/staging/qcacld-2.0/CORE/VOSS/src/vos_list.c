@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015 2018 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2014-2015 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -194,31 +194,6 @@ VOS_STATUS vos_list_insert_back( vos_list_t *pList, vos_list_node_t *pNode )
    return VOS_STATUS_SUCCESS;
 }
 
-VOS_STATUS vos_list_insert_back_no_mutex(vos_list_t *pList,
-					 vos_list_node_t *pNode)
-{
-   if ( ( pList == NULL) || ( pNode == NULL) )
-   {
-      VOS_TRACE(VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_ERROR,
-                "%s: NULL pointer passed in", __func__);
-      return VOS_STATUS_E_FAULT;
-   }
-
-   if ( pList->cookie != VOS_LIST_COOKIE )
-   {
-      VOS_TRACE(VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_ERROR,
-                "%s: list not initialized", __func__);
-      VOS_ASSERT(0);
-      return VOS_STATUS_E_INVAL;
-   }
-
-   list_add_tail( pNode, &pList->anchor );
-
-   pList->count++;
-
-   return VOS_STATUS_SUCCESS;
-}
-
 
 VOS_STATUS vos_list_insert_back_size( vos_list_t *pList, vos_list_node_t *pNode, v_SIZE_t *pSize )
 {
@@ -385,28 +360,6 @@ VOS_STATUS vos_list_size( vos_list_t *pList, v_SIZE_t *pSize )
 
    *pSize = pList->count;
    mutex_unlock(&pList->lock);
-
-   return VOS_STATUS_SUCCESS;
-}
-
-VOS_STATUS vos_list_size_no_mutex( vos_list_t *pList, v_SIZE_t *pSize )
-{
-   if ( ( pList ==NULL) || ( pSize == NULL) )
-   {
-      VOS_TRACE(VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_ERROR,
-                "%s: NULL pointer passed in", __func__);
-      return VOS_STATUS_E_FAULT;
-   }
-
-   if ( pList->cookie != VOS_LIST_COOKIE )
-   {
-       VOS_TRACE(VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_ERROR,
-                 "%s: list not initialized", __func__);
-       VOS_ASSERT(0);
-       return VOS_STATUS_E_INVAL;
-   }
-
-   *pSize = pList->count;
 
    return VOS_STATUS_SUCCESS;
 }
@@ -630,10 +583,8 @@ VOS_STATUS vos_list_peek_next( vos_list_t *pList, vos_list_node_t *pNode,
          break;
       }
    }
-   if (found == 0) {
-      mutex_unlock(&pList->lock);
+   if (found == 0)
       return VOS_STATUS_E_INVAL;
-   }
 
    listptr = pNode->next;
    if (listptr == &pList->anchor)
@@ -727,10 +678,8 @@ VOS_STATUS vos_list_peek_prev( vos_list_t *pList, vos_list_node_t *pNode,
          break;
       }
    }
-   if (found == 0) {
-      mutex_unlock(&pList->lock);
+   if (found == 0)
       return VOS_STATUS_E_INVAL;
-   }
 
    listptr = pNode->prev;
 
@@ -820,10 +769,8 @@ VOS_STATUS vos_list_insert_before( vos_list_t *pList, vos_list_node_t *pNodeToIn
          break;
       }
    }
-   if (found == 0) {
-      mutex_unlock(&pList->lock);
+   if (found == 0)
       return VOS_STATUS_E_INVAL;
-   }
 
    list_add(pNodeToInsert, pNode);
    pList->count++;
@@ -906,10 +853,8 @@ VOS_STATUS vos_list_insert_after( vos_list_t *pList, vos_list_node_t *pNodeToIns
          break;
       }
    }
-   if (found == 0) {
-      mutex_unlock(&pList->lock);
+   if (found == 0)
       return VOS_STATUS_E_INVAL;
-   }
 
    list_add_tail(pNodeToInsert, pNode);
    pList->count++;
@@ -989,60 +934,12 @@ VOS_STATUS vos_list_remove_node( vos_list_t *pList, vos_list_node_t *pNodeToRemo
          break;
       }
    }
-   if (found == 0) {
-      mutex_unlock(&pList->lock);
-      return VOS_STATUS_E_INVAL;
-   }
-
-   list_del(pNodeToRemove);
-   pList->count--;
-   mutex_unlock(&pList->lock);
-
-   return VOS_STATUS_SUCCESS;
-}
-
-VOS_STATUS vos_list_remove_node_no_mutex(vos_list_t *pList,
-					 vos_list_node_t *pNodeToRemove)
-{
-   int found = 0;
-   vos_list_node_t *tmp;
-
-   if ( ( pList == NULL ) || ( pNodeToRemove == NULL) )
-   {
-      VOS_TRACE(VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_ERROR,
-                "%s: NULL pointer passed in", __func__);
-      return VOS_STATUS_E_FAULT;
-   }
-
-   if ( pList->cookie != VOS_LIST_COOKIE )
-   {
-      VOS_TRACE(VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_ERROR,
-                "%s: list not initialized", __func__);
-      VOS_ASSERT(0);
-      return VOS_STATUS_E_INVAL;
-   }
-
-   if ( list_empty(&pList->anchor) )
-   {
-      VOS_TRACE(VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_ERROR,
-                "%s: list empty", __func__);
-      return VOS_STATUS_E_EMPTY;
-   }
-
-   // verify that pNodeToRemove is indeed part of list pList
-   list_for_each(tmp, &pList->anchor)
-   {
-      if (tmp == pNodeToRemove)
-      {
-         found = 1;
-         break;
-      }
-   }
    if (found == 0)
       return VOS_STATUS_E_INVAL;
 
    list_del(pNodeToRemove);
    pList->count--;
+   mutex_unlock(&pList->lock);
 
    return VOS_STATUS_SUCCESS;
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-2018 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2017 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -60,24 +60,27 @@ static void usb_hif_cleanup_recv_urb(HIF_URB_CONTEXT *urb_context);
 static void usb_hif_free_urb_to_pipe(HIF_USB_PIPE *pipe,
 				     HIF_URB_CONTEXT *urb_context)
 {
-	adf_os_spin_lock_irqsave(&pipe->device->cs_lock);
+	unsigned long flags;
+
+	spin_lock_irqsave(&pipe->device->cs_lock, flags);
 	pipe->urb_cnt++;
 	DL_ListAdd(&pipe->urb_list_head, &urb_context->link);
-	adf_os_spin_unlock_irqrestore(&pipe->device->cs_lock);
+	spin_unlock_irqrestore(&pipe->device->cs_lock, flags);
 }
 
 HIF_URB_CONTEXT *usb_hif_alloc_urb_from_pipe(HIF_USB_PIPE *pipe)
 {
 	HIF_URB_CONTEXT *urb_context = NULL;
 	DL_LIST *item;
+	unsigned long flags;
 
-	adf_os_spin_lock_irqsave(&pipe->device->cs_lock);
+	spin_lock_irqsave(&pipe->device->cs_lock, flags);
 	item = DL_ListRemoveItemFromHead(&pipe->urb_list_head);
 	if (item != NULL) {
 		urb_context = A_CONTAINING_STRUCT(item, HIF_URB_CONTEXT, link);
 		pipe->urb_cnt--;
 	}
-	adf_os_spin_unlock_irqrestore(&pipe->device->cs_lock);
+	spin_unlock_irqrestore(&pipe->device->cs_lock, flags);
 
 	return urb_context;
 }
@@ -86,12 +89,13 @@ static HIF_URB_CONTEXT *usb_hif_dequeue_pending_transfer(HIF_USB_PIPE *pipe)
 {
 	HIF_URB_CONTEXT *urb_context = NULL;
 	DL_LIST *item;
+	unsigned long flags;
 
-	adf_os_spin_lock_irqsave(&pipe->device->cs_lock);
+	spin_lock_irqsave(&pipe->device->cs_lock, flags);
 	item = DL_ListRemoveItemFromHead(&pipe->urb_pending_list);
 	if (item != NULL)
 		urb_context = A_CONTAINING_STRUCT(item, HIF_URB_CONTEXT, link);
-	adf_os_spin_unlock_irqrestore(&pipe->device->cs_lock);
+	spin_unlock_irqrestore(&pipe->device->cs_lock, flags);
 
 	return urb_context;
 }
@@ -99,16 +103,20 @@ static HIF_URB_CONTEXT *usb_hif_dequeue_pending_transfer(HIF_USB_PIPE *pipe)
 void usb_hif_enqueue_pending_transfer(HIF_USB_PIPE *pipe,
 				      HIF_URB_CONTEXT *urb_context)
 {
-	adf_os_spin_lock_irqsave(&pipe->device->cs_lock);
+	unsigned long flags;
+
+	spin_lock_irqsave(&pipe->device->cs_lock, flags);
 	DL_ListInsertTail(&pipe->urb_pending_list, &urb_context->link);
-	adf_os_spin_unlock_irqrestore(&pipe->device->cs_lock);
+	spin_unlock_irqrestore(&pipe->device->cs_lock, flags);
 }
 
 void usb_hif_remove_pending_transfer(HIF_URB_CONTEXT *urb_context)
 {
-	adf_os_spin_lock_irqsave(&urb_context->pipe->device->cs_lock);
+	unsigned long flags;
+
+	spin_lock_irqsave(&urb_context->pipe->device->cs_lock, flags);
 	DL_ListRemove(&urb_context->link);
-	adf_os_spin_unlock_irqrestore(&urb_context->pipe->device->cs_lock);
+	spin_unlock_irqrestore(&urb_context->pipe->device->cs_lock, flags);
 }
 
 static A_STATUS usb_hif_alloc_pipe_resources(HIF_USB_PIPE *pipe, int urb_cnt)
@@ -431,6 +439,7 @@ static void usb_hif_usb_recv_prestart_complete(struct urb *urb)
 	A_STATUS status = A_OK;
 	adf_nbuf_t buf = NULL;
 	HIF_USB_PIPE *pipe = urb_context->pipe;
+	unsigned long flags;
 
 	AR_DEBUG_PRINTF(USB_HIF_DEBUG_BULK_IN, (
 				"+%s: recv pipe: %d, stat:%d,len:%d urb:0x%pK\n",
@@ -493,11 +502,11 @@ static void usb_hif_usb_recv_prestart_complete(struct urb *urb)
 	usb_hif_cleanup_recv_urb(urb_context);
 
 	/* Prestart URBs runs out and now start working receive pipe. */
-	adf_os_spin_lock_irqsave(&pipe->device->rx_prestart_lock);
+	spin_lock_irqsave(&pipe->device->rx_prestart_lock, flags);
 	if (--pipe->urb_prestart_cnt == 0) {
 		usb_hif_start_recv_pipes(pipe->device);
 	}
-	adf_os_spin_unlock_irqrestore(&pipe->device->rx_prestart_lock);
+	spin_unlock_irqrestore(&pipe->device->rx_prestart_lock, flags);
 
 	AR_DEBUG_PRINTF(USB_HIF_DEBUG_BULK_IN, ("-%s\n", __func__));
 }
@@ -752,10 +761,11 @@ static void usb_hif_post_recv_prestart_transfers(HIF_USB_PIPE *recv_pipe,
 	a_uint32_t len;
 	struct urb *urb;
 	int i, usb_status, buffer_length = HIF_USB_RX_BUFFER_SIZE;
+	unsigned long flags;
 
 	AR_DEBUG_PRINTF(ATH_DEBUG_TRC, ("+%s\n", __func__));
 
-	adf_os_spin_lock_irqsave(&recv_pipe->device->rx_prestart_lock);
+	spin_lock_irqsave(&recv_pipe->device->rx_prestart_lock, flags);
 	for (i = 0; i < prestart_urb; i++) {
 		urb_context = usb_hif_alloc_urb_from_pipe(recv_pipe);
 		if (NULL == urb_context)
@@ -802,7 +812,7 @@ static void usb_hif_post_recv_prestart_transfers(HIF_USB_PIPE *recv_pipe,
 			recv_pipe->urb_prestart_cnt++;
 
 	}
-	adf_os_spin_unlock_irqrestore(&recv_pipe->device->rx_prestart_lock);
+	spin_unlock_irqrestore(&recv_pipe->device->rx_prestart_lock, flags);
 
 	AR_DEBUG_PRINTF(ATH_DEBUG_TRC, ("-%s\n", __func__));
 }

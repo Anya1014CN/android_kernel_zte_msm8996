@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2014,2016-2017,2019 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2011-2014,2016-2017 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -125,13 +125,9 @@ void ol_tx_hl_del_ack_queue_flush_all(struct ol_txrx_vdev_t *vdev)
 #endif
 
 #ifdef QCA_SUPPORT_TXRX_HL_BUNDLE
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 15, 0)
-void
-ol_tx_hl_vdev_bundle_timer(struct timer_list *t);
-#else
 void
 ol_tx_hl_vdev_bundle_timer(void *vdev);
-#endif
+
 
 void
 ol_tx_hl_queue_flush_all(struct ol_txrx_vdev_t* vdev);
@@ -141,17 +137,10 @@ ol_tx_hl_queue(struct ol_txrx_vdev_t* vdev, adf_nbuf_t msdu_list);
 
 #else
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 15, 0)
-static inline void ol_tx_hl_vdev_bundle_timer(struct timer_list *t)
-{
-	return;
-}
-#else
 static inline void ol_tx_hl_vdev_bundle_timer(void *vdev)
 {
 	return;
 }
-#endif
 
 static inline void
 ol_tx_hl_queue_flush_all(struct ol_txrx_vdev_t* vdev)
@@ -173,11 +162,7 @@ ol_tx_hl_queue_flush_all(struct ol_txrx_vdev_t* vdev)
 #define OL_TX_HL ol_tx_hl
 #endif
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 15, 0)
-void ol_tx_vdev_ll_pause_queue_send(struct timer_list *t);
-#else
 void ol_tx_vdev_ll_pause_queue_send(void *context);
-#endif
 
 adf_nbuf_t
 ol_tx_non_std_ll(

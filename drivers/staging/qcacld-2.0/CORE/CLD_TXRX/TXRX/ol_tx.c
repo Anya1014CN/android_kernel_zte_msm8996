@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2014, 2016-2019 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2011-2014, 2016-2017 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -98,9 +98,8 @@ struct ol_tx_stats_ring_head {
 	uint8_t num_comp_stat;
 };
 
-#define TX_STATS_RING_SZ 128
+#define TX_STATS_RING_SZ 32
 #define INVALID_TX_MSDU_ID (-1)
-#define INVALID_TX_POWER   (0xffff)
 
 static struct ol_tx_stats_ring_head *tx_stats_ring_head;
 static struct ol_tx_stats_ring_item *tx_stats_ring;
@@ -207,14 +206,15 @@ static inline struct ol_tx_stats_ring_item *__get_ring_item(void)
 		item = TAILQ_FIRST(&h->free_list);
 		TAILQ_REMOVE(&h->free_list, item, list);
 		h->num_free--;
+	} else if (!__comp_list_empty()) {
+		/* Discard the oldest one. */
+		item = TAILQ_LAST(&h->comp_list, comp_list);
+		TAILQ_REMOVE(&h->comp_list, item, list);
+		h->num_comp_stat--;
 	} else if (!__host_list_empty()) {
 		item = TAILQ_LAST(&h->host_list, host_list);
 		TAILQ_REMOVE(&h->host_list, item, list);
 		h->num_host_stat--;
-	} else if (!__comp_list_empty()) {
-		item = TAILQ_LAST(&h->comp_list, comp_list);
-		TAILQ_REMOVE(&h->comp_list, item, list);
-		h->num_comp_stat--;
 	}
 
 	return item;
@@ -346,13 +346,8 @@ void ol_tx_stats_ring_enque_comp(uint32_t msdu_id, uint32_t tx_power)
 	if (!item)
 		goto exit;
 
-	if (adf_os_unlikely(INVALID_TX_POWER == tx_power)) {
-		item->msdu_id = INVALID_TX_MSDU_ID;
-		__free_ring_item(item);
-	} else {
-		item->stats.tx_power = (uint8_t)tx_power;
-		__put_ring_item_comp(item);
-	}
+	item->stats.tx_power = (uint8_t)tx_power;
+	__put_ring_item_comp(item);
 
 exit:
 	adf_os_spin_unlock(&h->mutex);
@@ -381,10 +376,10 @@ int ol_tx_stats_ring_deque(struct ol_tx_per_pkt_stats *stats)
 	if (!item)
 		goto exit;
 
+	__free_ring_item(item);
+
 	vos_mem_copy(stats, &item->stats, sizeof(*stats));
 	item->msdu_id = INVALID_TX_MSDU_ID;
-
-	__free_ring_item(item);
 	ret = 1;
 
 exit:
@@ -441,31 +436,15 @@ ol_tx_ll(ol_txrx_vdev_handle vdev, adf_nbuf_t msdu_list)
     while (msdu) {
         adf_nbuf_t next;
         struct ol_tx_desc_t *tx_desc;
-        struct ol_txrx_pdev_t *pdev = vdev->pdev;
-        a_status_t ret;
 
         msdu_info.htt.info.ext_tid = adf_nbuf_get_tid(msdu);
         msdu_info.peer = NULL;
 
         if (!adf_nbuf_is_ipa_nbuf(msdu)) {
-            ret = adf_nbuf_map_single(adf_ctx, msdu,
-                                      ADF_OS_DMA_TO_DEVICE);
-            if (unlikely(ret != A_STATUS_OK)) {
-                TXRX_PRINT(TXRX_PRINT_LEVEL_ERR,
-                           "%s dma mapping error\n", __func__);
-                adf_nbuf_tx_free(msdu, ADF_NBUF_PKT_ERROR);
-                return NULL;
-            }
+            adf_nbuf_map_single(adf_ctx, msdu,
+                             ADF_OS_DMA_TO_DEVICE);
         }
-
-        msdu_info.htt.info.frame_type = pdev->htt_pkt_type;
-        tx_desc = ol_tx_desc_ll(pdev, vdev, msdu, &msdu_info);
-        if (adf_os_unlikely(! tx_desc)) {
-            TXRX_STATS_MSDU_LIST_INCR(
-                pdev, tx.dropped.host_reject, msdu);
-            adf_nbuf_unmap_single(pdev->osdev, msdu, ADF_OS_DMA_TO_DEVICE);
-            return msdu;
-        }
+        ol_tx_prepare_ll(tx_desc, vdev, msdu, &msdu_info);
 
         /*
          * If debug display is enabled, show the meta-data being
@@ -782,18 +761,10 @@ ol_tx_pdev_ll_pause_queue_send_all(struct ol_txrx_pdev_t *pdev)
 }
 #endif
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 15, 0)
-void ol_tx_vdev_ll_pause_queue_send(struct timer_list *t)
-#else
 void ol_tx_vdev_ll_pause_queue_send(void *context)
-#endif
 {
 #ifdef QCA_SUPPORT_TXRX_VDEV_LL_TXQ
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 15, 0)
-    struct ol_txrx_vdev_t *vdev = from_timer(vdev, t, bundle_queue.timer);
-#else
     struct ol_txrx_vdev_t *vdev = (struct ol_txrx_vdev_t *) context;
-#endif
 
     if (vdev->pdev->tx_throttle.current_throttle_level != THROTTLE_LEVEL_0 &&
         vdev->pdev->tx_throttle.current_throttle_phase == THROTTLE_PHASE_OFF) {
@@ -2130,18 +2101,6 @@ ol_tx_hl_pdev_queue_send_all(struct ol_txrx_pdev_t* pdev)
  *
  * Return: none
  */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 15, 0)
-void
-ol_tx_hl_vdev_bundle_timer(struct timer_list *t)
-{
-	adf_nbuf_t msdu_list;
-	struct ol_txrx_vdev_t *vdev = from_timer(vdev, t, bundle_queue.timer);
-
-	msdu_list = ol_tx_hl_vdev_queue_send_all(vdev, true);
-	if (msdu_list)
-		adf_nbuf_tx_free(msdu_list, 1/*error*/);
-}
-#else
 void
 ol_tx_hl_vdev_bundle_timer(void *vdev)
 {
@@ -2151,7 +2110,6 @@ ol_tx_hl_vdev_bundle_timer(void *vdev)
 	if (msdu_list)
 		adf_nbuf_tx_free(msdu_list, 1/*error*/);
 }
-#endif
 
 /**
  * ol_tx_hl_queue() - queueing logic to bundle in HL
@@ -2346,9 +2304,7 @@ ol_txrx_mgmt_send(
     struct ol_txrx_pdev_t *pdev = vdev->pdev;
     struct ol_tx_desc_t *tx_desc;
     struct ol_txrx_msdu_info_t tx_msdu_info;
-    a_status_t ret;
 
-    vos_mem_zero(&tx_msdu_info, sizeof(tx_msdu_info));
     tx_msdu_info.htt.action.use_6mbps = use_6mbps;
     tx_msdu_info.htt.info.ext_tid = HTT_TX_EXT_TID_MGMT;
     tx_msdu_info.htt.info.vdev_id = vdev->vdev_id;
@@ -2395,13 +2351,7 @@ ol_txrx_mgmt_send(
 
     tx_msdu_info.peer = NULL;
 
-    ret = adf_nbuf_map_single(pdev->osdev, tx_mgmt_frm, ADF_OS_DMA_TO_DEVICE);
-    if (unlikely(ret != A_STATUS_OK)) {
-        TXRX_PRINT(TXRX_PRINT_LEVEL_ERR,
-                   "%s dma mapping error\n", __func__);
-        return ret;
-    }
-
+    adf_nbuf_map_single(pdev->osdev, tx_mgmt_frm, ADF_OS_DMA_TO_DEVICE);
     if (pdev->cfg.is_high_latency) {
         tx_msdu_info.htt.action.tx_comp_req = 1;
         tx_desc = ol_tx_desc_hl(pdev, vdev, tx_mgmt_frm, &tx_msdu_info);

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2014, 2016-2019 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2014, 2016-2017 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -120,7 +120,7 @@ moduleTraceInfo gVosTraceInfo[ VOS_MODULE_ID_MAX ] =
 /*-------------------------------------------------------------------------
   Static and Global variables
   ------------------------------------------------------------------------*/
-static adf_os_spinlock_t ltraceLock;
+static spinlock_t ltraceLock;
 
 static tvosTraceRecord gvosTraceTbl[MAX_VOS_TRACE_RECORDS];
 // Global vosTraceData
@@ -293,7 +293,7 @@ void vos_trace_msg( VOS_MODULE_ID module, VOS_TRACE_LEVEL level, char *strFormat
       va_start(val, strFormat);
 
       // print the prefix string into the string buffer...
-      n = snprintf(strBuffer, VOS_TRACE_BUFFER_SIZE, "wlan" IFNAME_SUFFIX ": [%d:%2s:%3s] ",
+      n = snprintf(strBuffer, VOS_TRACE_BUFFER_SIZE, "wlan: [%d:%2s:%3s] ",
                    in_interrupt() ? 0 : current->pid,
                    (char *) TRACE_LEVEL_STR[ level ],
                    (char *) gVosTraceInfo[ module ].moduleNameStr );
@@ -498,6 +498,7 @@ void vos_register_debugcb_init(void)
 void vos_trace(v_U8_t module, v_U8_t code, v_U16_t session, v_U32_t data)
 {
     tpvosTraceRecord rec = NULL;
+    unsigned long flags;
     char time[20];
 
     if (!gvosTraceData.enable)
@@ -513,7 +514,7 @@ void vos_trace(v_U8_t module, v_U8_t code, v_U16_t session, v_U32_t data)
     vos_get_time_of_the_day_in_hr_min_sec_usec(time, sizeof(time));
 
     /* Aquire the lock so that only one thread at a time can fill the ring buffer */
-    adf_os_spin_lock_irqsave(&ltraceLock);
+    spin_lock_irqsave(&ltraceLock, flags);
 
     gvosTraceData.num++;
 
@@ -557,7 +558,7 @@ void vos_trace(v_U8_t module, v_U8_t code, v_U16_t session, v_U32_t data)
     rec->module = module;
     rec->pid = (in_interrupt() ? 0 : current->pid);
     gvosTraceData.numSinceLastDump ++;
-    adf_os_spin_unlock_irqrestore(&ltraceLock);
+    spin_unlock_irqrestore(&ltraceLock, flags);
 }
 
 
@@ -569,7 +570,7 @@ void vos_trace(v_U8_t module, v_U8_t code, v_U16_t session, v_U32_t data)
   ----------------------------------------------------------------------------*/
 VOS_STATUS vos_trace_spin_lock_init()
 {
-    adf_os_spinlock_init(&ltraceLock);
+    spin_lock_init(&ltraceLock);
 
     return VOS_STATUS_SUCCESS;
 }
@@ -627,7 +628,7 @@ void vosTraceDumpAll(void *pMac, v_U8_t code, v_U8_t session,
                gvosTraceData.num, gvosTraceData.head, gvosTraceData.tail);
 
     /* Aquire the lock so that only one thread at a time can read the ring buffer */
-    adf_os_spin_lock(&ltraceLock);
+    spin_lock(&ltraceLock);
 
     if (gvosTraceData.head != INVALID_VOS_TRACE_ADDR)
     {
@@ -655,7 +656,7 @@ void vosTraceDumpAll(void *pMac, v_U8_t code, v_U8_t session,
            we might re-visit and use this member to track how many latest
            messages got added while we were dumping from ring buffer */
         gvosTraceData.numSinceLastDump = 0;
-        adf_os_spin_unlock(&ltraceLock);
+        spin_unlock(&ltraceLock);
         for (;;)
         {
             if ((code == 0 || (code == pRecord.code)) &&
@@ -680,7 +681,7 @@ void vosTraceDumpAll(void *pMac, v_U8_t code, v_U8_t session,
             }
             i += 1;
 
-            adf_os_spin_lock(&ltraceLock);
+            spin_lock(&ltraceLock);
             if (MAX_VOS_TRACE_RECORDS == i)
             {
                 i = 0;
@@ -690,12 +691,12 @@ void vosTraceDumpAll(void *pMac, v_U8_t code, v_U8_t session,
             {
                 pRecord = gvosTraceTbl[i];
             }
-            adf_os_spin_unlock(&ltraceLock);
+            spin_unlock(&ltraceLock);
         }
     }
     else
     {
-        adf_os_spin_unlock(&ltraceLock);
+        spin_unlock(&ltraceLock);
     }
 }
 
