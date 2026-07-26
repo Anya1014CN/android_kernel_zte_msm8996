@@ -21,6 +21,8 @@
 #include <linux/leds.h>
 #include <linux/qpnp/pwm.h>
 #include <linux/err.h>
+#include <linux/proc_fs.h>
+#include <linux/seq_file.h>
 #include <linux/string.h>
 
 #include "mdss_dsi.h"
@@ -39,6 +41,134 @@ DEFINE_LED_TRIGGER(bl_led_trigger);
 static struct mdss_panel_data *zte_panel_data;
 static char is_td4322_panel;
 static char is_2nd_td4322_fw_update;
+
+/* ZTE's Oreo panel driver exposed these controls for LiveDisplay.  The
+ * msm8996 rebase retained the panel command transport but lost the small
+ * userspace ABI, so restore it here rather than emulating color temperature
+ * in SurfaceFlinger.  Values are the original 0..512 setting scale. */
+static DEFINE_MUTEX(fujisan_hue_lock);
+static int fujisan_hue_setting[DSI_CTRL_MAX] = { 255, 255 };
+static bool fujisan_hue_proc_created;
+
+static char fujisan_hue_td_cmd[] = { 0x84, 0x00 };
+static struct dsi_cmd_desc fujisan_hue_td_desc[] = {
+	{{DTYPE_DCS_WRITE1, 1, 0, 0, 0, sizeof(fujisan_hue_td_cmd)}, fujisan_hue_td_cmd},
+};
+static char fujisan_hue_ff[] = { 0xff, 0x20 };
+static char fujisan_hue_fb[] = { 0xfb, 0x01 };
+static char fujisan_hue_97[] = { 0x97, 0xd7 };
+static char fujisan_hue_98[] = { 0x98, 0xd7 };
+static char fujisan_hue_ff10[] = { 0xff, 0x10 };
+static struct dsi_cmd_desc fujisan_hue_jdi_desc[] = {
+	{{DTYPE_DCS_WRITE1, 1, 0, 0, 0, sizeof(fujisan_hue_ff)}, fujisan_hue_ff},
+	{{DTYPE_DCS_WRITE1, 1, 0, 0, 0, sizeof(fujisan_hue_fb)}, fujisan_hue_fb},
+	{{DTYPE_DCS_WRITE1, 1, 0, 0, 0, sizeof(fujisan_hue_97)}, fujisan_hue_97},
+	{{DTYPE_DCS_WRITE1, 1, 0, 0, 0, sizeof(fujisan_hue_98)}, fujisan_hue_98},
+	{{DTYPE_DCS_WRITE1, 1, 0, 0, 0, sizeof(fujisan_hue_ff10)}, fujisan_hue_ff10},
+};
+
+static u8 fujisan_hue_level(int setting)
+{
+	int index, level;
+
+	setting = clamp(setting, 0, 512);
+	index = (setting <= 255) ? (setting * 128) / 255 :
+		128 + ((setting - 255) * 127) / 257;
+	if (is_td4322_panel) {
+		if (index == 128)
+			return 0;
+		return index < 128 ? 128 - index : 255 - (index - 129);
+	}
+	level = index < 128 ? 0x74 + index * (185 - 0x74) / 128 :
+		185 + (index - 127) * (0xd7 - 185) / 128;
+	return clamp(level, 0x74, 0xd7);
+}
+
+static int fujisan_apply_hue(struct mdss_dsi_ctrl_pdata *ctrl, int setting)
+{
+	struct dcs_cmd_req req = {};
+	u8 level;
+
+	if (!ctrl || !mdss_panel_is_power_on_interactive(
+			ctrl->panel_data.panel_info.panel_power_state))
+		return -EAGAIN;
+	level = fujisan_hue_level(setting);
+	if (is_td4322_panel) {
+		fujisan_hue_td_cmd[1] = level;
+		req.cmds = fujisan_hue_td_desc;
+		req.cmds_cnt = ARRAY_SIZE(fujisan_hue_td_desc);
+	} else {
+		fujisan_hue_97[1] = level;
+		fujisan_hue_98[1] = level;
+		req.cmds = fujisan_hue_jdi_desc;
+		req.cmds_cnt = ARRAY_SIZE(fujisan_hue_jdi_desc);
+	}
+	req.flags = CMD_REQ_COMMIT | CMD_CLK_CTRL | CMD_REQ_HS_MODE;
+	return mdss_dsi_cmdlist_put(ctrl, &req);
+}
+
+/* The panel forgets its vendor hue register when it is powered down.  Keep
+ * the proc value as the source of truth and replay it after every panel-on,
+ * including the secondary panel being brought back by the hinge service. */
+static void fujisan_restore_hue(struct mdss_dsi_ctrl_pdata *ctrl)
+{
+	int rc;
+
+	if (!ctrl || ctrl->ndx < 0 || ctrl->ndx >= DSI_CTRL_MAX)
+		return;
+
+	mutex_lock(&fujisan_hue_lock);
+	rc = fujisan_apply_hue(ctrl, fujisan_hue_setting[ctrl->ndx]);
+	if (rc)
+		pr_debug("fujisan: hue restore deferred for panel %d: %d\n",
+			 ctrl->ndx, rc);
+	mutex_unlock(&fujisan_hue_lock);
+}
+
+static ssize_t fujisan_hue_read(struct file *file, char __user *buf,
+		size_t count, loff_t *ppos)
+{
+	int ndx = (int)(unsigned long)PDE_DATA(file_inode(file));
+	char value[8];
+	int len = scnprintf(value, sizeof(value), "%d\n", fujisan_hue_setting[ndx]);
+	return simple_read_from_buffer(buf, count, ppos, value, len);
+}
+
+static ssize_t fujisan_hue_write(struct file *file, const char __user *buf,
+		size_t count, loff_t *ppos)
+{
+	int setting, ndx = (int)(unsigned long)PDE_DATA(file_inode(file));
+	struct mdss_dsi_ctrl_pdata *ctrl;
+	if (kstrtoint_from_user(buf, count, 0, &setting))
+		return -EINVAL;
+	mutex_lock(&fujisan_hue_lock);
+	fujisan_hue_setting[ndx] = clamp(setting, 0, 512);
+	ctrl = mdss_dsi_get_ctrl_by_index(ndx);
+	if (ctrl)
+		fujisan_apply_hue(ctrl, fujisan_hue_setting[ndx]);
+	mutex_unlock(&fujisan_hue_lock);
+	return count;
+}
+
+static const struct file_operations fujisan_hue_fops = {
+	.owner = THIS_MODULE, .read = fujisan_hue_read, .write = fujisan_hue_write,
+	.llseek = default_llseek,
+};
+
+static void fujisan_hue_proc_init(void)
+{
+	if (fujisan_hue_proc_created)
+		return;
+	/* The LiveDisplay HAL runs as the Android system user.  Match the OEM
+	 * ABI's world-writable proc mode; SELinux supplies the real policy gate. */
+	if (!proc_create_data("panel_hue_0_set", 0666, NULL, &fujisan_hue_fops,
+				(void *)(unsigned long)DSI_CTRL_LEFT) ||
+	    !proc_create_data("panel_hue_1_set", 0666, NULL, &fujisan_hue_fops,
+				(void *)(unsigned long)DSI_CTRL_RIGHT))
+		pr_err("fujisan: failed to create panel hue proc nodes\n");
+	else
+		fujisan_hue_proc_created = true;
+}
 
 static void fujisan_gpio_set_out(int gpio, const char *name, int val)
 {
@@ -1314,6 +1444,10 @@ static int mdss_dsi_panel_on(struct mdss_panel_data *pdata)
 
 	/* Ensure low persistence mode is set as before */
 	mdss_dsi_panel_apply_display_setting(pdata, pinfo->persist_mode);
+
+#ifdef CONFIG_BOARD_FUJISAN
+	fujisan_restore_hue(ctrl);
+#endif
 
 	if (pdata->event_handler)
 		pdata->event_handler(pdata, MDSS_EVENT_UPDATE_LIVEDISPLAY,
@@ -3389,6 +3523,9 @@ int mdss_dsi_panel_init(struct device_node *node,
 		pr_err("%s:%d panel dt parse failed\n", __func__, __LINE__);
 		return rc;
 	}
+	#ifdef CONFIG_BOARD_FUJISAN
+	fujisan_hue_proc_init();
+	#endif
 
 	pinfo->dynamic_switch_pending = false;
 	pinfo->is_lpm_mode = false;
