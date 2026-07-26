@@ -58,33 +58,10 @@
 };
 
 &pmi8994_charger {
-	/* Restore the Fujisan PMIC charging limits from ZTE's Oreo kernel. */
-	qcom,iterm-ma = <150>;
-	qcom,fastchg-current-ma = <3000>;
-	qcom,float-voltage-mv = <4400>;
-	qcom,fastchg-current-comp = <900>;
-	qcom,float-voltage-comp = <10>;
-	qcom,resume-delta-mv = <100>;
 	qcom,thermal-mitigation = <2500 1500 1000 600 300 0>;
-	qcom,parallel-usb-min-current-ma = <1000>;
-	qcom,parallel-allowed-lowering-ma = <1200>;
-	qcom,charge-unknown-battery;
-	qcom,bmd-pin-src = "bpd_thm";
-	qcom,charging-timeout-mins = <768>;
-	qcom,precharging-timeout-mins = <24>;
 };
 
 &pmi8994_fg {
-	/* Fujisan's calibrated fuel-gauge settings, kept with its profile. */
-	qcom,resume-soc = <99>;
-	qcom,fg-iterm-ma = <150>;
-	qcom,thermal-coefficients = [EC 85 75 4A FC 35];
-	qcom,fg-chg-iterm-ma = <150>;
-	qcom,fg-cc-cv-threshold-mv = <4390>;
-	qcom,fg-cutoff-voltage-mv = <3400>;
-	qcom,hold-soc-while-full;
-	qcom,fg-delta-soc = <2>;
-	qcom,vbat-estimate-diff-mv = <200>;
 	qcom,cl-max-increment-deciperc = <20>;
 	qcom,cl-max-decrement-deciperc = <90>;
 	qcom,cl-max-temp-decidegc = <45>;

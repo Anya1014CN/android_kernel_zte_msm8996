@@ -3953,7 +3953,14 @@ static bool is_usb_present(struct fg_chip *chip)
 	if (!chip->usb_psy)
 		chip->usb_psy = power_supply_get_by_name("usb");
 
-	if (chip->usb_psy)
+	/*
+	 * On Fujisan, the legacy SMB1351 power supply can be visible by name
+	 * before its property callback has been installed.  The generic power
+	 * supply core calls that callback without a NULL check, so defer the
+	 * presence query until the supplier is fully usable.
+	 */
+	if (chip->usb_psy && chip->usb_psy->desc &&
+			chip->usb_psy->desc->get_property)
 		power_supply_get_property(chip->usb_psy,
 				POWER_SUPPLY_PROP_PRESENT, &prop);
 	return prop.intval != 0;
@@ -3966,7 +3973,8 @@ static bool is_dc_present(struct fg_chip *chip)
 	if (!chip->dc_psy)
 		chip->dc_psy = power_supply_get_by_name("dc");
 
-	if (chip->dc_psy)
+	if (chip->dc_psy && chip->dc_psy->desc &&
+			chip->dc_psy->desc->get_property)
 		power_supply_get_property(chip->dc_psy,
 				POWER_SUPPLY_PROP_PRESENT, &prop);
 	return prop.intval != 0;
@@ -3984,7 +3992,8 @@ static bool is_otg_present(struct fg_chip *chip)
 	if (!chip->usb_psy)
 		chip->usb_psy = power_supply_get_by_name("usb");
 
-	if (chip->usb_psy)
+	if (chip->usb_psy && chip->usb_psy->desc &&
+			chip->usb_psy->desc->get_property)
 		power_supply_get_property(chip->usb_psy,
 				POWER_SUPPLY_PROP_USB_OTG, &prop);
 	return prop.intval != 0;
