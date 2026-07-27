@@ -3989,31 +3989,23 @@ struct snd_soc_card snd_soc_card_ak4962_msm8996 = {
 	.name		= "msm8996-ak4962-snd-card",
 };
 
-/*
- * Fujisan uses the original AK4962 SlimBus paths, but the rebased kernel
- * intentionally does not carry the WCD CPE (hotword) or working legacy
- * compressed-offload platform paths.  The stock card declares links for both,
- * causing ASoC to defer the entire card forever while looking for platforms
- * that cannot exist.  They are unrelated to media/voice playback and capture.
- */
+/* Keep PCM device numbers expected by the proprietary audio HAL stable. */
 static int msm8996_ak496x_prune_unavailable_links(
 					struct snd_soc_dai_link *links, int count)
 {
-	int i, kept = 0;
+	int i;
 
 	for (i = 0; i < count; i++) {
 		if (links[i].platform_name &&
 		    (!strcmp(links[i].platform_name, "msm-cpe-lsm") ||
 		     !strcmp(links[i].platform_name, "msm-compr-dsp") ||
-		     !strcmp(links[i].platform_name, "msm-compress-dsp")))
-			continue;
-
-		if (kept != i)
-			links[kept] = links[i];
-		kept++;
+		     !strcmp(links[i].platform_name, "msm-compress-dsp"))) {
+			links[i].platform_name = NULL;
+			links[i].platform_of_node = NULL;
+		}
 	}
 
-	return kept;
+	return count;
 }
 
 
@@ -4056,11 +4048,7 @@ static int msm8996_populate_dai_link_component_of_node(
 				goto err;
 			}
 			dai_link[i].platform_of_node = np;
-			/*
-			 * soc_bind_dai_link() uses platform_of_node when it is present.
-			 * Preserve the legacy name as well so a deferred bind identifies
-			 * the missing platform instead of reporting platform "(null)".
-			 */
+			dai_link[i].platform_name = NULL;
 		}
 
 		/* populate cpu_of_node for snd card dai links */
