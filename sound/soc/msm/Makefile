@@ -18,6 +18,11 @@ obj-$(CONFIG_SND_SOC_CPE) += snd-soc-cpe.o
 snd-soc-msm8996-objs := msm8996.o
 obj-$(CONFIG_SND_SOC_MSM8996) += snd-soc-msm8996.o
 
+# Fujisan has an external AK4962 codec; keep this machine driver separate
+# from the generic Tasha card so both compatible nodes can probe safely.
+snd-soc-msm8996-ak4962-objs := msm8996-ak496x.o
+obj-$(CONFIG_SND_SOC_MSM8996_AK4962) += snd-soc-msm8996-ak4962.o
+
 # for MSM8996 virtualization sound card driver
 snd-soc-msm8996-vm-objs := apq8096-auto.o
 obj-$(CONFIG_SND_SOC_MSM8996_VM) += snd-soc-msm8996-vm.o

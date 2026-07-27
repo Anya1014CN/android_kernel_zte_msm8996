@@ -1761,7 +1761,9 @@ static const struct msm_pingroup msm8996_groups[] = {
 		 NA, NA),
 	PINGROUP(49, uim3, blsp_spi9, blsp_uart9, blsp_uim9, blsp10_spi,
 		 dac_calib8, NA, NA, NA),
-	PINGROUP(50, NA, NA, NA, NA, NA, NA, NA, NA, NA),
+	/* Fujisan AK4962 control bus: GPIO50 is SPI9 MISO. */
+	PINGROUP(50, uim3, blsp_spi9, blsp_uart9, blsp_uim9, blsp10_spi,
+		 dac_calib9, NA, NA, NA),
 	PINGROUP(51, uim3, blsp_spi9, blsp_uart9, blsp_i2c9, blsp10_spi,
 		 dac_calib10, NA, NA, NA),
 	PINGROUP(52, uim3, blsp_spi9, blsp_uart9, blsp_i2c9,

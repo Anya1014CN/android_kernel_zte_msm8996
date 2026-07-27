@@ -1577,7 +1577,6 @@ static int ngd_notify_slaves(void *data)
 			 * controller is up
 			 */
 			slim_ctrl_add_boarddevs(&dev->ctrl);
-			ngd_dom_init(dev);
 		} else {
 			slim_framer_booted(ctrl);
 		}
@@ -1853,7 +1852,14 @@ static int ngd_slim_probe(struct platform_device *pdev)
 				dev->ext_mdm.domr);
 	}
 
+	/*
+	 * Register for the ADSP domain before waiting for the first SlimBus
+	 * capability message.  Deferring this until ngd_notify_slaves() creates
+	 * a circular dependency: the ADSP never brings the controller up, so the
+	 * DT children (including Fujisan's AK4962) are never registered.
+	 */
 	INIT_WORK(&dev->dsp.dom_up, ngd_dom_up);
+	ngd_dom_init(dev);
 	dev->qmi.nb.notifier_call = ngd_qmi_available;
 	pm_runtime_get_noresume(dev->dev);
 

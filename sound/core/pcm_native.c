@@ -2326,6 +2326,20 @@ int snd_pcm_open_substream(struct snd_pcm *pcm, int stream,
 		goto error;
 	}
 
+	/*
+	 * Fujisan AK4962 bring-up diagnostic: a corrupted ASoC runtime must not
+	 * be allowed to branch through a userspace-looking function pointer and
+	 * panic the device.  Keep enough context in dmesg to identify the writer.
+	 */
+	if (unlikely(!substream->ops || !substream->ops->open ||
+		     !func_ptr_is_kernel_text((void *)substream->ops->open))) {
+		pr_err("PCM invalid open callback: pcm=%s device=%d stream=%d substream=%px private=%px ops=%px open=%px\n",
+		       pcm->name, pcm->device, stream, substream,
+		       substream->private_data, substream->ops,
+		       substream->ops ? substream->ops->open : NULL);
+		err = -ENXIO;
+		goto error;
+	}
 	if ((err = substream->ops->open(substream)) < 0)
 		goto error;
 

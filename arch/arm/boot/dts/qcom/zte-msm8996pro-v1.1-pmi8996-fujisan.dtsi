@@ -12,6 +12,11 @@
 	status = "disabled";
 };
 
+/* Fujisan ships the original Oreo ADSP firmware, whose PCM ABI is v3. */
+&pcm0 {
+	qcom,avs-version;
+};
+
 &mdss_dsi {
 	//hw-config = "split_dsi";
 	hw-config = "dual_dsi";
@@ -257,6 +262,8 @@
 };
 
 &spi_9 {
+	/* AK4962 uses this controller for its control register interface. */
+	status = "okay";
 	reg-names = "spi_physical", "spi_bam_physical";
 	reg = <0x075B7000 0x1000>,
 	      <0x07584000 0x2b000>;

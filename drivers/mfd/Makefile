@@ -193,6 +193,8 @@ obj-$(CONFIG_MFD_SKY81452)	+= sky81452.o
 obj-$(CONFIG_MSM_CDC_PINCTRL)	+= msm-cdc-pinctrl.o
 obj-$(CONFIG_MSM_CDC_SUPPLY) += msm-cdc-supply.o
 obj-$(CONFIG_WCD9XXX_CODEC_UTIL) += wcd9xxx-utils.o
+obj-$(CONFIG_AK4962_CODEC)	+= ak49xx-core.o ak49xx-irq.o \
+					ak49xx-slimslave.o ak49xx-core-resource.o
 obj-$(CONFIG_WCD9330_CODEC)	+= wcd9xxx-core.o wcd9xxx-irq.o wcd9xxx-slimslave.o\
 						wcd9330-regmap.o
 obj-$(CONFIG_WCD9335_CODEC)	+= wcd9xxx-core.o wcd9xxx-irq.o wcd9xxx-slimslave.o\
