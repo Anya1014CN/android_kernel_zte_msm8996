@@ -17,6 +17,10 @@
 	qcom,avs-version;
 };
 
+&pcm1 {
+	qcom,avs-version;
+};
+
 &mdss_dsi {
 	//hw-config = "split_dsi";
 	hw-config = "dual_dsi";
