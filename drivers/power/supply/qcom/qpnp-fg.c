@@ -577,6 +577,7 @@ struct fg_chip {
 	int			ocv_junction_p1p2;
 	int			ocv_junction_p2p3;
 	int			nom_cap_uah;
+	int			design_cap_uah;
 	int			actual_cap_uah;
 	int			status;
 	int			prev_status;
@@ -4666,7 +4667,7 @@ static int fg_power_get_property(struct power_supply *psy,
 			val->intval = 1;
 		break;
 	case POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN:
-		val->intval = chip->nom_cap_uah;
+		val->intval = chip->design_cap_uah ?: chip->nom_cap_uah;
 		break;
 	case POWER_SUPPLY_PROP_CHARGE_FULL:
 		val->intval = chip->learning_data.learned_cc_uah;
@@ -6333,6 +6334,7 @@ static int fg_batt_profile_init(struct fg_chip *chip)
 {
 	int rc = 0, ret;
 	int len, batt_id;
+	u32 design_cap_mah;
 	struct device_node *node = chip->pdev->dev.of_node;
 	struct device_node *batt_node, *profile_node;
 	const char *data, *batt_type_str;
@@ -6458,6 +6460,15 @@ wait:
 		rc = 0;
 		goto no_profile;
 	}
+
+	/* The profile SRAM capacity is calibration data. The board-declared
+	 * nominal rating is the value reported as design capacity. */
+	rc = of_property_read_u32(profile_node, "qcom,nom-batt-capacity-mah",
+				&design_cap_mah);
+	if (rc < 0)
+		chip->design_cap_uah = 0;
+	else
+		chip->design_cap_uah = design_cap_mah * 1000;
 
 	if (!chip->batt_profile)
 		chip->batt_profile = devm_kzalloc(chip->dev,
