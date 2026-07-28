@@ -2299,9 +2299,26 @@ static int msm8996_ak4962_card_init(struct snd_soc_pcm_runtime *rtd)
 					       134, 135, 136, 137};
 	int ret;
 
+	/* mixer_paths.xml relies on these machine controls for MCLK and routing. */
+	ret = snd_soc_add_codec_controls(codec, msm_snd_controls,
+					 ARRAY_SIZE(msm_snd_controls));
+	if (ret < 0) {
+		pr_err("%s: failed to add machine controls: %d\n", __func__, ret);
+		return ret;
+	}
+
 	/* The codec declares RX_BIAS as supplied by this card's MCLK widget. */
 	snd_soc_dapm_new_controls(dapm, msm8996_dapm_widgets,
 				  ARRAY_SIZE(msm8996_dapm_widgets));
+	snd_soc_dapm_ignore_suspend(dapm, "RCV");
+	snd_soc_dapm_ignore_suspend(dapm, "HP");
+	snd_soc_dapm_ignore_suspend(dapm, "LOUT1L");
+	snd_soc_dapm_ignore_suspend(dapm, "LOUT1R");
+	snd_soc_dapm_ignore_suspend(dapm, "LOUT2L");
+	snd_soc_dapm_ignore_suspend(dapm, "LOUT2R");
+	snd_soc_dapm_ignore_suspend(dapm, "Smart PA Input");
+	snd_soc_dapm_ignore_suspend(dapm, "Smart PA Output");
+	snd_soc_dapm_ignore_suspend(dapm, "PLL CLK");
 	snd_soc_dapm_ignore_suspend(dapm, "RX_BIAS");
 	snd_soc_dapm_sync(dapm);
 
@@ -3882,9 +3899,9 @@ static struct snd_soc_dai_link msm8996_hdmi_dai_link[] = {
 		.stream_name = "HDMI Playback",
 		.cpu_dai_name = "msm-dai-q6-hdmi.8",
 		.platform_name = "msm-pcm-routing",
-	#ifdef CONFIG_ZTE_NXP_SMART_PA
+	#ifdef CONFIG_SND_SOC_TFA98XX
 	.codec_dai_name = "tfa98xx-aif-6-34",
-	.codec_name = "tfa9888.6-0034",
+	.codec_name = "tfa98xx.6-0034",
 	#else
 		.codec_name = "msm-hdmi-audio-codec-rx",
 		.codec_dai_name = "msm_hdmi_audio_codec_rx_dai",
@@ -4219,7 +4236,7 @@ static struct snd_soc_card *populate_snd_card_dailinks(struct device *dev)
 		dailink = msm8996_ak4962_dai_links;
 		len_4 = len_3 + ARRAY_SIZE(msm8996_ak4962_be_dai_links);
 		}
-	#ifdef CONFIG_ZTE_NXP_SMART_PA
+	#ifdef CONFIG_SND_SOC_TFA98XX
 	memcpy(dailink + len_4, msm8996_hdmi_dai_link,
 	    sizeof(msm8996_hdmi_dai_link));
 	len_4 += ARRAY_SIZE(msm8996_hdmi_dai_link);

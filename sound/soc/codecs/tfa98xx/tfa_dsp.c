@@ -2716,6 +2716,10 @@ enum Tfa98xx_Error tfaRunSpeakerBoost(struct tfa_device *tfa, int force, int pro
 
 	/* Returns 1 when device is "cold" and 0 when device is warm */
 	value = tfa_is_cold(tfa);
+	/* The TFA9888 manager can retain MANSCONF across audioserver restarts.
+	 * Always run its complete startup sequence so the DSP patch is loaded. */
+	if ((tfa->rev & 0xff) == 0x88)
+		value = 1;
 
 	pr_debug("Startup of device [%s] is a %sstart\n", tfaContDeviceName(tfa->cnt, tfa->dev_idx), value ? "cold" : "warm");
 	/* cold start and not tap profile */
@@ -3009,9 +3013,49 @@ enum Tfa98xx_Error tfaRunMute(struct tfa_device *tfa)
 enum Tfa98xx_Error tfaRunUnmute(struct tfa_device *tfa)
 {
 	enum Tfa98xx_Error err = Tfa98xx_Error_Ok;
+	int retry = 0;
 
 	/* signal the TFA98XX to mute  */
 	err = tfa98xx_set_mute(tfa, Tfa98xx_Mute_Off);
+	if (err)
+		return err;
+
+	/* TFA9888 needs this handoff from the internal cold-start clock to
+	 * the stream clock before its amplifier can be enabled. */
+	if ((tfa->rev & 0xff) == 0x88) {
+		int manstate = TFA_GET_BF(tfa, MANSTATE);
+
+		if ((TFA_GET_BF(tfa, CFE) != 0) && (manstate == 9)) {
+			TFA_SET_BF_VOLATILE(tfa, AMPE, 1);
+			return err;
+		}
+
+		if ((TFA_GET_BF(tfa, REFCKSEL) == 1) && (manstate == 6)) {
+			TFA_SET_BF_VOLATILE(tfa, MANSCONF, 0);
+			TFA_SET_BF_VOLATILE(tfa, RST, 1);
+			TFA_SET_BF_VOLATILE(tfa, MANCOLD, 1);
+			err = tfaRunColdboot(tfa, 0);
+			if (err)
+				return err;
+			TFA_SET_BF_VOLATILE(tfa, SBSL, 1);
+			TFA_SET_BF_VOLATILE(tfa, REFCKSEL, 0);
+			TFA_SET_BF_VOLATILE(tfa, RST, 0);
+			TFA_SET_BF_VOLATILE(tfa, SBSL, 0);
+		}
+
+		do {
+			manstate = TFA_GET_BF(tfa, MANSTATE);
+			if (manstate <= 1) {
+				TFA_SET_BF_VOLATILE(tfa, MANSCONF, 1);
+				break;
+			}
+			udelay(300);
+		} while (++retry < 10);
+
+		udelay(5000);
+		TFA_SET_BF_VOLATILE(tfa, SBSL, 1);
+		TFA_SET_BF_VOLATILE(tfa, AMPE, 1);
+	}
 
 	if (tfa->verbose)
 		pr_debug("-------------------unmuted ------------------\n");

@@ -1235,9 +1235,15 @@ static int tfa98xx_set_profile(struct snd_kcontrol *kcontrol,
 		tfa98xx->profile = prof_idx;
 		tfa98xx->vstep = tfa98xx->prof_vsteps[prof_idx];
 
-		/* Don't call tfa_dev_start() if there is no clock. */
+		/*
+		 * TFA1 needs the audio clock before accessing its DSP. TFA2 devices
+		 * such as the fujisan TFA9888 can bring up their DSP from the
+		 * internal oscillator, which is the sequence used by the OEM driver.
+		 */
 		mutex_lock(&tfa98xx->dsp_lock);
 		tfa98xx_dsp_system_stable(tfa98xx->tfa, &ready);
+		if (tfa98xx->tfa->tfa_family == 2)
+			ready = 1;
 		if (ready) {
 			/* Also re-enables the interrupts */
 			err = tfa98xx_tfa_start(tfa98xx, prof_idx, tfa98xx->vstep);
@@ -3292,6 +3298,7 @@ static struct of_device_id tfa98xx_dt_match[] = {
 	{.compatible = "tfa,tfa9874" },
 	{.compatible = "tfa,tfa9878" },
 	{.compatible = "tfa,tfa9888" },
+	{.compatible = "nxp,tfa9888" },
 	{.compatible = "tfa,tfa9890" },
 	{.compatible = "tfa,tfa9891" },
 	{.compatible = "tfa,tfa9894" },
