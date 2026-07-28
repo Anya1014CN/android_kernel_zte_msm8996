@@ -46,8 +46,9 @@ typedef struct {
 
 static TOUCH_EXPAND_T global_touch_expand;
 #ifdef CONFIG_BOARD_FUJISAN
-/* Dual independent panels + per-display idc on Lineage need separate inputs. */
-static bool separate_inputs = true;
+/* Android cannot merge independent touch devices into one multi-touch stream.
+ * Fujisan's expanded mode therefore uses the combined 2160px input device. */
+static bool separate_inputs;
 #else
 static bool separate_inputs;
 #endif
