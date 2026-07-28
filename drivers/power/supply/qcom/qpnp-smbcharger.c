@@ -1109,6 +1109,19 @@ static int get_prop_batt_full_charge(struct smbchg_chip *chip)
 	return bfc;
 }
 
+static int get_prop_batt_charge_counter(struct smbchg_chip *chip)
+{
+	int charge_counter, rc;
+
+	rc = get_property_from_fg(chip, POWER_SUPPLY_PROP_CHARGE_COUNTER,
+				  &charge_counter);
+	if (rc) {
+		pr_smb(PR_STATUS, "Couldn't get charge_counter rc = %d\n", rc);
+		charge_counter = 0;
+	}
+	return charge_counter;
+}
+
 static int get_prop_batt_full_charge_design(struct smbchg_chip *chip)
 {
 	int bfc, rc;
@@ -5949,6 +5962,7 @@ static enum power_supply_property smbchg_battery_properties[] = {
 	POWER_SUPPLY_PROP_CHARGING_ENABLED,
 	POWER_SUPPLY_PROP_CHARGE_TYPE,
 	POWER_SUPPLY_PROP_CAPACITY,
+	POWER_SUPPLY_PROP_CHARGE_COUNTER,
 	POWER_SUPPLY_PROP_HEALTH,
 	POWER_SUPPLY_PROP_TECHNOLOGY,
 	POWER_SUPPLY_PROP_SYSTEM_TEMP_LEVEL,
@@ -6149,6 +6163,9 @@ static int smbchg_battery_get_property(struct power_supply *psy,
 	/* properties from fg */
 	case POWER_SUPPLY_PROP_CAPACITY:
 		val->intval = get_prop_batt_capacity(chip);
+		break;
+	case POWER_SUPPLY_PROP_CHARGE_COUNTER:
+		val->intval = get_prop_batt_charge_counter(chip);
 		break;
 	case POWER_SUPPLY_PROP_CURRENT_NOW:
 		val->intval = get_prop_batt_current_now(chip);
