@@ -38,6 +38,7 @@
 #include <linux/fb.h>
 #include <linux/input.h>
 #include <linux/interrupt.h>
+#include <linux/mutex.h>
 #include <linux/of_gpio.h>
 #include <linux/platform_device.h>
 #include <linux/pm_wakeup.h>
@@ -51,10 +52,12 @@ struct fpc1020_data {
 	struct completion irq_sent;
 	struct work_struct pm_work;
 	struct pinctrl         *ts_pinctrl;
+	struct pinctrl_state   *gpio_state_reset;
 	struct pinctrl_state   *gpio_state_active;
-	struct pinctrl_state   *gpio_state_suspend;
+	struct pinctrl_state   *gpio_state_irq;
  	struct input_handler input_handler;
 	spinlock_t irq_lock;
+	struct mutex lock;
 
 	bool irq_disabled;
 	bool proximity_state; /* 0:far 1:near */
@@ -62,8 +65,11 @@ struct fpc1020_data {
  	bool report_key_events;
 
 	int irq_gpio;
+	int rst_gpio;
+	int pwr_gpio;
 	int fp_id_gpio; //do I need this ??
 	int wakeup_enabled;
+	bool prepared;
 };
 
 enum {
@@ -271,7 +277,7 @@ static ssize_t enable_key_events_show(struct device *dev,
  	return sprintf(buf, "%d\n", f->report_key_events);
 }
  
- static ssize_t enable_key_events_store(struct device *dev,
+static ssize_t enable_key_events_store(struct device *dev,
  	struct device_attribute *attr, const char *buf, size_t count)
 {
  	int rc;
@@ -287,13 +293,149 @@ static ssize_t enable_key_events_show(struct device *dev,
  	return count;
 }
 
+static int fpc1020_select_state(struct fpc1020_data *f, const char *name)
+{
+	struct pinctrl_state *state;
+
+	if (!strncmp(name, "fpc1020_reset_reset", strlen("fpc1020_reset_reset")))
+		state = f->gpio_state_reset;
+	else if (!strncmp(name, "fpc1020_reset_active",
+			  strlen("fpc1020_reset_active")))
+		state = f->gpio_state_active;
+	else if (!strncmp(name, "fpc1020_irq_active",
+			  strlen("fpc1020_irq_active")))
+		state = f->gpio_state_irq;
+	else
+		return -EINVAL;
+
+	return pinctrl_select_state(f->ts_pinctrl, state);
+}
+
+static int fpc1020_hw_reset(struct fpc1020_data *f)
+{
+	int ret;
+
+	ret = fpc1020_select_state(f, "fpc1020_reset_active");
+	if (ret)
+		return ret;
+	usleep_range(100, 200);
+	ret = fpc1020_select_state(f, "fpc1020_reset_reset");
+	if (ret)
+		return ret;
+	usleep_range(5000, 5100);
+	ret = fpc1020_select_state(f, "fpc1020_reset_active");
+	if (!ret)
+		usleep_range(5000, 5100);
+	return ret;
+}
+
+static ssize_t pinctl_set(struct device *dev, struct device_attribute *attr,
+	const char *buf, size_t count)
+{
+	struct fpc1020_data *f = dev_get_drvdata(dev);
+	int ret;
+
+	mutex_lock(&f->lock);
+	ret = fpc1020_select_state(f, buf);
+	mutex_unlock(&f->lock);
+	return ret ? ret : count;
+}
+
+static ssize_t regulator_enable_set(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t count)
+{
+	struct fpc1020_data *f = dev_get_drvdata(dev);
+	char name[16];
+	char op;
+
+	if (sscanf(buf, "%15[^,],%c", name, &op) != 2 ||
+	    (op != 'e' && op != 'd'))
+		return -EINVAL;
+	if (gpio_is_valid(f->pwr_gpio))
+		gpio_set_value(f->pwr_gpio, op == 'e');
+	return count;
+}
+
+static ssize_t hw_reset_set(struct device *dev, struct device_attribute *attr,
+	const char *buf, size_t count)
+{
+	struct fpc1020_data *f = dev_get_drvdata(dev);
+	int ret;
+
+	if (strncmp(buf, "reset", strlen("reset")))
+		return -EINVAL;
+	mutex_lock(&f->lock);
+	ret = fpc1020_hw_reset(f);
+	mutex_unlock(&f->lock);
+	return ret ? ret : count;
+}
+
+static ssize_t device_prepare_set(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t count)
+{
+	struct fpc1020_data *f = dev_get_drvdata(dev);
+	bool enable;
+	int ret = 0;
+
+	if (!strncmp(buf, "enable", strlen("enable")))
+		enable = true;
+	else if (!strncmp(buf, "disable", strlen("disable")))
+		enable = false;
+	else
+		return -EINVAL;
+
+	mutex_lock(&f->lock);
+	if (enable && !f->prepared) {
+		ret = fpc1020_select_state(f, "fpc1020_reset_reset");
+		if (!ret && gpio_is_valid(f->pwr_gpio))
+			gpio_set_value(f->pwr_gpio, 1);
+		if (!ret)
+			usleep_range(100, 1000);
+		if (!ret)
+			ret = fpc1020_select_state(f, "fpc1020_reset_active");
+		if (!ret)
+			f->prepared = true;
+	} else if (!enable && f->prepared) {
+		ret = fpc1020_select_state(f, "fpc1020_reset_reset");
+		if (gpio_is_valid(f->pwr_gpio))
+			gpio_set_value(f->pwr_gpio, 0);
+		f->prepared = false;
+	}
+	mutex_unlock(&f->lock);
+	return ret ? ret : count;
+}
+
+static ssize_t wakeup_enable_set(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t count)
+{
+	struct fpc1020_data *f = dev_get_drvdata(dev);
+
+	if (!strncmp(buf, "enable", strlen("enable")))
+		f->wakeup_enabled = 1;
+	else if (!strncmp(buf, "disable", strlen("disable")))
+		f->wakeup_enabled = 0;
+	else
+		return -EINVAL;
+	return count;
+}
+
 static DEVICE_ATTR(enable_key_events, S_IWUSR | S_IRUSR, enable_key_events_show, enable_key_events_store);
 static DEVICE_ATTR(enable_wakeup, S_IWUSR | S_IRUSR, enable_wakeup_show, enable_wakeup_store);
 static DEVICE_ATTR(irq, S_IRUSR | S_IWUSR, irq_get, irq_ack);
 static DEVICE_ATTR(proximity_state, S_IWUSR, NULL, proximity_state_set);
 static DEVICE_ATTR(screen_state, S_IRUSR, screen_state_get, NULL);
+static DEVICE_ATTR(pinctl_set, S_IWUSR | S_IWGRP, NULL, pinctl_set);
+static DEVICE_ATTR(regulator_enable, S_IWUSR | S_IWGRP, NULL, regulator_enable_set);
+static DEVICE_ATTR(hw_reset, S_IWUSR | S_IWGRP, NULL, hw_reset_set);
+static DEVICE_ATTR(device_prepare, S_IWUSR | S_IWGRP, NULL, device_prepare_set);
+static DEVICE_ATTR(wakeup_enable, S_IWUSR | S_IWGRP, NULL, wakeup_enable_set);
 	
 static struct attribute *attributes[] = {
+	&dev_attr_pinctl_set.attr,
+	&dev_attr_device_prepare.attr,
+	&dev_attr_regulator_enable.attr,
+	&dev_attr_hw_reset.attr,
+	&dev_attr_wakeup_enable.attr,
 	&dev_attr_irq.attr,
 	&dev_attr_proximity_state.attr,
 	&dev_attr_screen_state.attr,
@@ -383,27 +525,36 @@ static int fpc1020_pinctrl_init_tee(struct fpc1020_data *fpc1020)
 		goto err;
 	}
 
+	fpc1020->gpio_state_reset =
+		pinctrl_lookup_state(fpc1020->ts_pinctrl, "fpc1020_reset_reset");
+	if (IS_ERR_OR_NULL(fpc1020->gpio_state_reset)) {
+		dev_err(dev, "Cannot get reset pinstate\n");
+		ret = PTR_ERR(fpc1020->gpio_state_reset);
+		goto err;
+	}
+
 	fpc1020->gpio_state_active =
-		pinctrl_lookup_state(fpc1020->ts_pinctrl, "pmx_fp_active");
+		pinctrl_lookup_state(fpc1020->ts_pinctrl, "fpc1020_reset_active");
 	if (IS_ERR_OR_NULL(fpc1020->gpio_state_active)) {
 		dev_err(dev, "Cannot get active pinstate\n");
 		ret = PTR_ERR(fpc1020->gpio_state_active);
 		goto err;
 	}
 
-	fpc1020->gpio_state_suspend =
-		pinctrl_lookup_state(fpc1020->ts_pinctrl, "pmx_fp_suspend");
-	if (IS_ERR_OR_NULL(fpc1020->gpio_state_suspend)) {
-		dev_err(dev, "Cannot get sleep pinstate\n");
-		ret = PTR_ERR(fpc1020->gpio_state_suspend);
+	fpc1020->gpio_state_irq =
+		pinctrl_lookup_state(fpc1020->ts_pinctrl, "fpc1020_irq_active");
+	if (IS_ERR_OR_NULL(fpc1020->gpio_state_irq)) {
+		dev_err(dev, "Cannot get irq pinstate\n");
+		ret = PTR_ERR(fpc1020->gpio_state_irq);
 		goto err;
 	}
 
 	return 0;
-err:
+	err:
 	fpc1020->ts_pinctrl = NULL;
+	fpc1020->gpio_state_reset = NULL;
 	fpc1020->gpio_state_active = NULL;
-	fpc1020->gpio_state_suspend = NULL;
+	fpc1020->gpio_state_irq = NULL;
 	return ret;
 }
 
@@ -413,17 +564,17 @@ static int fpc1020_pinctrl_select_tee(struct fpc1020_data *fpc1020, bool on)
 	struct pinctrl_state *pins_state;
 	struct device *dev = fpc1020->dev;
 
-	pins_state = on ? fpc1020->gpio_state_active : fpc1020->gpio_state_suspend;
+	pins_state = on ? fpc1020->gpio_state_active : fpc1020->gpio_state_reset;
 	if (!IS_ERR_OR_NULL(pins_state)) {
 		ret = pinctrl_select_state(fpc1020->ts_pinctrl, pins_state);
 		if (ret) {
 			dev_err(dev, "can not set %s pins\n",
-				on ? "pmx_ts_active" : "pmx_ts_suspend");
+				on ? "fpc1020_reset_active" : "fpc1020_reset_reset");
 			return ret;
 		}
 	} else {
 		dev_err(dev, "not a valid '%s' pinstate\n",
-			on ? "pmx_ts_active" : "pmx_ts_suspend");
+			on ? "fpc1020_reset_active" : "fpc1020_reset_reset");
 	}
 
 	return ret;
@@ -521,11 +672,15 @@ static int fpc1020_probe(struct platform_device *pdev)
 	f->dev = dev;
 	dev_set_drvdata(dev, f);
 
-	ret = fpc1020_request_named_gpio(f, "fpc,irq-gpio", &f->irq_gpio);
+	ret = fpc1020_request_named_gpio(f, "fpc,gpio_irq", &f->irq_gpio);
 	if (ret)
 		goto err1;
 
-	ret = gpio_direction_input(f->irq_gpio);
+	ret = fpc1020_request_named_gpio(f, "fpc,gpio_rst", &f->rst_gpio);
+	if (ret)
+		goto err1;
+
+	ret = fpc1020_request_named_gpio(f, "fpc,gpio_pwr", &f->pwr_gpio);
 	if (ret)
 		goto err1;
 
@@ -533,11 +688,21 @@ static int fpc1020_probe(struct platform_device *pdev)
 	if (ret)
 		goto err1;
 
-	ret = fpc1020_pinctrl_select_tee(f, true);
+	ret = fpc1020_pinctrl_select_tee(f, false);
+	if (ret)
+		goto err1;
+	ret = fpc1020_select_state(f, "fpc1020_irq_active");
+	if (ret)
+		goto err1;
+	ret = gpio_direction_input(f->irq_gpio);
+	if (ret)
+		goto err1;
+	ret = gpio_direction_output(f->pwr_gpio, 0);
 	if (ret)
 		goto err1;
 
 	spin_lock_init(&f->irq_lock);
+	mutex_init(&f->lock);
 	INIT_WORK(&f->pm_work, fpc1020_suspend_resume);
 	init_completion(&f->irq_sent);
 
@@ -558,6 +723,14 @@ static int fpc1020_probe(struct platform_device *pdev)
 
 	f->wakeup_enabled = 1;
 	f->report_key_events = false;
+	if (of_property_read_bool(np, "fpc,enable-on-boot")) {
+		ret = device_prepare_set(dev, NULL, "enable", strlen("enable"));
+		if (ret < 0)
+			goto err3;
+		ret = fpc1020_hw_reset(f);
+		if (ret)
+			goto err3;
+	}
 
  	f->input_handler.filter = input_filter;
  	f->input_handler.connect = input_connect;
@@ -633,4 +806,3 @@ static int __init fpc1020_init(void)
 	return platform_driver_register(&fpc1020_driver);
 }
 device_initcall(fpc1020_init);
-
