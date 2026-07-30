@@ -39,6 +39,20 @@ static uint32_t interval = STATUS_CHECK_INTERVAL_MS;
 static int32_t dsi_status_disable = DSI_STATUS_CHECK_INIT;
 struct dsi_status_data *pstatus_data;
 
+/*
+ * Keep the TE IRQ path consistent with the framebuffer notifier below.  A
+ * panel without esd-check-enabled must not have the periodic status worker
+ * resurrected on every TE interrupt.  Fujisan's panel does not implement the
+ * generic BTA health check; treating a failed probe as a dead panel causes an
+ * endless panel reset loop.
+ */
+static bool dsi_status_check_enabled(struct mdss_dsi_ctrl_pdata *ctrl_pdata)
+{
+	return !((!ctrl_pdata->panel_data.panel_info.esd_check_enabled &&
+		  dsi_status_disable) ||
+		 dsi_status_disable == DSI_STATUS_CHECK_DISABLE);
+}
+
 int mdss_dsi_check_panel_status(struct mdss_dsi_ctrl_pdata *ctrl, void *arg)
 {
 	struct mdss_mdp_ctl *ctl = NULL;
@@ -117,10 +131,10 @@ irqreturn_t hw_vsync_handler(int irq, void *data)
 		return IRQ_HANDLED;
 	}
 
-	if (pstatus_data)
+	if (pstatus_data && dsi_status_check_enabled(ctrl_pdata))
 		mod_delayed_work(system_wq, &pstatus_data->check_status,
 			msecs_to_jiffies(interval));
-	else
+	else if (!pstatus_data)
 		pr_err("Pstatus data is NULL\n");
 
 	if (!atomic_read(&ctrl_pdata->te_irq_ready))
@@ -157,7 +171,6 @@ static int fb_event_callback(struct notifier_block *self,
 	struct dsi_status_data *pdata = container_of(self,
 				struct dsi_status_data, fb_notifier);
 	struct mdss_dsi_ctrl_pdata *ctrl_pdata = NULL;
-	struct mdss_panel_info *pinfo;
 	struct msm_fb_data_type *mfd;
 
 	if (!evdata) {
@@ -177,11 +190,7 @@ static int fb_event_callback(struct notifier_block *self,
 		return NOTIFY_BAD;
 	}
 
-	pinfo = &ctrl_pdata->panel_data.panel_info;
-
-	if ((!(pinfo->esd_check_enabled) &&
-			dsi_status_disable) ||
-			(dsi_status_disable == DSI_STATUS_CHECK_DISABLE)) {
+	if (!dsi_status_check_enabled(ctrl_pdata)) {
 		pr_debug("ESD check is disabled.\n");
 		cancel_delayed_work(&pdata->check_status);
 		return NOTIFY_DONE;
