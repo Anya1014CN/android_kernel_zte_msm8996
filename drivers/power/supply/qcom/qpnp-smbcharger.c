@@ -456,13 +456,23 @@ module_param_named(
 	int, 00600
 );
 
+#ifdef CONFIG_BOARD_FUJISAN
+/* P996A26 stock kernel limits the QC3 input path to 2.5 A. */
+static int smbchg_default_hvdcp3_icl_ma = 2500;
+#else
 static int smbchg_default_hvdcp3_icl_ma = 2700;
+#endif
 module_param_named(
 	default_hvdcp3_icl_ma, smbchg_default_hvdcp3_icl_ma,
 	int, 00600
 );
 
+#ifdef CONFIG_BOARD_FUJISAN
+/* Preserve the OEM safeguard for ordinary DCP adapters. */
+static int smbchg_default_dcp_icl_ma = 1500;
+#else
 static int smbchg_default_dcp_icl_ma = 1800;
+#endif
 module_param_named(
 	default_dcp_icl_ma, smbchg_default_dcp_icl_ma,
 	int, 00600
