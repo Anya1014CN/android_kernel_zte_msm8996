@@ -55,6 +55,7 @@
 #include "mdss_debug.h"
 #include "mdss_smmu.h"
 #include "mdss_mdp.h"
+#include "mdss_dsi.h"
 
 #include "mdss_livedisplay.h"
 
@@ -292,6 +293,54 @@ static int lcd_backlight_registered;
 
 #ifdef CONFIG_BOARD_FUJISAN
 static int lcd_backlight_2_registered;
+static bool fujisan_secondary_display_on = true;
+
+/*
+ * Stage-1 must keep B's command-mode CTL participating even while folded,
+ * otherwise A can no longer receive atomic C commits.  Dimming B to zero is
+ * not enough: the TD4322 remains in Display On and leaks a faint mirrored A.
+ * Use only the standard DCS display state here; its rails and CTL stay live.
+ */
+static int fujisan_set_secondary_display_state(bool on)
+{
+	static char display_off[] = { 0x28, 0x00 };
+	static char display_on[] = { 0x29, 0x00 };
+	static struct dsi_cmd_desc display_off_cmd = {
+		{ DTYPE_DCS_WRITE, 1, 0, 0, 20, sizeof(display_off) },
+		display_off,
+	};
+	static struct dsi_cmd_desc display_on_cmd = {
+		{ DTYPE_DCS_WRITE, 1, 0, 0, 20, sizeof(display_on) },
+		display_on,
+	};
+	struct mdss_dsi_ctrl_pdata *ctrl;
+	struct dcs_cmd_req req;
+	int ret;
+
+	ctrl = mdss_dsi_get_ctrl_by_index(DSI_CTRL_RIGHT);
+	/* Stage-1 owns B through the paired CTL but does not update this
+	 * framebuffer-era power-state field.  Its successful DCS brightness
+	 * write immediately before this call is the valid readiness check. */
+	if (!ctrl)
+		return -ENODEV;
+
+	memset(&req, 0, sizeof(req));
+	req.cmds = on ? &display_on_cmd : &display_off_cmd;
+	req.cmds_cnt = 1;
+	/* This is a B-only state transition, never a split-panel broadcast. */
+	req.flags = CMD_REQ_COMMIT | CMD_CLK_CTRL | CMD_REQ_LP_MODE |
+		CMD_REQ_UNICAST;
+	ret = mdss_dsi_cmdlist_put(ctrl, &req);
+	/* mdss_dsi_cmds_tx returns 0 when cmd DMA did not reach the panel. */
+	if (ret <= 0) {
+		pr_err("fujisan: secondary DCS display %s not sent (%d)\n",
+			on ? "on" : "off", ret);
+		return ret ? ret : -EAGAIN;
+	}
+	pr_info("fujisan: secondary DCS display %s\n",
+			on ? "on" : "off");
+	return ret;
+}
 
 /* Stage-1 registers both physical panels under fb0 as an MDP native dual
  * display.  fb1 is then WFD, not the right panel, so the historic fb-index
@@ -327,7 +376,18 @@ static bool fujisan_set_native_secondary_backlight(enum led_brightness value)
 		bl_lvl = 1;
 
 	mutex_lock(&mfd->bl_lock);
-	panel->set_backlight(panel, bl_lvl);
+	if (!value && fujisan_secondary_display_on) {
+		/* 0x51/0x53 first prevents a visible frame during DCS 0x28. */
+		panel->set_backlight(panel, bl_lvl);
+		if (fujisan_set_secondary_display_state(false) > 0)
+			fujisan_secondary_display_on = false;
+	} else {
+		if (value && !fujisan_secondary_display_on) {
+			if (fujisan_set_secondary_display_state(true) > 0)
+				fujisan_secondary_display_on = true;
+		}
+		panel->set_backlight(panel, bl_lvl);
+	}
 	mutex_unlock(&mfd->bl_lock);
 	pr_info("fujisan: secondary backlight ctl%d level=%d\n",
 		split_ctl->num, bl_lvl);
