@@ -4852,12 +4852,87 @@ err:
 	return ret;
 }
 
+/*
+ * Fujisan's native master CTL is panel B while its split CTL is panel A.
+ * Generic source-split follows CTL order and would therefore invert the
+ * logical wide image.  Keep the ABI at one client target and expand it here
+ * into two ordinary MDSS layers before validation/mapping.  The existing
+ * atomic path then owns dma-buf import, acquire fences, dual-CTL kickoff and
+ * its release/retire fence lifecycle.
+ */
+#ifdef CONFIG_BOARD_FUJISAN
+static int fujisan_expand_wide_atomic_commit(struct msm_fb_data_type *mfd,
+		struct mdp_layer_commit_v1 *commit,
+		struct mdp_input_layer **layer_list)
+{
+	struct mdp_input_layer *client = *layer_list;
+	struct mdp_input_layer *wide;
+	struct mdp_input_layer *layer;
+
+	if (!(commit->flags & MDP_COMMIT_FUJISAN_WIDE))
+		return 0;
+
+	if (!mfd || mfd->index != 0 ||
+	    mfd->split_mode != MDP_DUAL_LM_DUAL_DISPLAY ||
+	    !client || commit->input_layer_cnt != 1 ||
+	    commit->output_layer || commit->dest_scaler_cnt) {
+		pr_err("fujisan-wide: invalid atomic topology\n");
+		return -EINVAL;
+	}
+
+	layer = &client[0];
+	if (layer->flags ||
+	    (layer->buffer.format != MDP_RGBA_8888 &&
+	     layer->buffer.format != MDP_RGBX_8888) ||
+	    layer->buffer.plane_count != 1 || layer->buffer.planes[0].fd < 0 ||
+	    layer->buffer.width < 2160 || layer->buffer.height < 1920 ||
+	    layer->src_rect.x || layer->src_rect.y ||
+	    layer->src_rect.w != 2160 || layer->src_rect.h != 1920 ||
+	    layer->dst_rect.x || layer->dst_rect.y ||
+	    layer->dst_rect.w != 2160 || layer->dst_rect.h != 1920) {
+		pr_err("fujisan-wide: require one full linear RGBA/RGBX target\n");
+		return -EINVAL;
+	}
+
+	wide = kcalloc(2, sizeof(*wide), GFP_KERNEL);
+	if (!wide)
+		return -ENOMEM;
+
+	/* fb0/ctl0 is physical B (right); the split CTL is physical A (left). */
+	wide[0] = *layer;
+	wide[0].pipe_ndx = BIT(MDSS_MDP_SSPP_VIG0);
+	wide[0].src_rect = (struct mdp_rect) { 1080, 0, 1080, 1920 };
+	wide[0].dst_rect = (struct mdp_rect) { 0, 0, 1080, 1920 };
+
+	wide[1] = *layer;
+	wide[1].pipe_ndx = BIT(MDSS_MDP_SSPP_VIG1);
+	wide[1].src_rect = (struct mdp_rect) { 0, 0, 1080, 1920 };
+	wide[1].dst_rect = (struct mdp_rect) { 1080, 0, 1080, 1920 };
+
+	kfree(client);
+	*layer_list = wide;
+	commit->input_layers = wide;
+	commit->input_layer_cnt = 2;
+	commit->flags &= ~MDP_COMMIT_FUJISAN_WIDE;
+
+	pr_debug("fujisan-wide: C[0,1080)->A, C[1080,2160)->B\n");
+	return 0;
+}
+#else
+static int fujisan_expand_wide_atomic_commit(struct msm_fb_data_type *mfd,
+		struct mdp_layer_commit_v1 *commit,
+		struct mdp_input_layer **layer_list)
+{
+	return (commit->flags & MDP_COMMIT_FUJISAN_WIDE) ? -EOPNOTSUPP : 0;
+}
+#endif
+
 static int mdss_fb_atomic_commit_ioctl(struct fb_info *info,
 	unsigned long *argp, struct file *file)
 {
 	int ret, i = 0, j = 0, rc;
 	struct mdp_layer_commit  commit;
-	u32 buffer_size, layer_count;
+	u32 buffer_size, layer_count, user_layer_count;
 	struct mdp_input_layer *layer, *layer_list = NULL;
 	struct mdp_input_layer __user *input_layer_list;
 	struct mdp_output_layer *output_layer = NULL;
@@ -4914,6 +4989,7 @@ static int mdss_fb_atomic_commit_ioctl(struct fb_info *info,
 	}
 
 	layer_count = commit.commit_v1.input_layer_cnt;
+	user_layer_count = layer_count;
 	input_layer_list = commit.commit_v1.input_layers;
 
 	if (layer_count > MAX_LAYER_COUNT) {
@@ -4936,6 +5012,12 @@ static int mdss_fb_atomic_commit_ioctl(struct fb_info *info,
 		}
 
 		commit.commit_v1.input_layers = layer_list;
+
+		ret = fujisan_expand_wide_atomic_commit(mfd, &commit.commit_v1,
+				&layer_list);
+		if (ret)
+			goto err;
+		layer_count = commit.commit_v1.input_layer_cnt;
 
 		for (i = 0; i < layer_count; i++) {
 			layer = &layer_list[i];
@@ -4990,8 +5072,8 @@ static int mdss_fb_atomic_commit_ioctl(struct fb_info *info,
 		pr_err("atomic commit failed ret:%d\n", ret);
 	ATRACE_END("ATOMIC_COMMIT");
 
-	if (layer_count) {
-		for (j = 0; j < layer_count; j++) {
+	if (user_layer_count) {
+		for (j = 0; j < user_layer_count; j++) {
 			rc = copy_to_user(&input_layer_list[j].error_code,
 					&layer_list[j].error_code, sizeof(int));
 			if (rc)

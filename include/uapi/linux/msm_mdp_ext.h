@@ -184,6 +184,13 @@ VALIDATE/COMMIT FLAG CONFIGURATION
  */
 #define MDP_COMMIT_RECT_NUM 0x2000
 
+/*
+ * Fujisan wide-primary client target.  The request contains one linear
+ * 2160x1920 target; the MDSS driver expands it into the two native CTL
+ * layers so userspace never crops or posts a second fbdev target.
+ */
+#define MDP_COMMIT_FUJISAN_WIDE		0x40000000
+
 #define MDP_COMMIT_VERSION_1_0		0x00010000
 
 #define OUT_LAYER_COLOR_SPACE
