@@ -83,6 +83,15 @@ static inline u32 mdss_mdp_hwio_mask(struct mdss_mdp_hwio_cfg *cfg, u32 val)
 #define MDSS_MDP_DANGER_STATUS				0x00360
 #define MDSS_MDP_SAFE_STATUS				0x00364
 #define MDSS_MDP_REG_SPLIT_DISPLAY_LOWER_PIPE_CTRL	0x003F0
+/*
+ * MSM8996 MDP v1.7.x keeps the DSI VSYNC mux in the otherwise unused
+ * 0x414 slot between the split-display and DCE registers.  Fujisan's OEM
+ * kernel uses bit 8 to select the secondary (tertiary) DSI TE source.
+ */
+#ifdef CONFIG_BOARD_FUJISAN
+#define MDSS_MDP_REG_VSYNC_SEL				0x00414
+#define MDSS_MDP_VSYNC_SEL_SECONDARY_TE		BIT(8)
+#endif
 #define MDSS_MDP_REG_DCE_SEL				0x00450
 
 #define MDSS_INTF_DSI	0x1

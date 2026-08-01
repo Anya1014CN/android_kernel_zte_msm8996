@@ -321,36 +321,15 @@ EXPORT_SYMBOL(zte_ts_is_td4322);
 
 void zte_lcd_power_ctrl_func(int enable)
 {
-	struct mdss_dsi_ctrl_pdata *ctrl;
-
-	pr_info("%s: td4322=%d data=%p enable=%d\n", __func__,
-		is_td4322_panel, zte_panel_data, enable);
-
-	if (!is_td4322_panel || !zte_panel_data) {
-		msleep(200);
-		return;
-	}
-
-	ctrl = container_of(zte_panel_data, struct mdss_dsi_ctrl_pdata, panel_data);
-
-	/* Touch bring-up path for secondary TDDI (uses RIGHT ctrl data). */
-	if (enable) {
-		is_2nd_td4322_fw_update = 1;
-		fujisan_secondary_panel_rails(ctrl, 1);
-		if (gpio_is_valid(ctrl->rst2_gpio)) {
-			fujisan_gpio_set_out(ctrl->rst2_gpio, "disp_rst2_n", 0);
-			msleep(20);
-			gpio_set_value(ctrl->rst2_gpio, 1);
-			msleep(50);
-		}
-	} else {
-		if (gpio_is_valid(ctrl->rst2_gpio)) {
-			gpio_set_value(ctrl->rst2_gpio, 0);
-			/* keep gpio requested for later panel_reset */
-		}
-		fujisan_secondary_panel_rails(ctrl, 0);
-		is_2nd_td4322_fw_update = 0;
-	}
+	/*
+	 * Synaptics calls this while binding/suspending the secondary TDDI.
+	 * It used to request GPIO69 and toggle the display rails directly, so
+	 * mdss_dsi_panel_reset() later saw -EBUSY and continued without owning
+	 * the reset line.  Only the panel lifecycle may own reset and rails.
+	 */
+	is_2nd_td4322_fw_update = !!enable;
+	pr_info("fujisan-mdss: secondary TDDI request=%d; panel lifecycle owns reset/rails\n",
+		enable);
 	msleep(200);
 }
 EXPORT_SYMBOL(zte_lcd_power_ctrl_func);
@@ -659,15 +638,14 @@ static int mdss_dsi_request_gpios(struct mdss_dsi_ctrl_pdata *ctrl_pdata)
 		if (rc) {
 			pr_err("%s: request reset gpio failed, rc=%d\n",
 				__func__, rc);
-			goto rst_gpio_err;
+			goto disp_en_gpio_err;
 		}
 	} else if (gpio_is_valid(ctrl_pdata->rst2_gpio)) {
 		rc = gpio_request(ctrl_pdata->rst2_gpio, "disp_rst2_n");
 		if (rc) {
 			pr_err("%s: request reset2 gpio failed, rc=%d\n",
 				__func__, rc);
-			/* continue; may already be requested by touch power path */
-			rc = 0;
+			goto disp_en_gpio_err;
 		}
 	}
 #else
@@ -702,8 +680,15 @@ lcd_mode_sel_gpio_err:
 	if (gpio_is_valid(ctrl_pdata->avdd_en_gpio))
 		gpio_free(ctrl_pdata->avdd_en_gpio);
 avdd_en_gpio_err:
+#ifdef CONFIG_BOARD_FUJISAN
+	if (ctrl_pdata->ndx == DSI_CTRL_RIGHT &&
+	    gpio_is_valid(ctrl_pdata->rst2_gpio))
+		gpio_free(ctrl_pdata->rst2_gpio);
+	else if (gpio_is_valid(ctrl_pdata->rst_gpio))
+		gpio_free(ctrl_pdata->rst_gpio);
+#else
 	gpio_free(ctrl_pdata->rst_gpio);
-rst_gpio_err:
+#endif
 	if (gpio_is_valid(ctrl_pdata->disp_en_gpio))
 		gpio_free(ctrl_pdata->disp_en_gpio);
 disp_en_gpio_err:

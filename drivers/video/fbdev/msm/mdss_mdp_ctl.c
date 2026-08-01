@@ -4266,6 +4266,34 @@ int mdss_mdp_ctl_intf_event(struct mdss_mdp_ctl *ctl, int event, void *arg,
 	return rc;
 }
 
+/*
+ * The right Fujisan panel is a separate command-mode display (fb1), not a
+ * split half of fb0.  Its TE must therefore be selected explicitly every
+ * time MDP restores or starts that CTL.  The register/bit match the OEM
+ * msm8996 MDP v1.7 map; keep this board quirk out of generic MDSS paths.
+ */
+static void fujisan_mdp_ctl_route_secondary_vsync(struct mdss_mdp_ctl *ctl)
+{
+#ifdef CONFIG_BOARD_FUJISAN
+	u32 before, after;
+
+	if (!ctl || !ctl->mfd || ctl->mfd->index != 1)
+		return;
+
+	before = readl_relaxed(ctl->mdata->mdp_base +
+		MDSS_MDP_REG_VSYNC_SEL);
+	after = before | MDSS_MDP_VSYNC_SEL_SECONDARY_TE;
+	if (after != before) {
+		writel_relaxed(after, ctl->mdata->mdp_base +
+			MDSS_MDP_REG_VSYNC_SEL);
+		/* One info record per power epoch; normal restores stay quiet. */
+		pr_info("fujisan-mdss: fb%d ctl%d intf%d %s VSYNC_SEL %#x -> %#x\n",
+			ctl->mfd->index, ctl->num, ctl->intf_num,
+			ctl->is_video_mode ? "video" : "cmd", before, after);
+	}
+#endif
+}
+
 static void mdss_mdp_ctl_restore_sub(struct mdss_mdp_ctl *ctl)
 {
 	u32 temp;
@@ -4276,6 +4304,7 @@ static void mdss_mdp_ctl_restore_sub(struct mdss_mdp_ctl *ctl)
 	temp |= (ctl->intf_type << ((ctl->intf_num - MDSS_MDP_INTF0) * 8));
 	writel_relaxed(temp, ctl->mdata->mdp_base +
 			MDSS_MDP_REG_DISP_INTF_SEL);
+	fujisan_mdp_ctl_route_secondary_vsync(ctl);
 
 	if (ctl->mfd && ctl->panel_data) {
 		ctl->mfd->ipc_resume = true;
@@ -4388,6 +4417,7 @@ static int mdss_mdp_ctl_start_sub(struct mdss_mdp_ctl *ctl, bool handoff)
 
 	writel_relaxed(temp, ctl->mdata->mdp_base +
 		MDSS_MDP_REG_DISP_INTF_SEL);
+	fujisan_mdp_ctl_route_secondary_vsync(ctl);
 
 	mixer = ctl->mixer_left;
 	if (mixer) {
