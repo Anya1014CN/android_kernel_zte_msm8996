@@ -24,6 +24,7 @@
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
 #include <linux/string.h>
+#include <linux/input/synaptics_dsx_v2_7_0_2nd.h>
 
 #include "mdss_dsi.h"
 #include "mdss_dba_utils.h"
@@ -841,6 +842,10 @@ int mdss_dsi_panel_reset(struct mdss_panel_data *pdata, int enable)
 	struct mdss_dsi_ctrl_pdata *ctrl_pdata = NULL;
 	struct mdss_panel_info *pinfo = NULL;
 	int i, rc = 0;
+#ifdef CONFIG_BOARD_FUJISAN
+	int touch_rc;
+	bool tddi_reset = false;
+#endif
 
 	if (pdata == NULL) {
 		pr_err("%s: Invalid input data\n", __func__);
@@ -923,6 +928,14 @@ int mdss_dsi_panel_reset(struct mdss_panel_data *pdata, int enable)
 				if (ctrl_pdata->ndx == DSI_CTRL_RIGHT &&
 				    gpio_is_valid(ctrl_pdata->rst2_gpio)) {
 					rst = ctrl_pdata->rst2_gpio;
+					touch_rc = synaptics_rmi4_secondary_panel_reset(true);
+					trace_fujisan_display_event(ctrl_pdata->ndx, 1,
+						false, "tddi_irq_quiesce", touch_rc);
+					if (touch_rc) {
+						rc = touch_rc;
+						goto exit;
+					}
+					tddi_reset = true;
 					fujisan_secondary_panel_rails(ctrl_pdata, 1);
 				}
 				pr_info("%s: ndx=%d reset gpio=%d\n",
@@ -1043,6 +1056,15 @@ int mdss_dsi_panel_reset(struct mdss_panel_data *pdata, int enable)
 	}
 
 exit:
+#ifdef CONFIG_BOARD_FUJISAN
+	if (tddi_reset) {
+		touch_rc = synaptics_rmi4_secondary_panel_reset(false);
+		trace_fujisan_display_event(ctrl_pdata->ndx, 1, false,
+			"tddi_irq_restore", touch_rc);
+		if (!rc)
+			rc = touch_rc;
+	}
+#endif
 	return rc;
 }
 

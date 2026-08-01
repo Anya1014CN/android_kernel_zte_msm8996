@@ -5544,6 +5544,66 @@ void synaptics_rmi4_suspend_public(unsigned int flag)
 }
 EXPORT_SYMBOL(synaptics_rmi4_suspend_public);
 
+#ifdef CONFIG_BOARD_FUJISAN
+/*
+ * TD4322 shares the B panel reset line.  fb1 notifications cannot own this
+ * controller because fb1 may stay blank while the inside panel is active, so
+ * MDSS calls this narrow handshake around its physical reset instead.
+ */
+int synaptics_rmi4_secondary_panel_reset(bool before_reset)
+{
+	struct synaptics_rmi4_data *rmi4_data = exp_data.rmi4_data;
+	int rc = 0;
+	int irq_rc;
+
+	if (!rmi4_data || !zte_ts_is_td4322())
+		return 0;
+
+	mutex_lock(&ts_pm_mutex);
+	if (before_reset) {
+		if (rmi4_data->suspend || rmi4_data->fujisan_panel_reset_quiesced ||
+		    !rmi4_data->irq_enabled)
+			goto out;
+
+		rc = synaptics_rmi4_irq_enable(rmi4_data, false, false);
+		if (rc < 0) {
+			dev_err(rmi4_data->pdev->dev.parent,
+				"%s: Failed to quiesce attention interrupt\n", __func__);
+			goto out;
+		}
+#ifdef CONFIG_FB
+		cancel_work_sync(&rmi4_data->syna_irq_work);
+#endif
+		rmi4_data->fujisan_panel_reset_quiesced = true;
+	} else {
+		if (!rmi4_data->fujisan_panel_reset_quiesced)
+			goto out;
+
+		rmi4_data->fujisan_panel_reset_quiesced = false;
+		if (rmi4_data->suspend)
+			goto out;
+
+		/* The panel DT's final 30 ms reset delay only releases the line.
+		 * TD4322 still NACKs I2C for roughly another 60 ms while its embedded
+		 * controller starts, so do not turn that expected window into retries. */
+		msleep(100);
+		rmi4_data->current_page = MASK_8BIT;
+		rc = synaptics_rmi4_reinit_device(rmi4_data);
+		if (rc < 0)
+			dev_err(rmi4_data->pdev->dev.parent,
+				"%s: Failed to restore TD4322 state\n", __func__);
+
+		irq_rc = synaptics_rmi4_irq_enable(rmi4_data, true, false);
+		if (!rc && irq_rc < 0)
+			rc = irq_rc;
+	}
+out:
+	mutex_unlock(&ts_pm_mutex);
+	return rc;
+}
+EXPORT_SYMBOL(synaptics_rmi4_secondary_panel_reset);
+#endif
+
 static int synaptics_rmi4_resume(struct device *dev)
 {
 	int retval;

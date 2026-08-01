@@ -111,4 +111,9 @@ struct synaptics_dsx_board_data {
 	struct synaptics_dsx_button_map *vir_button_map;
 };
 
+#ifdef CONFIG_BOARD_FUJISAN
+/* Serialize the shared TD4322 panel/touch reset line with its IRQ worker. */
+int synaptics_rmi4_secondary_panel_reset(bool before_reset);
+#endif
+
 #endif
