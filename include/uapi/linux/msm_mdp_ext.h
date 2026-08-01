@@ -191,6 +191,13 @@ VALIDATE/COMMIT FLAG CONFIGURATION
  */
 #define MDP_COMMIT_FUJISAN_WIDE		0x40000000
 
+/*
+ * Fujisan single-primary client target.  The request contains one linear
+ * 1080x1920 target; the MDSS driver expands it into an A scanout layer plus
+ * a paired B layer so the native dual-CTL command transaction remains valid.
+ */
+#define MDP_COMMIT_FUJISAN_SINGLE	0x20000000
+
 #define MDP_COMMIT_VERSION_1_0		0x00010000
 
 #define OUT_LAYER_COLOR_SPACE

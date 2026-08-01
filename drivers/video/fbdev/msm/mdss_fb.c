@@ -60,6 +60,18 @@
 
 #ifdef CONFIG_BOARD_FUJISAN
 u32 zte_bl_brightness_2;
+
+/*
+ * Zoom owns both MDSS scanout pipes from the device HWC.  Keeping this as a
+ * boot-time kernel capability (rather than enabling it from a userspace
+ * property) prevents the normal CAF fb0 path from ever accepting legacy
+ * overlay ioctls on existing boot images.  The HWC probes the read-only
+ * parameter and uses the dual-overlay transaction only when it is present.
+ */
+static bool fujisan_dual_overlay = false;
+module_param_named(fujisan_dual_overlay, fujisan_dual_overlay, bool, 0444);
+MODULE_PARM_DESC(fujisan_dual_overlay,
+	"Allow Fujisan HWC zoom overlays on both fb0 and fb1");
 #endif
 #ifdef CONFIG_FB_MSM_TRIPLE_BUFFER
 #define MDSS_FB_NUM 3
@@ -2105,7 +2117,11 @@ static int mdss_fb_blank_blank(struct msm_fb_data_type *mfd,
 	return ret;
 }
 
-static int mdss_fb_blank_unblank(struct msm_fb_data_type *mfd)
+/*
+ * Bring one fbdev panel through its normal MDSS unblank lifecycle.
+ * The caller owns any serialization against its scanout client.
+ */
+int mdss_fb_panel_unblank(struct msm_fb_data_type *mfd)
 {
 	int ret = 0;
 	int cur_power_state;
@@ -2260,7 +2276,7 @@ static int mdss_fb_blank_sub(int blank_mode, struct fb_info *info,
 	switch (blank_mode) {
 	case FB_BLANK_UNBLANK:
 		pr_debug("unblank called. cur pwr state=%d\n", cur_power_state);
-		ret = mdss_fb_blank_unblank(mfd);
+		ret = mdss_fb_panel_unblank(mfd);
 		break;
 	case BLANK_FLAG_ULP:
 		req_power_state = MDSS_PANEL_POWER_LP2;
@@ -2282,7 +2298,7 @@ static int mdss_fb_blank_sub(int blank_mode, struct fb_info *info,
 		 */
 		if (mdss_fb_is_power_off(mfd) && mfd->mdp.on_fnc) {
 			pr_debug("off --> lp. switch to on first\n");
-			ret = mdss_fb_blank_unblank(mfd);
+			ret = mdss_fb_panel_unblank(mfd);
 			if (ret)
 				break;
 		}
@@ -4906,22 +4922,29 @@ err:
  * its release/retire fence lifecycle.
  */
 #ifdef CONFIG_BOARD_FUJISAN
-static int fujisan_expand_wide_atomic_commit(struct msm_fb_data_type *mfd,
+static int fujisan_expand_atomic_commit(struct msm_fb_data_type *mfd,
 		struct mdp_layer_commit_v1 *commit,
 		struct mdp_input_layer **layer_list)
 {
 	struct mdp_input_layer *client = *layer_list;
-	struct mdp_input_layer *wide;
+	struct mdp_input_layer *expanded;
 	struct mdp_input_layer *layer;
+	bool wide = commit->flags & MDP_COMMIT_FUJISAN_WIDE;
+	bool single = commit->flags & MDP_COMMIT_FUJISAN_SINGLE;
 
-	if (!(commit->flags & MDP_COMMIT_FUJISAN_WIDE))
+	if (!wide && !single)
 		return 0;
+	if (wide && single) {
+		pr_err("fujisan: conflicting atomic topology flags\n");
+		return -EINVAL;
+	}
 
 	if (!mfd || mfd->index != 0 ||
 	    mfd->split_mode != MDP_DUAL_LM_DUAL_DISPLAY ||
 	    !client || commit->input_layer_cnt != 1 ||
 	    commit->output_layer || commit->dest_scaler_cnt) {
-		pr_err("fujisan-wide: invalid atomic topology\n");
+		pr_err("fujisan-%s: invalid atomic topology\n",
+			wide ? "wide" : "single");
 		return -EINVAL;
 	}
 
@@ -4930,47 +4953,55 @@ static int fujisan_expand_wide_atomic_commit(struct msm_fb_data_type *mfd,
 	    (layer->buffer.format != MDP_RGBA_8888 &&
 	     layer->buffer.format != MDP_RGBX_8888) ||
 	    layer->buffer.plane_count != 1 || layer->buffer.planes[0].fd < 0 ||
-	    layer->buffer.width < 2160 || layer->buffer.height < 1920 ||
+	    layer->buffer.width < (wide ? 2160 : 1080) ||
+	    layer->buffer.height < 1920 ||
 	    layer->src_rect.x || layer->src_rect.y ||
-	    layer->src_rect.w != 2160 || layer->src_rect.h != 1920 ||
+	    layer->src_rect.w != (wide ? 2160 : 1080) ||
+	    layer->src_rect.h != 1920 ||
 	    layer->dst_rect.x || layer->dst_rect.y ||
-	    layer->dst_rect.w != 2160 || layer->dst_rect.h != 1920) {
-		pr_err("fujisan-wide: require one full linear RGBA/RGBX target\n");
+	    layer->dst_rect.w != (wide ? 2160 : 1080) ||
+	    layer->dst_rect.h != 1920) {
+		pr_err("fujisan-%s: require one full linear RGBA/RGBX target\n",
+			wide ? "wide" : "single");
 		return -EINVAL;
 	}
 
-	wide = kcalloc(2, sizeof(*wide), GFP_KERNEL);
-	if (!wide)
+	expanded = kcalloc(2, sizeof(*expanded), GFP_KERNEL);
+	if (!expanded)
 		return -ENOMEM;
 
-	/* Fujisan's native stage-1 CTL numbering does not match its physical
-	 * left/right wiring: VIG0 scans physical A and VIG1 scans physical B.
-	 * Keep logical C[0,1080) on A and C[1080,2160) on B. */
-	wide[0] = *layer;
-	wide[0].pipe_ndx = BIT(MDSS_MDP_SSPP_VIG0);
-	wide[0].src_rect = (struct mdp_rect) { 0, 0, 1080, 1920 };
-	wide[0].dst_rect = (struct mdp_rect) { 0, 0, 1080, 1920 };
+	/* Native stage-1 has a single C transaction across both command CTLs.
+	 * VIG0 carries A's left half and VIG1 carries B's right half.  In single
+	 * mode B stays dark through its backlight policy but still receives the
+	 * paired layer required to arm A's command-mode update. */
+	expanded[0] = *layer;
+	expanded[0].pipe_ndx = BIT(MDSS_MDP_SSPP_VIG0);
+	expanded[0].src_rect = (struct mdp_rect) { 0, 0, 1080, 1920 };
+	expanded[0].dst_rect = (struct mdp_rect) { 0, 0, 1080, 1920 };
 
-	wide[1] = *layer;
-	wide[1].pipe_ndx = BIT(MDSS_MDP_SSPP_VIG1);
-	wide[1].src_rect = (struct mdp_rect) { 1080, 0, 1080, 1920 };
-	wide[1].dst_rect = (struct mdp_rect) { 1080, 0, 1080, 1920 };
+	expanded[1] = *layer;
+	expanded[1].pipe_ndx = BIT(MDSS_MDP_SSPP_VIG1);
+	expanded[1].src_rect = (struct mdp_rect) {
+		wide ? 1080 : 0, 0, 1080, 1920 };
+	expanded[1].dst_rect = (struct mdp_rect) { 1080, 0, 1080, 1920 };
 
 	kfree(client);
-	*layer_list = wide;
-	commit->input_layers = wide;
+	*layer_list = expanded;
+	commit->input_layers = expanded;
 	commit->input_layer_cnt = 2;
-	commit->flags &= ~MDP_COMMIT_FUJISAN_WIDE;
+	commit->flags &= ~(MDP_COMMIT_FUJISAN_WIDE | MDP_COMMIT_FUJISAN_SINGLE);
 
-	pr_debug("fujisan-wide: C[0,1080)->A/VIG0, C[1080,2160)->B/VIG1\n");
+	pr_debug("fujisan-%s: C[0,1080)->A/VIG0, %s->B/VIG1\n",
+		wide ? "wide" : "single", wide ? "C[1080,2160)" : "C[0,1080)");
 	return 0;
 }
 #else
-static int fujisan_expand_wide_atomic_commit(struct msm_fb_data_type *mfd,
+static int fujisan_expand_atomic_commit(struct msm_fb_data_type *mfd,
 		struct mdp_layer_commit_v1 *commit,
 		struct mdp_input_layer **layer_list)
 {
-	return (commit->flags & MDP_COMMIT_FUJISAN_WIDE) ? -EOPNOTSUPP : 0;
+	return (commit->flags & (MDP_COMMIT_FUJISAN_WIDE |
+		MDP_COMMIT_FUJISAN_SINGLE)) ? -EOPNOTSUPP : 0;
 }
 #endif
 
@@ -5060,7 +5091,7 @@ static int mdss_fb_atomic_commit_ioctl(struct fb_info *info,
 
 		commit.commit_v1.input_layers = layer_list;
 
-		ret = fujisan_expand_wide_atomic_commit(mfd, &commit.commit_v1,
+		ret = fujisan_expand_atomic_commit(mfd, &commit.commit_v1,
 				&layer_list);
 		if (ret)
 			goto err;
@@ -5340,7 +5371,11 @@ int mdss_fb_do_ioctl(struct fb_info *info, unsigned int cmd,
 	 * The generic fbdev gate below otherwise rejects that ABI before the MDP
 	 * overlay implementation sees it.  Keep it disabled on every other fb.
 	 */
-	if (check_not_supported_ioctl(cmd) && mfd->index != 1) {
+	if (check_not_supported_ioctl(cmd) && mfd->index != 1
+#ifdef CONFIG_BOARD_FUJISAN
+		&& !(fujisan_dual_overlay && mfd->index == 0)
+#endif
+		) {
 		pr_err("Unsupported ioctl\n");
 		return -EINVAL;
 	}
