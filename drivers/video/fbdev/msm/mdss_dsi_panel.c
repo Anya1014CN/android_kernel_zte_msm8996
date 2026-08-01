@@ -29,6 +29,7 @@
 #include "mdss_dba_utils.h"
 #include "mdss_debug.h"
 #include "mdss_livedisplay.h"
+#include "mdss_mdp_trace.h"
 
 #define DT_CMD_HDR 6
 #define DEFAULT_MDP_TRANSFER_TIME 14000
@@ -41,6 +42,7 @@ DEFINE_LED_TRIGGER(bl_led_trigger);
 static struct mdss_panel_data *zte_panel_data;
 static char is_td4322_panel;
 static char is_2nd_td4322_fw_update;
+static DEFINE_MUTEX(fujisan_tddi_bootstrap_lock);
 
 /* ZTE's Oreo panel driver exposed these controls for LiveDisplay.  The
  * msm8996 rebase retained the panel command transport but lost the small
@@ -225,6 +227,8 @@ static void fujisan_secondary_panel_rails(struct mdss_dsi_ctrl_pdata *ctrl, int 
 	if (!ctrl)
 		return;
 
+	trace_fujisan_display_event(ctrl->ndx, 1, false,
+		enable ? "rail_enable" : "rail_disable", 0);
 	fujisan_lazy_get_secondary_rails(ctrl);
 
 	if (enable) {
@@ -321,15 +325,77 @@ EXPORT_SYMBOL(zte_ts_is_td4322);
 
 void zte_lcd_power_ctrl_func(int enable)
 {
+	struct mdss_dsi_ctrl_pdata *ctrl;
+	int rc = 0;
+	int i;
+
 	/*
-	 * Synaptics calls this while binding/suspending the secondary TDDI.
-	 * It used to request GPIO69 and toggle the display rails directly, so
-	 * mdss_dsi_panel_reset() later saw -EBUSY and continued without owning
-	 * the reset line.  Only the panel lifecycle may own reset and rails.
+	 * The secondary TDDI probes before fb1 is normally powered.  The OEM
+	 * driver therefore brought up the B-panel rails and pulsed its reset for
+	 * the probe.  Keep that sequencing in the panel driver, but release the
+	 * reset GPIO before returning: the normal MDSS panel lifecycle is then
+	 * its sole long-lived owner and will never see a tolerated -EBUSY.
 	 */
-	is_2nd_td4322_fw_update = !!enable;
-	pr_info("fujisan-mdss: secondary TDDI request=%d; panel lifecycle owns reset/rails\n",
-		enable);
+	if (!is_td4322_panel || !zte_panel_data)
+		goto out;
+
+	ctrl = container_of(zte_panel_data, struct mdss_dsi_ctrl_pdata,
+		panel_data);
+	if (ctrl->ndx != DSI_CTRL_RIGHT ||
+	    !mdss_panel_is_power_off(zte_panel_data->panel_info.panel_power_state))
+		goto out;
+
+	mutex_lock(&fujisan_tddi_bootstrap_lock);
+	if (enable) {
+		is_2nd_td4322_fw_update = 1;
+		fujisan_secondary_panel_rails(ctrl, 1);
+
+		if (gpio_is_valid(ctrl->rst2_gpio)) {
+			rc = gpio_request(ctrl->rst2_gpio, "disp_rst2_n");
+			if (rc) {
+				pr_err("%s: request secondary reset gpio failed, rc=%d\n",
+					__func__, rc);
+				fujisan_secondary_panel_rails(ctrl, 0);
+				is_2nd_td4322_fw_update = 0;
+				goto unlock;
+			}
+
+			if (zte_panel_data->panel_info.rst_seq_len) {
+				rc = gpio_direction_output(ctrl->rst2_gpio,
+					zte_panel_data->panel_info.rst_seq[0]);
+				if (rc) {
+					pr_err("%s: set secondary reset gpio failed, rc=%d\n",
+						__func__, rc);
+					gpio_free(ctrl->rst2_gpio);
+					fujisan_secondary_panel_rails(ctrl, 0);
+					is_2nd_td4322_fw_update = 0;
+					goto unlock;
+				}
+			}
+
+			for (i = 0;
+			     i < zte_panel_data->panel_info.rst_seq_len; ++i) {
+				gpio_set_value(ctrl->rst2_gpio,
+					zte_panel_data->panel_info.rst_seq[i]);
+				if (zte_panel_data->panel_info.rst_seq[++i])
+					usleep_range(
+						zte_panel_data->panel_info.rst_seq[i] * 1000,
+						zte_panel_data->panel_info.rst_seq[i] * 1000);
+			}
+			gpio_free(ctrl->rst2_gpio);
+		}
+	} else {
+		fujisan_secondary_panel_rails(ctrl, 0);
+		is_2nd_td4322_fw_update = 0;
+	}
+
+unlock:
+	trace_fujisan_display_event(ctrl->ndx, 1, false,
+		"tddi_bootstrap", rc);
+	mutex_unlock(&fujisan_tddi_bootstrap_lock);
+out:
+	pr_info("fujisan-mdss: secondary TDDI bootstrap=%d rc=%d\n",
+		enable, rc);
 	msleep(200);
 }
 EXPORT_SYMBOL(zte_lcd_power_ctrl_func);
@@ -877,6 +943,9 @@ int mdss_dsi_panel_reset(struct mdss_panel_data *pdata, int enable)
 						usleep_range(pinfo->rst_seq[i] * 1000,
 							pinfo->rst_seq[i] * 1000);
 				}
+				trace_fujisan_display_event(ctrl_pdata->ndx,
+					ctrl_pdata->ndx == DSI_CTRL_RIGHT ? 1 : 0,
+					false, "panel_reset", rc);
 			}
 #else
 			if (pdata->panel_info.rst_seq_len) {
@@ -968,6 +1037,9 @@ int mdss_dsi_panel_reset(struct mdss_panel_data *pdata, int enable)
 			gpio_set_value(ctrl_pdata->lcd_mode_sel_gpio, 0);
 			gpio_free(ctrl_pdata->lcd_mode_sel_gpio);
 		}
+		trace_fujisan_display_event(ctrl_pdata->ndx,
+			ctrl_pdata->ndx == DSI_CTRL_RIGHT ? 1 : 0,
+			false, "panel_power_off", 0);
 	}
 
 exit:

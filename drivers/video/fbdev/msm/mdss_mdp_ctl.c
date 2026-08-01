@@ -4290,6 +4290,8 @@ static void fujisan_mdp_ctl_route_secondary_vsync(struct mdss_mdp_ctl *ctl)
 		pr_info("fujisan-mdss: fb%d ctl%d intf%d %s VSYNC_SEL %#x -> %#x\n",
 			ctl->mfd->index, ctl->num, ctl->intf_num,
 			ctl->is_video_mode ? "video" : "cmd", before, after);
+		trace_fujisan_display_event(ctl->num, ctl->mfd->index,
+			ctl->is_video_mode, "vsync_route", 0);
 	}
 #endif
 }

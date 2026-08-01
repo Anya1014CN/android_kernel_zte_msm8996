@@ -462,6 +462,35 @@ TRACE_EVENT(mdp_trace_counter,
 			__get_str(counter_name), __entry->value)
 );
 
+/*
+ * Fujisan's two physical panels use independent MDSS lifecycles.  Keep
+ * board-specific P0 evidence in the existing mdss trace family so it can be
+ * captured together with mdp_cmd_kickoff and mdp_cmd_pingpong_done.
+ */
+TRACE_EVENT(fujisan_display_event,
+	TP_PROTO(u32 controller, u32 fb, bool video_mode, const char *event,
+		int rc),
+	TP_ARGS(controller, fb, video_mode, event, rc),
+	TP_STRUCT__entry(
+			__field(u32, controller)
+			__field(u32, fb)
+			__field(bool, video_mode)
+			__string(event, event)
+			__field(int, rc)
+	),
+	TP_fast_assign(
+			__entry->controller = controller;
+			__entry->fb = fb;
+			__entry->video_mode = video_mode;
+			__assign_str(event, event);
+			__entry->rc = rc;
+	),
+	TP_printk("ctrl=%u fb=%u mode=%s event=%s rc=%d",
+			__entry->controller, __entry->fb,
+			__entry->video_mode ? "video" : "cmd",
+			__get_str(event), __entry->rc)
+);
+
 TRACE_EVENT(rotator_bw_ao_as_context,
 	TP_PROTO(u32 state),
 	TP_ARGS(state),
