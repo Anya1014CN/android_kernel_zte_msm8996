@@ -280,6 +280,48 @@ static int lcd_backlight_registered;
 
 #ifdef CONFIG_BOARD_FUJISAN
 static int lcd_backlight_2_registered;
+
+/* Stage-1 registers both physical panels under fb0 as an MDP native dual
+ * display.  fb1 is then WFD, not the right panel, so the historic fb-index
+ * lookup below silently sends lcd-backlight-2 to a writeback device.  Reach
+ * the split CTL's panel directly while C owns the two scanout pipes. */
+static bool fujisan_set_native_secondary_backlight(enum led_brightness value)
+{
+	struct msm_fb_data_type *mfd;
+	struct mdss_mdp_ctl *ctl;
+	struct mdss_mdp_ctl *split_ctl;
+	struct mdss_panel_data *panel;
+	int bl_lvl;
+
+	if (!fbi_list[0] || !fbi_list[0]->par)
+		return false;
+	mfd = fbi_list[0]->par;
+	if (mfd->index != 0 ||
+	    mfd->split_mode != MDP_DUAL_LM_DUAL_DISPLAY)
+		return false;
+
+	ctl = mfd_to_ctl(mfd);
+	split_ctl = ctl ? mdss_mdp_get_split_ctl(ctl) : NULL;
+	panel = split_ctl ? split_ctl->panel_data : NULL;
+	if (!panel || !panel->set_backlight ||
+	    panel->panel_info.brightness_max <= 0)
+		return false;
+
+	if (value > panel->panel_info.brightness_max)
+		value = panel->panel_info.brightness_max;
+	MDSS_BRIGHT_TO_BL(bl_lvl, value, panel->panel_info.bl_max,
+			  panel->panel_info.brightness_max);
+	if (!bl_lvl && value)
+		bl_lvl = 1;
+
+	mutex_lock(&mfd->bl_lock);
+	panel->set_backlight(panel, bl_lvl);
+	mutex_unlock(&mfd->bl_lock);
+	pr_info("fujisan: secondary backlight ctl%d level=%d\n",
+		split_ctl->num, bl_lvl);
+	return true;
+}
+
 static void mdss_fb_set_bl_brightness_2(struct led_classdev *led_cdev,
 				      enum led_brightness value)
 {
@@ -292,6 +334,9 @@ static void mdss_fb_set_bl_brightness_2(struct led_classdev *led_cdev,
 		zte_bl_brightness_2 = 1;
 	else
 		zte_bl_brightness_2 = 0;
+
+	if (fujisan_set_native_secondary_backlight(value))
+		return;
 
 	/* Also apply brightness to secondary framebuffer when present. */
 	for (i = 0; i < fbi_list_index; i++) {
@@ -4898,15 +4943,17 @@ static int fujisan_expand_wide_atomic_commit(struct msm_fb_data_type *mfd,
 	if (!wide)
 		return -ENOMEM;
 
-	/* fb0/ctl0 is physical B (right); the split CTL is physical A (left). */
+	/* Fujisan's native stage-1 CTL numbering does not match its physical
+	 * left/right wiring: VIG0 scans physical A and VIG1 scans physical B.
+	 * Keep logical C[0,1080) on A and C[1080,2160) on B. */
 	wide[0] = *layer;
 	wide[0].pipe_ndx = BIT(MDSS_MDP_SSPP_VIG0);
-	wide[0].src_rect = (struct mdp_rect) { 1080, 0, 1080, 1920 };
+	wide[0].src_rect = (struct mdp_rect) { 0, 0, 1080, 1920 };
 	wide[0].dst_rect = (struct mdp_rect) { 0, 0, 1080, 1920 };
 
 	wide[1] = *layer;
 	wide[1].pipe_ndx = BIT(MDSS_MDP_SSPP_VIG1);
-	wide[1].src_rect = (struct mdp_rect) { 0, 0, 1080, 1920 };
+	wide[1].src_rect = (struct mdp_rect) { 1080, 0, 1080, 1920 };
 	wide[1].dst_rect = (struct mdp_rect) { 1080, 0, 1080, 1920 };
 
 	kfree(client);
@@ -4915,7 +4962,7 @@ static int fujisan_expand_wide_atomic_commit(struct msm_fb_data_type *mfd,
 	commit->input_layer_cnt = 2;
 	commit->flags &= ~MDP_COMMIT_FUJISAN_WIDE;
 
-	pr_debug("fujisan-wide: C[0,1080)->A, C[1080,2160)->B\n");
+	pr_debug("fujisan-wide: C[0,1080)->A/VIG0, C[1080,2160)->B/VIG1\n");
 	return 0;
 }
 #else
