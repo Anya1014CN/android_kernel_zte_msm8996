@@ -3665,6 +3665,20 @@ static int mdss_mdp_cmd_intfs_setup(struct mdss_mdp_ctl *ctl,
 	sctl = mdss_mdp_get_split_ctl(ctl);
 	ctx = &mdss_mdp_cmd_ctx_list[session];
 	if (ctx->ref_cnt) {
+		/*
+		 * Continuous-splash handoff has already installed this command
+		 * context on the same CTL, while deliberately keeping the panel
+		 * power state below ON until the first Android frame owns it.  That
+		 * first frame must adopt the handoff context instead of treating it
+		 * as a second interface owner.  A different CTL is still an error
+		 * and follows the normal panel-always-on recovery path below.
+		 */
+		if (ctx->ctl == ctl) {
+			ctl->intf_ctx[MASTER_CTX] = ctx;
+			pr_debug("%s: reusing handed-off cmd ctx for intf %d ctl %d\n",
+				__func__, session, ctl->num);
+			return 0;
+		}
 		if (mdss_panel_is_power_on(ctx->panel_power_state)) {
 			pr_debug("%s: cmd_start with panel always on\n",
 				__func__);

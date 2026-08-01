@@ -438,6 +438,10 @@
 
 &mdss_dsi {
 	hw-config = "split_dsi";
+	/* Test-only: create the MDP dual-display topology during fb registration.
+	 * The final Fujisan include overrides hw-config back to dual_dsi, keeping
+	 * the two physical panels on their independent PLLs. */
+	zte,fujisan-composite-stage1;
 };
 
 &mdss_dsi0 {

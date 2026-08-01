@@ -3127,6 +3127,18 @@ static int mdss_mdp_probe(struct platform_device *pdev)
 		 */
 		if (split_display)
 			num_of_display_on--;
+
+#ifdef CONFIG_BOARD_FUJISAN
+		/*
+		 * LK leaves both Fujisan DSI interfaces enabled, but fb1 is a
+		 * separately power-managed panel and is deliberately not a
+		 * continuous-splash consumer (see mdss_fb.c).  Count only fb0's
+		 * splash handoff here: otherwise the one remaining global splash
+		 * reference permanently rejects fb1's first legacy overlay commit.
+		 */
+		if (num_of_display_on > 1)
+			num_of_display_on = 1;
+#endif
 	}
 	if (!num_of_display_on) {
 		mdss_mdp_footswitch_ctrl_splash(false);

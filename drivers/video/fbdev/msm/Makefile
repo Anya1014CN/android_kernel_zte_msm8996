@@ -16,6 +16,7 @@ mdss-mdp-objs += mdss_rotator.o
 mdss-mdp-objs += mdss_mdp_overlay.o
 mdss-mdp-objs += mdss_mdp_layer.o
 mdss-mdp-objs += mdss_mdp_splash_logo.o
+mdss-mdp-objs += mdss_mdp_fujisan_composite.o
 mdss-mdp-objs += mdss_mdp_cdm.o
 mdss-mdp-objs += mdss_smmu.o
 mdss-mdp-objs += mdss_mdp_wfd.o
