@@ -5895,6 +5895,19 @@ static int mdss_mdp_overlay_off(struct msm_fb_data_type *mfd)
 	mutex_lock(&mdp5_data->ov_lock);
 
 	mdss_mdp_overlay_free_fb_pipe(mfd);
+	/*
+	 * Cursor SSPPs have their own overlay IDs.  Moving their pipe to the
+	 * generic cleanup list is not enough: cursor_ndx would still point at
+	 * that released pipe after panel power collapse.  The next unblank can
+	 * then re-arm CURSOR0/1 with the old coherent-buffer IOVA before a new
+	 * cursor transaction recreates it, which is fatal on the MDP SMMU domain.
+	 *
+	 * Release and invalidate both IDs while ov_lock is held, just as the
+	 * cursor-disable path does.  need_cleanup below will commit the removal
+	 * before the CTL is stopped.
+	 */
+	mdss_mdp_curor_pipe_cleanup(mfd, CURSOR_PIPE_LEFT);
+	mdss_mdp_curor_pipe_cleanup(mfd, CURSOR_PIPE_RIGHT);
 
 	mixer = mdss_mdp_mixer_get(mdp5_data->ctl, MDSS_MDP_MIXER_MUX_LEFT);
 	if (mixer)
