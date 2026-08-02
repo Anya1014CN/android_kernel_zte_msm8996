@@ -367,6 +367,16 @@ static bool fujisan_set_native_secondary_backlight(enum led_brightness value)
 	if (!panel || !panel->set_backlight ||
 	    panel->panel_info.brightness_max <= 0)
 		return false;
+	/*
+	 * lcd-backlight-2 is also written by the posture daemon after the
+	 * primary display power callback.  At that point panel blanking may have
+	 * already disabled the paired CTL and DSI clocks.  Do not queue either a
+	 * brightness command or DCS 0x28/0x29 unless the owning fb is fully
+	 * interactive; otherwise a late command DMA can wedge both CTLs and make
+	 * the next power-key wake fail.
+	 */
+	if (!mdss_fb_is_power_on_interactive(mfd))
+		return true;
 
 	if (value > panel->panel_info.brightness_max)
 		value = panel->panel_info.brightness_max;
