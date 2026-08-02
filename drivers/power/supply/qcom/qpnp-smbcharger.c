@@ -5906,7 +5906,7 @@ static int smbchg_usb_set_property(struct power_supply *psy,
 		break;
 	case POWER_SUPPLY_PROP_CURRENT_MAX:
 	case POWER_SUPPLY_PROP_SDP_CURRENT_MAX:
-		smbchg_set_sdp_current(chip, val->intval);
+		return smbchg_set_sdp_current(chip, val->intval);
 	default:
 		return -EINVAL;
 	}

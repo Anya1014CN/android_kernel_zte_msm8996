@@ -615,6 +615,12 @@
 	qcom,battery-data = <&mtp_batterydata>;
 };
 
+/* The Pericom controller supplies the USB device/host role events. */
+&usb3 {
+	extcon = <&pericom_typec>;
+	qcom,check-for-float;
+};
+
 &i2c_7 {
 	smb1351-charger@1d {
 		compatible = "qcom,smb1351-charger";

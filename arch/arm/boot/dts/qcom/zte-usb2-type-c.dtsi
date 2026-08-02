@@ -14,12 +14,12 @@
 /* Segment 1: Type-C Chips main DTS config */
 &i2c_7 {
 
-	pericom-type-c@3d {
+	pericom_typec: pericom-type-c@3d {
 		compatible = "pericom,usb-type-c";
 		reg = <0x3d>;
 		vdd_io-supply = <&pm8994_l29>;
 		interrupt-parent = <&spmi_bus>;
-		interrupts = <0x0 0xcd 0x0>;  /* PM8994 14, TRIGGER_FALLING */
+		interrupts = <0x0 0xcd 0x0 0x2>;  /* PM8994 14, falling edge */
 		pericom,enb-gpio = <&pm8994_mpps 5 0x0>;/* active high */
 		pericom,disable-on-suspend;
 	};
@@ -29,7 +29,7 @@
 		reg = <0x67>;
 		vdd_io-supply = <&pm8994_l29>;
 		interrupt-parent = <&spmi_bus>;
-		interrupts = <0x0 0xcd 0x0>;  /* PM8994 14, TRIGGER_FALLING */
+		interrupts = <0x0 0xcd 0x0 0x2>;  /* PM8994 14, falling edge */
 		ti,enb-gpio = <&pm8994_mpps 5 0x0>;  /* active high */
 	};
 };
