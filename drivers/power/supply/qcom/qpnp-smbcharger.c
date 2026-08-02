@@ -3698,8 +3698,14 @@ static int smbchg_config_chg_battery_type(struct smbchg_chip *chip)
 		return 0;
 	}
 
+	/*
+	 * The fuel gauge has already identified this pack.  Reuse that type
+	 * here instead of relying on the raw battery-ID resistor: fujisan's
+	 * P996A20 pack reports about 10k while its DTS profile is keyed by
+	 * battery type.
+	 */
 	profile_node = of_batterydata_get_best_profile(batt_node,
-				prop.intval / 1000, NULL);
+				prop.intval / 1000, chip->battery_type);
 	if (IS_ERR_OR_NULL(profile_node)) {
 		rc = PTR_ERR(profile_node);
 		pr_err("couldn't find profile handle %d\n", rc);

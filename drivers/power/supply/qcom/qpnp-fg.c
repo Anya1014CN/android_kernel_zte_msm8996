@@ -6500,6 +6500,20 @@ wait:
 					PROFILE_COMPARE_LEN) == 0;
 	if (reg & PROFILE_INTEGRITY_BIT) {
 		fg_cap_learning_load_data(chip);
+		/*
+		 * A warm AP reboot on fujisan can leave CPRED temporarily far
+		 * from VBAT.  Re-running the first estimate in that state corrupts
+		 * the learned SOC/CC even though the resident P996A20 profile is
+		 * valid and unchanged.  Preserve that state; a missing integrity
+		 * bit or changed profile still takes the normal reload path.
+		 */
+#ifdef CONFIG_BOARD_FUJISAN
+		if (!fg_is_batt_empty(chip) && profiles_same) {
+			if (!vbat_in_range && (fg_debug_mask & FG_STATUS))
+				pr_info("keeping valid profile despite Vbat estimate delta\n");
+			goto done;
+		}
+#else
 		if (vbat_in_range && !fg_is_batt_empty(chip) && profiles_same) {
 			if (fg_debug_mask & FG_STATUS)
 				pr_info("Battery profiles same, using default\n");
@@ -6507,6 +6521,7 @@ wait:
 				schedule_work(&chip->dump_sram);
 			goto done;
 		}
+#endif
 	} else {
 		pr_info("Battery profile not same, clearing data\n");
 		clear_cycle_counter(chip);
