@@ -2,7 +2,7 @@
  * Stock-compat hall_status sysfs for ZTE Axon M (fujisan).
  * Official dual-LCD stack reads:
  *   /sys/module/ah1898/parameters/hall_status
- * Values match mxm1120: 1=A (0°), 2=B (open/mid), 3=C (180°).
+ * Values match mxm1120: 1=A (folded), 2=B (opening), 3=C (fully unfolded).
  */
 #include <linux/module.h>
 #include <linux/kernel.h>
@@ -29,7 +29,7 @@ static const struct kernel_param_ops hall_status_ops = {
 
 static int hall_status;
 module_param_cb(hall_status, &hall_status_ops, &hall_status, 0444);
-MODULE_PARM_DESC(hall_status, "1=A closed, 2=B open, 3=C closed(B face)");
+MODULE_PARM_DESC(hall_status, "1=A folded, 2=B opening, 3=C fully unfolded");
 
 static int __init ah1898_init(void)
 {

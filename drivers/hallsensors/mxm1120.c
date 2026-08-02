@@ -66,11 +66,12 @@
 #define M1120_TIMEOUT_WAKELOCK					(10)
 
 /* Exported for userspace / stock-compat ah1898 module:
- * 1=A (0° closed, panel A out), 2=B (open / mid), 3=C (180° closed, panel B out)
+ * 1=A (folded), 2=B (opening), 3=C (fully unfolded / zoom).
+ * Android's SW_LID is a two-state posture signal: only A is folded.
  */
 static int g_m1120_hall_status = M1120_RESULT_STATUS_A;
 module_param_named(hall_status, g_m1120_hall_status, int, 0444);
-MODULE_PARM_DESC(hall_status, "Fujisan hall posture: 1=A 2=B(open) 3=C");
+MODULE_PARM_DESC(hall_status, "Fujisan hall posture: 1=A(folded) 2=B(opening) 3=C(unfolded)");
 
 void m1120_export_hall_status_set(int status)
 {
@@ -142,8 +143,10 @@ static void m1120_publish_status(m1120_data_t *p_data, int status)
 		return;
 
 	g_m1120_hall_status = status;
-	/* STATUS_B (~open/mid): lid open. A/C: closed on A or B face. */
-	lid_closed = (status != M1120_RESULT_STATUS_B);
+	/* B and C both expose the two-panel logical display.  C used to be
+	 * reported as closed here even though fujisan_halld/HWC correctly select
+	 * zoom for it, leaving DeviceState and WindowManager in folded posture. */
+	lid_closed = (status == M1120_RESULT_STATUS_A);
 	input_report_switch(p_data->input_dev, SW_LID, lid_closed);
 	input_report_rel(p_data->input_dev, M1120_EVENT_CODE, status);
 	input_sync(p_data->input_dev);
@@ -2112,4 +2115,3 @@ MODULE_AUTHOR("shpark <seunghwan.park@magnachip.com>");
 MODULE_VERSION(M1120_DRIVER_VERSION);
 MODULE_DESCRIPTION("M1120 hallswitch driver");
 MODULE_LICENSE("GPL");
-
