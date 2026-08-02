@@ -293,7 +293,15 @@ static int lcd_backlight_registered;
 
 #ifdef CONFIG_BOARD_FUJISAN
 static int lcd_backlight_2_registered;
-static bool fujisan_secondary_display_on = true;
+/* B starts disabled until the posture daemon explicitly selects wide mode.
+ * Global screen blanking only changes its DCS brightness, so this state is
+ * retained across sleep/wake; a folded transition sends Display Off. */
+static bool fujisan_secondary_display_on;
+
+bool mdss_fb_fujisan_secondary_display_is_on(void)
+{
+	return READ_ONCE(fujisan_secondary_display_on);
+}
 
 /*
  * Stage-1 must keep B's command-mode CTL participating even while folded,
@@ -346,18 +354,18 @@ static int fujisan_set_secondary_display_state(bool on)
  * display.  fb1 is then WFD, not the right panel, so the historic fb-index
  * lookup below silently sends lcd-backlight-2 to a writeback device.  Reach
  * the split CTL's panel directly while C owns the two scanout pipes. */
-static bool fujisan_set_native_secondary_backlight(enum led_brightness value)
+/* The caller owns fb0's bl_lock.  This keeps paired DSI brightness writes in
+ * the same serialized lifecycle as the primary panel instead of racing it
+ * from userspace after a blank transition has started. */
+static bool fujisan_set_native_secondary_backlight_locked(
+	struct msm_fb_data_type *mfd, enum led_brightness value)
 {
-	struct msm_fb_data_type *mfd;
 	struct mdss_mdp_ctl *ctl;
 	struct mdss_mdp_ctl *split_ctl;
 	struct mdss_panel_data *panel;
 	int bl_lvl;
 
-	if (!fbi_list[0] || !fbi_list[0]->par)
-		return false;
-	mfd = fbi_list[0]->par;
-	if (mfd->index != 0 ||
+	if (!mfd || mfd->index != 0 ||
 	    mfd->split_mode != MDP_DUAL_LM_DUAL_DISPLAY)
 		return false;
 
@@ -377,7 +385,6 @@ static bool fujisan_set_native_secondary_backlight(enum led_brightness value)
 	 */
 	if (!mdss_fb_is_power_on_interactive(mfd))
 		return true;
-
 	if (value > panel->panel_info.brightness_max)
 		value = panel->panel_info.brightness_max;
 	MDSS_BRIGHT_TO_BL(bl_lvl, value, panel->panel_info.bl_max,
@@ -385,8 +392,7 @@ static bool fujisan_set_native_secondary_backlight(enum led_brightness value)
 	if (!bl_lvl && value)
 		bl_lvl = 1;
 
-	mutex_lock(&mfd->bl_lock);
-	if (!value && fujisan_secondary_display_on) {
+	if (!value) {
 		/* 0x51/0x53 first prevents a visible frame during DCS 0x28. */
 		panel->set_backlight(panel, bl_lvl);
 		if (fujisan_set_secondary_display_state(false) > 0)
@@ -398,10 +404,23 @@ static bool fujisan_set_native_secondary_backlight(enum led_brightness value)
 		}
 		panel->set_backlight(panel, bl_lvl);
 	}
-	mutex_unlock(&mfd->bl_lock);
 	pr_info("fujisan: secondary backlight ctl%d level=%d\n",
 		split_ctl->num, bl_lvl);
 	return true;
+}
+
+static bool fujisan_set_native_secondary_backlight(enum led_brightness value)
+{
+	struct msm_fb_data_type *mfd;
+	bool handled;
+
+	if (!fbi_list[0] || !fbi_list[0]->par)
+		return false;
+	mfd = fbi_list[0]->par;
+	mutex_lock(&mfd->bl_lock);
+	handled = fujisan_set_native_secondary_backlight_locked(mfd, value);
+	mutex_unlock(&mfd->bl_lock);
+	return handled;
 }
 
 static void mdss_fb_set_bl_brightness_2(struct led_classdev *led_cdev,

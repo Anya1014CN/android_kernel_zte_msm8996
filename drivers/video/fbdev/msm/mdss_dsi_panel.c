@@ -620,6 +620,7 @@ static struct dsi_cmd_desc backlight_cmd[] = {
 #ifdef CONFIG_BOARD_FUJISAN
 static int fujisan_bl_power_on_flag;
 extern u32 zte_bl_brightness_2;
+extern bool mdss_fb_fujisan_secondary_display_is_on(void);
 #endif
 
 static void mdss_dsi_panel_bklt_dcs(struct mdss_dsi_ctrl_pdata *ctrl, int level)
@@ -1446,6 +1447,18 @@ static void mdss_dsi_panel_bl_ctrl(struct mdss_panel_data *pdata,
 		break;
 	case BL_DCS_CMD:
 		if (!mdss_dsi_sync_wait_enable(ctrl_pdata)) {
+#ifdef CONFIG_BOARD_FUJISAN
+			/* Keep an unfolded B on the same native DCS transaction as A.
+			 * This is the lowest common path for Lights writes and the panel
+			 * driver's own wake restore, so no userspace brightness watcher is
+			 * needed.  Folding clears the gate through the explicit B LED path. */
+			if (ctrl_pdata->ndx == DSI_CTRL_LEFT &&
+			    mdss_fb_fujisan_secondary_display_is_on()) {
+				sctrl = mdss_dsi_get_other_ctrl(ctrl_pdata);
+				if (sctrl)
+					mdss_dsi_panel_bklt_dcs(sctrl, bl_level);
+			}
+#endif
 			mdss_dsi_panel_bklt_dcs(ctrl_pdata, bl_level);
 			break;
 		}
