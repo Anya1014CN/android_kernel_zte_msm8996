@@ -137,9 +137,16 @@ static int piusb_read_regdata(struct i2c_client *i2c)
 		    pi_usb->reg_data.intr_status, pi_usb->reg_data.port_status);
 
 	if (!pi_usb->reg_data.intr_status) {
-		dev_err(&i2c->dev, "intr_status is 0!, ignore interrupt\n");
-		pi_usb->attach_state = false;
-		return -EINVAL;
+		/*
+		 * A cable can already be attached when the driver probes.  In that
+		 * case the interrupt latch is clear, but port_status still contains
+		 * the live VBUS and UFP state needed to select the charger current.
+		 */
+		pi_usb->attach_state =
+			(pi_usb->reg_data.port_status & STS_VBUS_MASK) &&
+			((pi_usb->reg_data.port_status & STS_MODE_MASK) ==
+			 STS_MODE_UFP);
+		return 0;
 	}
 
 	attach_state = pi_usb->reg_data.intr_status & INTS_ATTACH_MASK;

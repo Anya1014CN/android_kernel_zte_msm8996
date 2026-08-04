@@ -8298,6 +8298,37 @@ static void rerun_hvdcp_det_if_necessary(struct smbchg_chip *chip)
 	}
 }
 
+#ifdef CONFIG_BOARD_FUJISAN
+/*
+ * The OEM PMI8994 configuration retries APSD when a charger is already
+ * attached at boot and the first result is SDP/OTHER/NONE.  Without this,
+ * a DCP can remain reported as a floating USB source until it is unplugged.
+ */
+static void fujisan_rerun_initial_apsd(struct smbchg_chip *chip)
+{
+	enum power_supply_type usb_supply_type;
+	char *usb_type_name;
+	int rc;
+
+	if (!chip->usb_present)
+		return;
+
+	read_usb_type(chip, &usb_type_name, &usb_supply_type);
+	if (usb_supply_type != POWER_SUPPLY_TYPE_USB &&
+			usb_supply_type != POWER_SUPPLY_TYPE_UNKNOWN)
+		return;
+
+	pr_smb(PR_STATUS, "Fujisan initial %s, rerunning APSD\n",
+			usb_type_name);
+	rc = rerun_apsd(chip);
+	if (rc)
+		pr_err("Fujisan initial APSD rerun failed rc=%d\n", rc);
+
+	/* Re-read the result and notify healthd even if no edge IRQ was emitted. */
+	update_usb_status(chip, is_usb_present(chip), true);
+}
+#endif
+
 static int smbchg_probe(struct platform_device *pdev)
 {
 	int rc;
@@ -8637,6 +8668,10 @@ static int smbchg_probe(struct platform_device *pdev)
 	}
 
 	rerun_hvdcp_det_if_necessary(chip);
+
+#ifdef CONFIG_BOARD_FUJISAN
+	fujisan_rerun_initial_apsd(chip);
+#endif
 
 	update_usb_status(chip, is_usb_present(chip), false);
 	dump_regs(chip);
