@@ -80,6 +80,8 @@ enum msm_sensor_power_seq_type_t {
 	SENSOR_CLK,
 	SENSOR_GPIO,
 	SENSOR_VREG,
+	/* Keep the Android 8 Fujisan camera HAL power-sequence ABI. */
+	SENSOR_PMIC,
 	SENSOR_I2C_MUX,
 	SENSOR_I2C,
 };
@@ -121,6 +123,13 @@ enum msm_sensor_power_seq_gpio_t {
 	SENSOR_GPIO_MAX,
 };
 #define SENSOR_GPIO_CUSTOM3 SENSOR_GPIO_CUSTOM3
+
+enum msm_sensor_power_seq_gpio_pmic_t {
+	SENSOR_PMIC_GPIO_OIS,
+	SENSOR_PMIC_GPIO_CUSTOM1,
+	SENSOR_PMIC_GPIO_CUSTOM2,
+	SENSOR_PMIC_GPIO_MAX,
+};
 
 enum msm_ir_cut_filter_gpio_t {
 	IR_CUT_FILTER_GPIO_P = 0,

@@ -54,6 +54,22 @@ static int msm_isp_composite_stats_irq(struct vfe_device *vfe_dev,
 				struct msm_vfe_stats_stream *stream_info,
 				enum msm_isp_comp_irq_types irq)
 {
+#ifdef CONFIG_BOARD_FUJISAN
+	/*
+	 * Fujisan VFE47 only reports group 0 stats buffer completion from
+	 * VFE0.  Its group 1 completion is reported by both VFEs.  Keep the
+	 * shared buffer programming for both VFEs, but complete group 0 from
+	 * its reporting VFE instead of treating the absent VFE1 interrupt as a
+	 * ping-pong mismatch.  Stream state transitions still synchronize both.
+	 */
+	if (vfe_dev->is_split && stream_info->composite_flag == 1 &&
+		irq >= MSM_ISP_COMP_IRQ_PING_BUFDONE) {
+		if (vfe_dev->pdev->id != ISP_VFE0)
+			return 1;
+		return 0;
+	}
+#endif
+
 	/* interrupt recv on same vfe w/o recv on other vfe */
 	if (stream_info->composite_irq[irq] & (1 << vfe_dev->pdev->id)) {
 		pr_err("%s: irq %d out of sync for dual vfe on vfe %d\n",
@@ -120,12 +136,45 @@ static int msm_isp_stats_cfg_ping_pong_address(
 		return 0;
 	}
 	for (k = 0; k < stream_info->num_isp; k++) {
+		uint32_t buffer_offset = stream_info->buffer_offset[k];
+		uint32_t buffer_size;
+		size_t buffer_end = buf->mapped_info[0].len;
+		int i;
+
+		/*
+		 * Each split VFE owns the range until the next VFE offset.  VFE47
+		 * programs paddr + size as its prefetch boundary, so the final
+		 * segment must stop at the HAL payload end rather than at the first
+		 * byte beyond the page-rounded IOMMU mapping.
+		 */
+#ifdef CONFIG_BOARD_FUJISAN
+		if (buf->mapped_info[0].valid_len &&
+			buf->mapped_info[0].valid_len <= buffer_end)
+			buffer_end = buf->mapped_info[0].valid_len;
+#endif
+		for (i = 0; i < stream_info->num_isp; i++) {
+			uint32_t next_offset = stream_info->buffer_offset[i];
+
+			if (next_offset > buffer_offset && next_offset < buffer_end)
+				buffer_end = next_offset;
+		}
+
+		if (buffer_offset >= buffer_end) {
+			pr_err("%s: stats buffer offset %u exceeds length %u\n",
+				__func__, buffer_offset,
+				(unsigned int)buffer_end);
+			msm_isp_halt_send_error(vfe_dev,
+				ISP_EVENT_BUF_FATAL_ERROR);
+			rc = -EINVAL;
+			goto buf_error;
+		}
+
+		buffer_size = buffer_end - buffer_offset;
 		vfe_dev = stream_info->vfe_dev[k];
 		vfe_dev->hw_info->vfe_ops.stats_ops.update_ping_pong_addr(
 			vfe_dev, stream_info, pingpong_status,
-			buf->mapped_info[0].paddr +
-			stream_info->buffer_offset[k],
-			buf->mapped_info[0].len);
+			buf->mapped_info[0].paddr + buffer_offset,
+			buffer_size);
 	}
 	stream_info->buf[pingpong_bit] = buf;
 	buf->pingpong_bit = pingpong_bit;
@@ -321,6 +370,12 @@ void msm_isp_process_stats_irq(struct vfe_device *vfe_dev,
 		get_wm_mask(irq_status0, irq_status1);
 	if (!(stats_comp_mask || stats_irq_mask))
 		return;
+	if (stats_comp_mask)
+		pr_info("fujisan-camera: stats-irq vfe=%d status=%#x pp=%#x comp=%#x "
+			"wm=%#x cfg=%#x/%#x\n", vfe_dev->pdev->id,
+			irq_status0, pingpong_status, stats_comp_mask, stats_irq_mask,
+			atomic_read(&vfe_dev->stats_data.stats_comp_mask[0]),
+			atomic_read(&vfe_dev->stats_data.stats_comp_mask[1]));
 
 	ISP_DBG("%s: vfe %d status: 0x%x\n", __func__, vfe_dev->pdev->id,
 		irq_status0);
@@ -462,6 +517,12 @@ int msm_isp_stats_create_stream(struct vfe_device *vfe_dev,
 
 	stream_info->stream_handle[stream_info->num_isp - 1] =
 				stream_req_cmd->stream_handle;
+	pr_info("fujisan-camera: stats-create vfe=%d type=%u idx=%u comp=%u "
+		"num=%u mask=%#x handle=%#x offset=%u\n",
+		vfe_dev->pdev->id, stream_req_cmd->stats_type, stats_idx,
+		stream_req_cmd->composite_flag, stream_info->num_isp,
+		stream_info->vfe_mask, stream_req_cmd->stream_handle,
+		stream_req_cmd->buffer_offset);
 	return 0;
 }
 

@@ -232,6 +232,20 @@ static long msm_ispif_cmd_ext(struct v4l2_subdev *sd,
 		(struct ispif_device *)v4l2_get_subdevdata(sd);
 	struct ispif_cfg_data_ext pcdata = {0};
 	struct msm_ispif_param_data_ext *params = NULL;
+	/* Android 8 Fujisan uses the pre-stereo ISPIF_CFG2 payload. */
+	struct msm_ispif_param_data_ext_legacy {
+		uint32_t num;
+		struct msm_ispif_params_entry entries[MAX_PARAM_ENTRIES];
+		struct msm_ispif_pack_cfg pack_cfg[CID_MAX];
+	} legacy;
+	struct msm_ispif_param_data_ext_legacy_v2 {
+		uint32_t num;
+		struct msm_ispif_params_entry entries[MAX_PARAM_ENTRIES];
+		struct msm_ispif_pack_cfg pack_cfg[CID_MAX];
+		struct msm_ispif_right_param_entry right_entries[MAX_PARAM_ENTRIES];
+		uint32_t stereo_enable;
+		uint16_t line_width[VFE_MAX];
+	} legacy_v2;
 
 	if (is_compat_task()) {
 #ifdef CONFIG_COMPAT
@@ -258,7 +272,12 @@ static long msm_ispif_cmd_ext(struct v4l2_subdev *sd,
 		pcdata.size = pcdata64->size;
 		pcdata.data = pcdata64->data;
 	}
-	if (pcdata.size != sizeof(struct msm_ispif_param_data_ext)) {
+	pr_info("fujisan-camera: ispif-ext cfg=%u size=%u legacy=%zu legacy_v2=%zu current=%zu\n",
+		pcdata.cfg_type, pcdata.size, sizeof(legacy), sizeof(legacy_v2),
+		sizeof(struct msm_ispif_param_data_ext));
+	if (pcdata.size != sizeof(struct msm_ispif_param_data_ext) &&
+		pcdata.size != sizeof(legacy) &&
+		pcdata.size != sizeof(legacy_v2)) {
 		pr_err("%s: payload size mismatch\n", __func__);
 		return -EINVAL;
 	}
@@ -268,7 +287,25 @@ static long msm_ispif_cmd_ext(struct v4l2_subdev *sd,
 		CDBG("%s: params alloc failed\n", __func__);
 		return -ENOMEM;
 	}
-	if (copy_from_user(params, (void __user *)(pcdata.data),
+	if (pcdata.size == sizeof(legacy) || pcdata.size == sizeof(legacy_v2)) {
+		void *legacy_data = pcdata.size == sizeof(legacy) ?
+			(void *)&legacy : (void *)&legacy_v2;
+		if (copy_from_user(&legacy, (void __user *)(pcdata.data),
+			pcdata.size > sizeof(legacy) ? sizeof(legacy) : pcdata.size)) {
+			kfree(params);
+			return -EFAULT;
+		}
+		if (pcdata.size == sizeof(legacy_v2) &&
+			copy_from_user(&legacy_v2, (void __user *)(pcdata.data),
+			pcdata.size)) {
+			kfree(params);
+			return -EFAULT;
+		}
+		memcpy(&params->num, legacy_data, pcdata.size);
+		pr_info("fujisan-camera: ispif-ext legacy num=%u stereo=%u lw=%u,%u\n",
+			params->num, params->stereo_enable,
+			params->line_width[0], params->line_width[1]);
+	} else if (copy_from_user(params, (void __user *)(pcdata.data),
 		pcdata.size)) {
 		kfree(params);
 		return -EFAULT;
@@ -916,6 +953,20 @@ static int msm_ispif_config(struct ispif_device *ispif,
 		rc = -EINVAL;
 		return rc;
 	}
+	pr_info_ratelimited("fujisan-camera: ispif-cfg num=%u stereo=%u "
+		"lw=%u,%u\n", params->num, params->stereo_enable,
+		params->line_width[0], params->line_width[1]);
+	for (i = 0; i < params->num; i++)
+		pr_info_ratelimited("fujisan-camera: ispif-entry i=%d vfe=%u "
+			"intf=%u csid=%u ncid=%d cid=%u,%u,%u crop=%d:%u-%u "
+			"right_csid=%u\n", i, params->entries[i].vfe_intf,
+			params->entries[i].intftype, params->entries[i].csid,
+			params->entries[i].num_cids, params->entries[i].cids[0],
+			params->entries[i].cids[1], params->entries[i].cids[2],
+			params->entries[i].crop_enable,
+			params->entries[i].crop_start_pixel,
+			params->entries[i].crop_end_pixel,
+			params->right_entries[i].csid);
 
 	for (i = 0; i < params->num; i++) {
 		vfe_intf = params->entries[i].vfe_intf;
@@ -992,6 +1043,17 @@ static int msm_ispif_config(struct ispif_device *ispif,
 			msm_ispif_enable_crop(ispif, intftype, vfe_intf,
 				params->entries[i].crop_start_pixel,
 				params->entries[i].crop_end_pixel);
+		pr_info_ratelimited("fujisan-camera: ispif-reg vfe=%u intf=%u "
+			"ctrl=%#x input=%#x cid=%#x crop0=%#x crop1=%#x\n",
+			vfe_intf, intftype,
+			msm_camera_io_r(ispif->base + ISPIF_VFE_m_CTRL_0(vfe_intf)),
+			msm_camera_io_r(ispif->base + ISPIF_VFE_m_INPUT_SEL(vfe_intf)),
+			msm_camera_io_r(ispif->base +
+				ISPIF_VFE_m_PIX_INTF_n_CID_MASK(vfe_intf, 0)),
+			msm_camera_io_r(ispif->base +
+				ISPIF_VFE_m_PIX_INTF_n_CROP(vfe_intf, 0)),
+			msm_camera_io_r(ispif->base +
+				ISPIF_VFE_m_PIX_INTF_n_CROP(vfe_intf, 1)));
 	}
 
 	for (vfe_intf = 0; vfe_intf < 2; vfe_intf++) {
@@ -1582,6 +1644,14 @@ static inline void msm_ispif_read_irq_status(struct ispif_irq_status *out,
 	}
 	msm_camera_io_w_mb(ISPIF_IRQ_GLOBAL_CLEAR_CMD, ispif->base +
 	ISPIF_IRQ_GLOBAL_CLEAR_CMD_ADDR);
+	if (out[VFE0].ispifIrqStatus0 || out[VFE0].ispifIrqStatus1 ||
+		out[VFE0].ispifIrqStatus2 || out[VFE1].ispifIrqStatus0 ||
+		out[VFE1].ispifIrqStatus1 || out[VFE1].ispifIrqStatus2)
+		pr_err_ratelimited("fujisan-camera: ispif-irq vfe0=%#x/%#x/%#x "
+			"vfe1=%#x/%#x/%#x\n",
+			out[VFE0].ispifIrqStatus0, out[VFE0].ispifIrqStatus1,
+			out[VFE0].ispifIrqStatus2, out[VFE1].ispifIrqStatus0,
+			out[VFE1].ispifIrqStatus1, out[VFE1].ispifIrqStatus2);
 
 	if (out[VFE0].ispifIrqStatus0 & ISPIF_IRQ_STATUS_MASK) {
 		if (out[VFE0].ispifIrqStatus0 & RESET_DONE_IRQ) {
@@ -1863,6 +1933,8 @@ static long msm_ispif_cmd(struct v4l2_subdev *sd, void *arg)
 
 	if (WARN_ON(!sd) || WARN_ON(!pcdata))
 		return -EINVAL;
+	pr_info_ratelimited("fujisan-camera: ispif-cmd cfg=%u num=%u\n",
+		pcdata->cfg_type, pcdata->params.num);
 
 	mutex_lock(&ispif->mutex);
 	switch (pcdata->cfg_type) {
@@ -1910,6 +1982,9 @@ static long msm_ispif_subdev_ioctl_unlocked(struct v4l2_subdev *sd,
 
 	switch (cmd) {
 	case VIDIOC_MSM_ISPIF_CFG:
+		return msm_ispif_cmd(sd, arg);
+	/* Android 8 Fujisan camera HAL's observed 0xc170 ISPIF ABI. */
+	case 0xc17056c0U:
 		return msm_ispif_cmd(sd, arg);
 	case VIDIOC_MSM_ISPIF_CFG_EXT:
 		return msm_ispif_cmd_ext(sd, arg);

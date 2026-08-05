@@ -117,6 +117,10 @@ static int msm_isp_axi_create_stream(struct vfe_device *vfe_dev,
 
 	stream_cfg_cmd->axi_stream_handle =
 		(++axi_data->stream_handle_cnt) << 8 | stream_info->stream_src;
+	pr_info("fujisan-camera: request-stream vfe=%d session=%u stream=%u src=%u handle=%#x num_isp=%u\n",
+		vfe_dev->pdev->id, stream_cfg_cmd->session_id,
+		stream_cfg_cmd->stream_id, stream_info->stream_src,
+		stream_cfg_cmd->axi_stream_handle, stream_info->num_isp);
 
 	ISP_DBG("%s: vfe %d handle %x\n", __func__, vfe_dev->pdev->id,
 		stream_cfg_cmd->axi_stream_handle);
@@ -316,6 +320,25 @@ static int msm_isp_validate_axi_request(struct vfe_device *vfe_dev,
 	stream_info->runtime_output_format = stream_info->output_format;
 	stream_info->stream_src = stream_cfg_cmd->stream_src;
 	stream_info->frame_based = stream_cfg_cmd->frame_base;
+	pr_info("fujisan-camera: stream-config src=%u handle=%#x vfe=%d idx=%d fmt=%#x planes=%u p0=%ux%u stride=%u lines=%u off=%u p1=%ux%u stride=%u lines=%u off=%u\n",
+		stream_info->stream_src, stream_info->stream_handle[vfe_idx],
+		vfe_dev->pdev->id, vfe_idx, stream_info->output_format,
+		stream_info->num_planes,
+		stream_info->plane_cfg[vfe_idx][0].output_width,
+		stream_info->plane_cfg[vfe_idx][0].output_height,
+		stream_info->plane_cfg[vfe_idx][0].output_stride,
+		stream_info->plane_cfg[vfe_idx][0].output_scan_lines,
+		stream_info->plane_cfg[vfe_idx][0].plane_addr_offset,
+		stream_info->num_planes > 1 ?
+			stream_info->plane_cfg[vfe_idx][1].output_width : 0,
+		stream_info->num_planes > 1 ?
+			stream_info->plane_cfg[vfe_idx][1].output_height : 0,
+		stream_info->num_planes > 1 ?
+			stream_info->plane_cfg[vfe_idx][1].output_stride : 0,
+		stream_info->num_planes > 1 ?
+			stream_info->plane_cfg[vfe_idx][1].output_scan_lines : 0,
+		stream_info->num_planes > 1 ?
+			stream_info->plane_cfg[vfe_idx][1].plane_addr_offset : 0);
 	return 0;
 }
 
@@ -586,8 +609,22 @@ static int msm_isp_composite_irq(struct vfe_device *vfe_dev,
 				struct msm_vfe_axi_stream *stream_info,
 				enum msm_isp_comp_irq_types irq)
 {
+	if (stream_info->stream_src == VFE_PIX_0 &&
+		irq >= MSM_ISP_COMP_IRQ_PING_BUFDONE)
+		pr_info("fujisan-camera: axi-comp vfe=%d stream=%#x irq=%u "
+			"seen=%#x mask=%#x\n", vfe_dev->pdev->id,
+			stream_info->stream_handle[
+				msm_isp_get_vfe_idx_for_stream(vfe_dev, stream_info)],
+			irq, stream_info->composite_irq[irq], stream_info->vfe_mask);
+
 	/* interrupt recv on same vfe w/o recv on other vfe */
 	if (stream_info->composite_irq[irq] & (1 << vfe_dev->pdev->id)) {
+		pr_err("fujisan-camera: axi-comp-mismatch vfe=%d stream=%#x "
+			"src=%u irq=%u seen=%#x mask=%#x\n", vfe_dev->pdev->id,
+			stream_info->stream_handle[
+				msm_isp_get_vfe_idx_for_stream(vfe_dev, stream_info)],
+			stream_info->stream_src, irq,
+			stream_info->composite_irq[irq], stream_info->vfe_mask);
 		msm_isp_dump_ping_pong_mismatch(vfe_dev);
 		pr_err("%s: irq %d out of sync for dual vfe on vfe %d\n",
 			__func__, irq, vfe_dev->pdev->id);
@@ -1725,6 +1762,30 @@ static int msm_isp_update_deliver_count(struct vfe_device *vfe_dev,
 	if (!stream_info->controllable_output)
 		goto done;
 
+	/*
+	 * In the OEM dual-VFE model each VFE owns a separate controllable
+	 * stream.  The 4.4 rebase shares one stream_info, so the buffer manager
+	 * already collapses the two IRQs into one logical completion.  Only the
+	 * second IRQ reaches this function; advance the shared request state once
+	 * without comparing it to either VFE's independent hardware status bit.
+	 */
+	if (stream_info->num_isp == MAX_VFE) {
+		if (!stream_info->undelivered_request_cnt || !done_buf) {
+			pr_err_ratelimited("%s:%d shared completion with no request\n",
+				__func__, __LINE__);
+			return -EINVAL;
+		}
+		if (done_buf->is_drop_reconfig == 1 &&
+			stream_info->sw_ping_pong_bit == -1)
+			goto done;
+		if (stream_info->sw_ping_pong_bit == -1)
+			stream_info->sw_ping_pong_bit = 0;
+		if (done_buf->is_drop_reconfig != 1)
+			stream_info->undelivered_request_cnt--;
+		stream_info->sw_ping_pong_bit ^= 1;
+		goto done;
+	}
+
 	if (!stream_info->undelivered_request_cnt ||
 		(done_buf == NULL)) {
 		pr_err_ratelimited("%s:%d error undelivered_request_cnt 0\n",
@@ -1763,6 +1824,12 @@ void msm_isp_halt_send_error(struct vfe_device *vfe_dev, uint32_t event)
 	struct vfe_device *vfe_dev_other = NULL;
 	uint32_t vfe_id_other = 0;
 	unsigned long flags;
+
+	pr_err_ratelimited("fujisan-camera: halt-request vfe=%d event=%u frame=%u active=%u "
+		"split=%u state=%d\n", vfe_dev->pdev->id, event,
+		vfe_dev->axi_data.src_info[VFE_PIX_0].frame_id,
+		vfe_dev->axi_data.num_active_stream, vfe_dev->is_split,
+		atomic_read(&vfe_dev->error_info.overflow_state));
 
 	if (atomic_read(&vfe_dev->error_info.overflow_state) !=
 		NO_OVERFLOW)
@@ -2047,6 +2114,9 @@ static int msm_isp_cfg_ping_pong_address(
 
 	for (i = 0; i < stream_info->num_planes; i++) {
 		paddr = buf->mapped_info[i].paddr;
+		pr_info("fujisan-camera: pingpong stream=%#x buf=%u plane=%d base=%pad len=%u pp=%u vfe_count=%u\n",
+			stream_info->stream_handle[0], buf->buf_idx, i, &paddr,
+			buf->mapped_info[i].len, pingpong_bit, stream_info->num_isp);
 		ISP_DBG(
 			"%s: vfe %d config buf %d to pingpong %d stream %x\n",
 			__func__, vfe_dev->pdev->id,
@@ -2078,6 +2148,12 @@ static int msm_isp_cfg_ping_pong_address(
 					stream_info->plane_cfg[j][i].
 					plane_addr_offset,
 					buffer_size_byte);
+			pr_info("fujisan-camera: pingpong-cfg stream=%#x vfe=%d wm=%d addr=%pad bytes=%u stride=%u lines=%u off=%u\n",
+				stream_info->stream_handle[0], vfe_dev->pdev->id,
+				stream_info->wm[j][i], &paddr, buffer_size_byte,
+				stream_info->plane_cfg[j][i].output_stride,
+				stream_info->plane_cfg[j][i].output_scan_lines,
+				stream_info->plane_cfg[j][i].plane_addr_offset);
 		}
 	}
 	stream_info->buf[!pingpong_bit] = buf;
@@ -3393,6 +3469,36 @@ int msm_isp_cfg_axi_stream(struct vfe_device *vfe_dev, void *arg)
 	struct msm_vfe_axi_stream *stream_info;
 
 	memset(stream_idx, 0, sizeof(stream_idx));
+	pr_info("fujisan-camera: cfg-stream vfe=%d count=%u cmd=%u handles=%#x,%#x,%#x\n",
+		vfe_dev->pdev->id, stream_cfg_cmd->num_streams,
+		stream_cfg_cmd->cmd, stream_cfg_cmd->stream_handle[0],
+		stream_cfg_cmd->stream_handle[1], stream_cfg_cmd->stream_handle[2]);
+
+	/*
+	 * The CNA8 userspace ABI submits one entry per AXI source but leaves the
+	 * returned handles zero.  The stream table is authoritative after
+	 * REQUEST_STREAM, so recover only those zero entries from the matching
+	 * source slot.  Non-zero handles continue through the normal validation.
+	 */
+	for (i = 0; i < stream_cfg_cmd->num_streams && i < VFE_AXI_SRC_MAX; i++) {
+		struct msm_vfe_axi_stream *registered;
+		int registered_vfe;
+
+		if (stream_cfg_cmd->stream_handle[i] != 0)
+			continue;
+		registered = msm_isp_get_stream_common_data(vfe_dev, i);
+		if (!registered || registered->state == AVAILABLE ||
+			registered->num_isp == 0)
+			continue;
+		registered_vfe = msm_isp_get_vfe_idx_for_stream_user(vfe_dev,
+								registered);
+		if (registered_vfe < 0 || registered_vfe >= MAX_VFE)
+			continue;
+		stream_cfg_cmd->stream_handle[i] =
+			registered->stream_handle[registered_vfe];
+		pr_info("fujisan-camera: cfg-compat source=%d handle=%#x\n", i,
+			stream_cfg_cmd->stream_handle[i]);
+	}
 
 	for (i = 0; i < stream_cfg_cmd->num_streams; i++) {
 		if (HANDLE_TO_IDX(stream_cfg_cmd->stream_handle[i]) >=
@@ -4205,7 +4311,7 @@ void msm_isp_process_axi_irq_stream(struct vfe_device *vfe_dev,
 		struct msm_isp_timestamp *ts)
 {
 	int rc = -1;
-	uint32_t pingpong_bit = 0, i;
+	uint32_t pingpong_bit = 0, buf_pingpong_bit = 0, i;
 	struct msm_isp_buffer *done_buf = NULL;
 	unsigned long flags;
 	struct timeval *time_stamp;
@@ -4253,15 +4359,61 @@ void msm_isp_process_axi_irq_stream(struct vfe_device *vfe_dev,
 		return;
 	}
 
-	/* composite the irq for dual vfe */
-	rc = msm_isp_composite_irq(vfe_dev, stream_info,
-		MSM_ISP_COMP_IRQ_PING_BUFDONE + pingpong_bit);
-	if (rc) {
-		spin_unlock_irqrestore(&stream_info->lock, flags);
-		if (rc < 0)
-			msm_isp_halt_send_error(vfe_dev,
+	/*
+	 * Split VFE completion is paired by the OEM buffer manager.  Do not use
+	 * the 4.4 AXI composite state here: it cannot distinguish an old peer IRQ
+	 * from a new one after the two hardware ping/pong registers drift.
+	 */
+	if (vfe_dev->is_split && stream_info->num_isp == MAX_VFE &&
+		stream_info->stream_src < RDI_INTF_0) {
+		done_buf = stream_info->buf[pingpong_bit];
+		buf_pingpong_bit = pingpong_bit;
+		/*
+		 * The rebase keeps one stream table for both VFEs, while each VFE
+		 * reports its own ping-pong status.  A peer IRQ can therefore select
+		 * a shared slot whose buffer records the opposite hardware bit.  The
+		 * buffer pointer is the ownership record used by the OEM pair counter.
+		 */
+		if (done_buf && done_buf->pingpong_bit != pingpong_bit) {
+			pr_warn_ratelimited("fujisan-camera: shared pingpong drift vfe=%d stream=%#x status_pp=%u buf=%u buf_pp=%u\n",
+				vfe_dev->pdev->id, stream_info->stream_handle[0],
+				pingpong_bit, done_buf->buf_idx, done_buf->pingpong_bit);
+			buf_pingpong_bit = done_buf->pingpong_bit;
+		}
+		pr_info("fujisan-camera: split-complete stream=%#x src=%u vfe=%d "
+			"status=%#x slot=%u buf=%d buf_pp=%u q=%#x frame=%u\n",
+			stream_info->stream_handle[0], stream_info->stream_src,
+			vfe_dev->pdev->id, pingpong_status, pingpong_bit,
+			done_buf ? done_buf->buf_idx : -1,
+			done_buf ? done_buf->pingpong_bit : 0,
+			done_buf ? done_buf->bufq_handle :
+			stream_info->bufq_handle[VFE_BUF_QUEUE_DEFAULT], frame_id);
+		rc = vfe_dev->buf_mgr->ops->update_put_buf_cnt(vfe_dev->buf_mgr,
+			vfe_dev->pdev->id,
+			done_buf ? done_buf->bufq_handle :
+			stream_info->bufq_handle[VFE_BUF_QUEUE_DEFAULT],
+			done_buf ? done_buf->buf_idx : -1, time_stamp, frame_id,
+			buf_pingpong_bit);
+		pr_info("fujisan-camera: split-complete-result stream=%#x vfe=%d "
+			"slot=%u rc=%d\n", stream_info->stream_handle[0],
+			vfe_dev->pdev->id, buf_pingpong_bit, rc);
+		if (rc) {
+			spin_unlock_irqrestore(&stream_info->lock, flags);
+			if (rc < 0)
+				msm_isp_halt_send_error(vfe_dev,
 					ISP_EVENT_PING_PONG_MISMATCH);
-		return;
+			return;
+		}
+	} else {
+		rc = msm_isp_composite_irq(vfe_dev, stream_info,
+			MSM_ISP_COMP_IRQ_PING_BUFDONE + pingpong_bit);
+		if (rc) {
+			spin_unlock_irqrestore(&stream_info->lock, flags);
+			if (rc < 0)
+				msm_isp_halt_send_error(vfe_dev,
+					ISP_EVENT_PING_PONG_MISMATCH);
+			return;
+		}
 	}
 
 	done_buf = stream_info->buf[pingpong_bit];

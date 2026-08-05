@@ -461,6 +461,22 @@ static int msm_isp_cfg_pix(struct vfe_device *vfe_dev,
 	pix_cfg = &input_cfg->d.pix_cfg;
 	vfe_dev->hvx_cmd = pix_cfg->hvx_cmd;
 	vfe_dev->is_split = input_cfg->d.pix_cfg.is_split;
+	pr_info("fujisan-camera: cfg-pix vfe=%d split=%u mux=%u fmt=%#x clk=%u camif=%ux%u crop=%u-%u,%u-%u output=%u input=%u skip=%#x,%#x irq=%u/%#x sof=%u\n",
+		vfe_dev->pdev->id, pix_cfg->is_split, pix_cfg->input_mux,
+		pix_cfg->input_format, input_cfg->input_pix_clk,
+		pix_cfg->camif_cfg.pixels_per_line,
+		pix_cfg->camif_cfg.lines_per_frame,
+		pix_cfg->camif_cfg.first_pixel,
+		pix_cfg->camif_cfg.last_pixel,
+		pix_cfg->camif_cfg.first_line,
+		pix_cfg->camif_cfg.last_line,
+		pix_cfg->camif_cfg.subsample_cfg.output_format,
+		pix_cfg->camif_cfg.camif_input,
+		pix_cfg->camif_cfg.subsample_cfg.pixel_skip,
+		pix_cfg->camif_cfg.subsample_cfg.line_skip,
+		pix_cfg->camif_cfg.subsample_cfg.irq_subsample_period,
+		pix_cfg->camif_cfg.subsample_cfg.irq_subsample_pattern,
+		pix_cfg->camif_cfg.subsample_cfg.sof_counter_step);
 
 	vfe_dev->axi_data.src_info[VFE_PIX_0].pixel_clock =
 		input_cfg->input_pix_clk;
@@ -843,6 +859,8 @@ static long msm_isp_ioctl_unlocked(struct v4l2_subdev *sd,
 	 * which blocks until the hardware start/stop streaming
 	 */
 	ISP_DBG("%s: cmd: %d\n", __func__, _IOC_TYPE(cmd));
+	pr_info("fujisan-camera: isp-ioctl cmd=0x%x nr=%u size=%u\n",
+		cmd, _IOC_NR(cmd), _IOC_SIZE(cmd));
 	switch (cmd) {
 	case VIDIOC_MSM_VFE_REG_CFG: {
 		mutex_lock(&vfe_dev->realtime_mutex);
@@ -1052,6 +1070,7 @@ static long msm_isp_ioctl_unlocked(struct v4l2_subdev *sd,
 				    cmd);
 		rc = -EINVAL;
 	}
+	pr_info("fujisan-camera: isp-ioctl nr=%u rc=%ld\n", _IOC_NR(cmd), rc);
 	return rc;
 }
 
@@ -1215,9 +1234,15 @@ static int msm_isp_send_hw_cmd(struct vfe_device *vfe_dev,
 
 	switch (reg_cfg_cmd->cmd_type) {
 	case VFE_WRITE: {
+		uint32_t *data = cfg_data +
+			reg_cfg_cmd->u.rw_info.cmd_data_offset / 4;
+
+		pr_info("fujisan-camera: reg-write vfe=%d off=%#x len=%u data=%#x\n",
+			vfe_dev->pdev->id, reg_cfg_cmd->u.rw_info.reg_offset,
+			reg_cfg_cmd->u.rw_info.len, *data);
 		msm_camera_io_memcpy(vfe_dev->vfe_base +
 			reg_cfg_cmd->u.rw_info.reg_offset,
-			cfg_data + reg_cfg_cmd->u.rw_info.cmd_data_offset/4,
+			data,
 			reg_cfg_cmd->u.rw_info.len);
 		break;
 	}
@@ -1525,6 +1550,7 @@ int msm_isp_send_event(struct vfe_device *vfe_dev,
 	struct msm_isp_event_data *event_data)
 {
 	struct v4l2_event isp_event;
+
 	memset(&isp_event, 0, sizeof(struct v4l2_event));
 	isp_event.id = 0;
 	isp_event.type = event_type;
@@ -1941,13 +1967,16 @@ int msm_isp_process_overflow_irq(
 				 flags);
 			return 0;
 		}
-		pr_err_ratelimited("%s: vfe %d overflowmask %x,bus_error %x\n",
-			__func__, vfe_dev->pdev->id, overflow_mask, bus_err);
+		pr_err("fujisan-camera: overflow vfe=%d irq=%#x/%#x "
+			"mask=%#x bus=%#x active=%u split=%u\n",
+			vfe_dev->pdev->id, *irq_status0, *irq_status1,
+			overflow_mask, bus_err, axi_data->num_active_stream,
+			vfe_dev->is_split);
 		for (i = 0; i < axi_data->hw_info->num_wm; i++) {
 			if (!axi_data->free_wm[i])
 				continue;
-			ISP_DBG("%s:wm %d assigned to stream handle %x\n",
-				__func__, i, axi_data->free_wm[i]);
+			pr_err("fujisan-camera: overflow vfe=%d wm=%d stream=%#x\n",
+				vfe_dev->pdev->id, i, axi_data->free_wm[i]);
 		}
 		vfe_dev->recovery_irq0_mask = vfe_dev->irq0_mask;
 		vfe_dev->recovery_irq1_mask = vfe_dev->irq1_mask;

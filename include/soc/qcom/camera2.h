@@ -104,6 +104,7 @@ struct msm_camera_power_ctrl_t {
 	struct msm_camera_gpio_conf *gpio_conf;
 	struct camera_vreg_t *cam_vreg;
 	int num_vreg;
+	int ois_en_gpio;
 	struct msm_camera_i2c_conf *i2c_conf;
 	struct clk **clk_ptr;
 	struct msm_cam_clk_info *clk_info;

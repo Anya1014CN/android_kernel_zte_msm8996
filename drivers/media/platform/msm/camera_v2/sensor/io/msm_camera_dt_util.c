@@ -1482,10 +1482,19 @@ int msm_camera_power_up(struct msm_camera_power_ctrl_t *ctrl,
 			pr_err("%s:%d cannot set pin to active state",
 				__func__, __LINE__);
 	}
+	if (gpio_is_valid(ctrl->ois_en_gpio)) {
+		rc = gpio_request(ctrl->ois_en_gpio, "ois_enable");
+		if (rc)
+			pr_err("%s: request OIS enable GPIO failed: %d\n",
+				__func__, rc);
+	}
 	for (index = 0; index < ctrl->power_setting_size; index++) {
 		CDBG("%s index %d\n", __func__, index);
 		power_setting = &ctrl->power_setting[index];
 		CDBG("%s type %d\n", __func__, power_setting->seq_type);
+		pr_err("fujisan-camera: power-step=%d type=%d val=%d cfg=%ld delay=%d\n",
+			index, power_setting->seq_type, power_setting->seq_val,
+			power_setting->config_val, power_setting->delay);
 		switch (power_setting->seq_type) {
 		case SENSOR_CLK:
 			if (power_setting->seq_val >= ctrl->clk_info_size) {
@@ -1529,6 +1538,8 @@ int msm_camera_power_up(struct msm_camera_power_ctrl_t *ctrl,
 				(int) power_setting->config_val);
 			break;
 		case SENSOR_VREG:
+			if (power_setting->seq_val == INVALID_VREG)
+				break;
 			if (power_setting->seq_val >= CAM_VREG_MAX) {
 				pr_err("%s vreg index %d >= max %d\n", __func__,
 					power_setting->seq_val,
@@ -1556,6 +1567,17 @@ int msm_camera_power_up(struct msm_camera_power_ctrl_t *ctrl,
 				goto power_up_failed;
 			}
 			break;
+		case SENSOR_PMIC:
+			if (power_setting->seq_val >= SENSOR_PMIC_GPIO_MAX) {
+				pr_err("%s PMIC GPIO index %d is invalid\n", __func__,
+					power_setting->seq_val);
+				goto power_up_failed;
+			}
+			if (power_setting->seq_val == SENSOR_PMIC_GPIO_OIS &&
+				gpio_is_valid(ctrl->ois_en_gpio))
+				gpio_direction_output(ctrl->ois_en_gpio,
+					(int) power_setting->config_val);
+			break;
 		case SENSOR_I2C_MUX:
 			if (ctrl->i2c_conf && ctrl->i2c_conf->use_i2c_mux)
 				msm_camera_enable_i2c_mux(ctrl->i2c_conf);
@@ -1576,6 +1598,7 @@ int msm_camera_power_up(struct msm_camera_power_ctrl_t *ctrl,
 	if (device_type == MSM_CAMERA_PLATFORM_DEVICE) {
 		rc = sensor_i2c_client->i2c_func_tbl->i2c_util(
 			sensor_i2c_client, MSM_CCI_INIT);
+		pr_err("fujisan-camera: cci-init rc=%d\n", rc);
 		if (rc < 0) {
 			pr_err("%s cci_init failed\n", __func__);
 			goto power_up_failed;
@@ -1590,6 +1613,11 @@ power_up_failed:
 		power_setting = &ctrl->power_setting[index];
 		CDBG("%s type %d\n", __func__, power_setting->seq_type);
 		switch (power_setting->seq_type) {
+		case SENSOR_CLK:
+			msm_camera_clk_enable(ctrl->dev,
+				ctrl->clk_info, ctrl->clk_ptr,
+				ctrl->clk_info_size, false);
+			break;
 		case SENSOR_GPIO:
 			if (!ctrl->gpio_conf->gpio_num_info)
 				continue;
@@ -1615,6 +1643,11 @@ power_up_failed:
 
 			msm_cam_sensor_handle_reg_gpio(power_setting->seq_val,
 				ctrl->gpio_conf, GPIOF_OUT_INIT_LOW);
+			break;
+		case SENSOR_PMIC:
+			if (power_setting->seq_val == SENSOR_PMIC_GPIO_OIS &&
+				gpio_is_valid(ctrl->ois_en_gpio))
+				gpio_direction_output(ctrl->ois_en_gpio, GPIOF_OUT_INIT_LOW);
 			break;
 		case SENSOR_I2C_MUX:
 			if (ctrl->i2c_conf && ctrl->i2c_conf->use_i2c_mux)
@@ -1665,6 +1698,25 @@ msm_camera_get_power_settings(struct msm_camera_power_ctrl_t *ctrl,
 
 	}
 	return ps;
+}
+
+/* Android 8 Fujisan HAL invokes CFG_POWER_RESET while the sensor is live. */
+int msm_camera_power_reset(struct msm_camera_power_ctrl_t *ctrl,
+	enum msm_camera_device_type_t device_type,
+	struct msm_camera_i2c_client *sensor_i2c_client)
+{
+	int rc;
+
+	if (!ctrl || !sensor_i2c_client) {
+		pr_err("%s: invalid power control\n", __func__);
+		return -EINVAL;
+	}
+
+	rc = msm_camera_power_down(ctrl, device_type, sensor_i2c_client);
+	if (rc < 0)
+		return rc;
+
+	return msm_camera_power_up(ctrl, device_type, sensor_i2c_client);
 }
 
 int msm_camera_power_down(struct msm_camera_power_ctrl_t *ctrl,
@@ -1746,6 +1798,12 @@ int msm_camera_power_down(struct msm_camera_power_ctrl_t *ctrl,
 				pr_err("ERR:%s Error while disabling VREG GPIO\n",
 					__func__);
 			break;
+		case SENSOR_PMIC:
+			if (pd->seq_val == SENSOR_PMIC_GPIO_OIS &&
+				gpio_is_valid(ctrl->ois_en_gpio))
+				gpio_direction_output(ctrl->ois_en_gpio,
+					(int) pd->config_val);
+			break;
 		case SENSOR_I2C_MUX:
 			if (ctrl->i2c_conf && ctrl->i2c_conf->use_i2c_mux)
 				msm_camera_disable_i2c_mux(ctrl->i2c_conf);
@@ -1774,7 +1832,10 @@ int msm_camera_power_down(struct msm_camera_power_ctrl_t *ctrl,
 	msm_camera_request_gpio_table(
 		ctrl->gpio_conf->cam_gpio_req_tbl,
 		ctrl->gpio_conf->cam_gpio_req_tbl_size, 0);
+	if (gpio_is_valid(ctrl->ois_en_gpio)) {
+		gpio_direction_output(ctrl->ois_en_gpio, GPIOF_OUT_INIT_LOW);
+		gpio_free(ctrl->ois_en_gpio);
+	}
 	CDBG("%s exit\n", __func__);
 	return 0;
 }
-

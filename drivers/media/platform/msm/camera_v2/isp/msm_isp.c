@@ -451,7 +451,24 @@ static struct v4l2_subdev_internal_ops msm_vfe_subdev_internal_ops = {
 static long msm_isp_v4l2_fops_ioctl(struct file *file, unsigned int cmd,
 	unsigned long arg)
 {
-	return video_usercopy(file, cmd, arg, msm_isp_subdev_do_ioctl);
+	long rc;
+
+	rc = video_usercopy(file, cmd, arg, msm_isp_subdev_do_ioctl);
+	if (rc == 0 && cmd == VIDIOC_MSM_ISP_REQUEST_STREAM) {
+		struct msm_vfe_axi_stream_request_cmd probe;
+		if (!copy_from_user(&probe, (void __user *)arg, sizeof(probe)))
+			pr_info("fujisan-camera: request-usercopy session=%u stream=%u handle=%#x src=%u\n",
+				probe.session_id, probe.stream_id,
+				probe.axi_stream_handle, probe.stream_src);
+	}
+	if (rc == 0 && cmd == VIDIOC_MSM_ISP_CFG_STREAM) {
+		struct msm_vfe_axi_stream_cfg_cmd probe;
+		if (!copy_from_user(&probe, (void __user *)arg, sizeof(probe)))
+			pr_info("fujisan-camera: cfg-usercopy count=%u cmd=%u handles=%#x,%#x,%#x\n",
+				probe.num_streams, probe.cmd, probe.stream_handle[0],
+				probe.stream_handle[1], probe.stream_handle[2]);
+	}
+	return rc;
 }
 
 static void isp_vma_open(struct vm_area_struct *vma)

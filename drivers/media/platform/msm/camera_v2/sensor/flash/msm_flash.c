@@ -855,6 +855,10 @@ static long msm_flash_subdev_ioctl(struct v4l2_subdev *sd,
 	switch (cmd) {
 	case VIDIOC_MSM_SENSOR_GET_SUBDEV_ID:
 		return msm_flash_get_subdev_id(fctrl, argp);
+	case VIDIOC_MSM_FLASH_HW_ID:
+		/* Fujisan's generic qcom,camera-flash node is hardware variant 0. */
+		*(uint32_t *)arg = 0;
+		return 0;
 	case VIDIOC_MSM_FLASH_CFG:
 		return msm_flash_config(fctrl, argp);
 	case MSM_SD_NOTIFY_FREEZE:

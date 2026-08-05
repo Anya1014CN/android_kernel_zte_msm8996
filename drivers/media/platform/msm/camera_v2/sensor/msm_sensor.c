@@ -147,6 +147,33 @@ int msm_sensor_power_down(struct msm_sensor_ctrl_t *s_ctrl)
 		sensor_i2c_client);
 }
 
+int msm_sensor_power_reset(struct msm_sensor_ctrl_t *s_ctrl)
+{
+	struct msm_camera_power_ctrl_t *power_info;
+	enum msm_camera_device_type_t sensor_device_type;
+	struct msm_camera_i2c_client *sensor_i2c_client;
+
+	if (!s_ctrl) {
+		pr_err("%s:%d failed: s_ctrl %pK\n", __func__, __LINE__, s_ctrl);
+		return -EINVAL;
+	}
+
+	if (s_ctrl->is_csid_tg_mode)
+		return 0;
+
+	power_info = &s_ctrl->sensordata->power_info;
+	sensor_device_type = s_ctrl->sensor_device_type;
+	sensor_i2c_client = s_ctrl->sensor_i2c_client;
+	if (!power_info || !sensor_i2c_client) {
+		pr_err("%s:%d failed: power_info %pK sensor_i2c_client %pK\n",
+			__func__, __LINE__, power_info, sensor_i2c_client);
+		return -EINVAL;
+	}
+
+	return msm_camera_power_reset(power_info, sensor_device_type,
+		sensor_i2c_client);
+}
+
 int msm_sensor_power_up(struct msm_sensor_ctrl_t *s_ctrl)
 {
 	int rc;
@@ -183,6 +210,10 @@ int msm_sensor_power_up(struct msm_sensor_ctrl_t *s_ctrl)
 
 	CDBG("Sensor %d tagged as %s\n", s_ctrl->id,
 		(s_ctrl->is_secure)?"SECURE":"NON-SECURE");
+	pr_err("fujisan-camera: power-up sensor=%s id=%d addr=0x%x reg=0x%x expected=0x%x steps=%u\n",
+		sensor_name, s_ctrl->id, slave_info->sensor_slave_addr,
+		slave_info->sensor_id_reg_addr, slave_info->sensor_id,
+		power_info->power_setting_size);
 
 	for (retry = 0; retry < 3; retry++) {
 		if (s_ctrl->is_secure) {
@@ -204,9 +235,13 @@ int msm_sensor_power_up(struct msm_sensor_ctrl_t *s_ctrl)
 		}
 		rc = msm_camera_power_up(power_info, s_ctrl->sensor_device_type,
 			sensor_i2c_client);
-		if (rc < 0)
+		if (rc < 0) {
+			pr_err("fujisan-camera: power-up retry=%u rc=%d\n",
+				retry, rc);
 			return rc;
+		}
 		rc = msm_sensor_check_id(s_ctrl);
+		pr_err("fujisan-camera: check-id retry=%u rc=%d\n", retry, rc);
 		if (rc < 0) {
 			msm_camera_power_down(power_info,
 				s_ctrl->sensor_device_type, sensor_i2c_client);
@@ -394,6 +429,9 @@ static int msm_sensor_config32(struct msm_sensor_ctrl_t *s_ctrl,
 	mutex_lock(s_ctrl->msm_sensor_mutex);
 	CDBG("%s:%d %s cfgtype = %d\n", __func__, __LINE__,
 		s_ctrl->sensordata->sensor_name, cdata->cfgtype);
+	pr_err("fujisan-camera: cfg32 sensor=%s type=%d state=%d\n",
+		s_ctrl->sensordata->sensor_name, cdata->cfgtype,
+		s_ctrl->sensor_state);
 	switch (cdata->cfgtype) {
 	case CFG_GET_SENSOR_INFO:
 		memcpy(cdata->cfg.sensor_info.sensor_name,
@@ -793,6 +831,20 @@ static int msm_sensor_config32(struct msm_sensor_ctrl_t *s_ctrl,
 		} else {
 			rc = -EFAULT;
 		}
+		break;
+	case CFG_POWER_RESET:
+		if (s_ctrl->is_csid_tg_mode)
+			goto DONE;
+		if (s_ctrl->sensor_state != MSM_SENSOR_POWER_UP) {
+			pr_err("%s:%d failed: invalid state %d\n", __func__,
+				__LINE__, s_ctrl->sensor_state);
+			rc = -EFAULT;
+			break;
+		}
+		if (s_ctrl->func_tbl->sensor_power_reset)
+			rc = s_ctrl->func_tbl->sensor_power_reset(s_ctrl);
+		else
+			rc = -EFAULT;
 		break;
 	case CFG_POWER_DOWN:
 		if (s_ctrl->is_csid_tg_mode)
@@ -1286,6 +1338,21 @@ int msm_sensor_config(struct msm_sensor_ctrl_t *s_ctrl, void __user *argp)
 		}
 		break;
 
+	case CFG_POWER_RESET:
+		if (s_ctrl->is_csid_tg_mode)
+			goto DONE;
+		if (s_ctrl->sensor_state != MSM_SENSOR_POWER_UP) {
+			pr_err("%s:%d failed: invalid state %d\n", __func__,
+				__LINE__, s_ctrl->sensor_state);
+			rc = -EFAULT;
+			break;
+		}
+		if (s_ctrl->func_tbl->sensor_power_reset)
+			rc = s_ctrl->func_tbl->sensor_power_reset(s_ctrl);
+		else
+			rc = -EFAULT;
+		break;
+
 	case CFG_POWER_DOWN:
 		if (s_ctrl->is_csid_tg_mode)
 			goto DONE;
@@ -1444,6 +1511,7 @@ static struct msm_sensor_fn_t msm_sensor_func_tbl = {
 	.sensor_config32 = msm_sensor_config32,
 #endif
 	.sensor_power_up = msm_sensor_power_up,
+	.sensor_power_reset = msm_sensor_power_reset,
 	.sensor_power_down = msm_sensor_power_down,
 	.sensor_match_id = msm_sensor_match_id,
 };

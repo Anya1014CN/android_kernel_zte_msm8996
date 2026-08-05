@@ -1323,6 +1323,11 @@ static int32_t msm_sensor_driver_get_dt_data(struct msm_sensor_ctrl_t *s_ctrl)
 		goto FREE_VREG_DATA;
 	}
 
+	sensordata->power_info.ois_en_gpio = of_get_named_gpio(of_node,
+		"qcom,platform-ois-en-gpio", 0);
+	if (!gpio_is_valid(sensordata->power_info.ois_en_gpio))
+		pr_debug("%s: OIS enable GPIO is not specified\n", __func__);
+
 	/* Get custom mode */
 	rc = of_property_read_u32(of_node, "qcom,secure",
 		&s_ctrl->is_secure);

@@ -341,12 +341,20 @@ int msm_vfe47_init_hardware(struct vfe_device *vfe_dev)
 	vfe_dev->common_data->dual_vfe_res->vfe_base[vfe_dev->pdev->id] =
 		vfe_dev->vfe_base;
 
+	/* Keep the VFE's minimum AXI vote while streams are being configured. */
+	rc = msm_isp_update_bandwidth(ISP_VFE0 + vfe_dev->pdev->id,
+					MSM_ISP_MIN_AB, MSM_ISP_MIN_IB);
+	if (rc)
+		goto bw_enable_fail;
+
 	rc = msm_camera_enable_irq(vfe_dev->vfe_irq, 1);
 	if (rc < 0)
 		goto irq_enable_fail;
 
 	return rc;
 irq_enable_fail:
+	msm_isp_update_bandwidth(ISP_VFE0 + vfe_dev->pdev->id, 0, 0);
+bw_enable_fail:
 	vfe_dev->common_data->dual_vfe_res->vfe_base[vfe_dev->pdev->id] = NULL;
 	if (cam_config_ahb_clk(NULL, 0, id, CAM_AHB_SUSPEND_VOTE) < 0)
 		pr_err("%s: failed to remove vote for AHB\n", __func__);
@@ -873,6 +881,12 @@ void msm_vfe47_axi_cfg_comp_mask(struct vfe_device *vfe_dev,
 	vfe_dev->hw_info->vfe_ops.irq_ops.config_irq(vfe_dev,
 				1 << (comp_mask_index + 25), overflow_mask,
 				MSM_ISP_IRQ_ENABLE);
+	pr_info("fujisan-camera: comp-cfg vfe=%d stream=%#x idx=%u wm=%#x "
+		"reg=%#x irq=%#x/%#x\n", vfe_dev->pdev->id,
+		stream_info->stream_handle[vfe_idx], comp_mask_index,
+		axi_data->composite_info[comp_mask_index].stream_composite_mask,
+		msm_camera_io_r(vfe_dev->vfe_base + 0x74),
+		vfe_dev->irq0_mask, vfe_dev->irq1_mask);
 }
 
 void msm_vfe47_axi_clear_comp_mask(struct vfe_device *vfe_dev,
@@ -2176,6 +2190,10 @@ void msm_vfe47_stats_cfg_comp_mask(
 	}
 
 	msm_camera_io_w(comp_mask_reg, vfe_dev->vfe_base + 0x78);
+	pr_info("fujisan-camera: stats-comp-cfg vfe=%d group=%u enable=%u "
+		"mask=%#x reg=%#x irq=%#x/%#x\n", vfe_dev->pdev->id,
+		request_comp_index, enable, stats_mask, comp_mask_reg,
+		vfe_dev->irq0_mask, vfe_dev->irq1_mask);
 
 	ISP_DBG("%s: comp_mask_reg: %x comp mask0 %x mask1: %x\n",
 		__func__, comp_mask_reg,
@@ -2485,16 +2503,23 @@ void msm_vfe47_stats_update_ping_pong_addr(
 			stream_info);
 	uint32_t paddr32 = (paddr & 0xFFFFFFFF);
 	uint32_t paddr32_max;
+	void __iomem *stats_addr;
 	int stats_idx;
 
 	stats_idx = STATS_IDX(stream_info->stream_handle[vfe_idx]);
 
-	msm_camera_io_w(paddr32, vfe_base +
-		VFE47_STATS_PING_PONG_BASE(stats_idx, pingpong_status));
-
+	stats_addr = vfe_base +
+		VFE47_STATS_PING_PONG_BASE(stats_idx, pingpong_status);
+	msm_camera_io_w(paddr32, stats_addr);
 	paddr32_max = (paddr + buf_size) & 0xFFFFFFE0;
-	msm_camera_io_w(paddr32_max, vfe_base +
-		VFE47_STATS_PING_PONG_BASE(stats_idx, pingpong_status) + 0x4);
+	msm_camera_io_w(paddr32_max, stats_addr + 0x4);
+	pr_info("fujisan-camera: stats-pp vfe=%d idx=%d pp=%u addr=%#x "
+		"paddr=%pad size=%u start=%#x max=%#x\n",
+		vfe_dev->pdev->id, stats_idx,
+		(pingpong_status >> stats_pingpong_offset_map[stats_idx]) & 0x1,
+		VFE47_STATS_PING_PONG_BASE(stats_idx, pingpong_status), &paddr,
+		buf_size, msm_camera_io_r(stats_addr),
+		msm_camera_io_r(stats_addr + 0x4));
 }
 
 uint32_t msm_vfe47_stats_get_wm_mask(

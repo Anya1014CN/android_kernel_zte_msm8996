@@ -333,6 +333,8 @@ enum msm_sensor_cfg_type_t {
 	CFG_SLAVE_WRITE_I2C_ARRAY,
 	CFG_WRITE_I2C_SEQ_ARRAY,
 	CFG_POWER_UP,
+	/* Kept for the Android 8 Fujisan camera HAL command ABI. */
+	CFG_POWER_RESET,
 	CFG_POWER_DOWN,
 	CFG_SET_STOP_STREAM_SETTING,
 	CFG_GET_SENSOR_INFO,
@@ -632,5 +634,8 @@ struct sensor_init_cfg_data {
 #define VIDIOC_MSM_LASER_LED_CFG \
 	_IOWR('V', BASE_VIDIOC_PRIVATE + 16, struct msm_laser_led_cfg_data_t)
 
-#endif
+/* Legacy ZTE camera HAL queries the camera-flash hardware variant. */
+#define VIDIOC_MSM_FLASH_HW_ID \
+	_IOWR('V', BASE_VIDIOC_PRIVATE + 16, uint32_t)
 
+#endif
