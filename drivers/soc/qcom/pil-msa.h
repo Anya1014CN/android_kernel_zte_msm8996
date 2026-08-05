@@ -22,6 +22,8 @@
 struct modem_data {
 	struct q6v5_data *q6;
 	struct subsys_device *subsys;
+	void *boot_pil;
+	struct delayed_work boot_work;
 	struct subsys_desc subsys_desc;
 	void *ramdump_dev;
 	void *minidump_dev;

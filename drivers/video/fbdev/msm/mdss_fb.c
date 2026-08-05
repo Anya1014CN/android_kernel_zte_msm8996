@@ -5020,10 +5020,11 @@ static int fujisan_expand_atomic_commit(struct msm_fb_data_type *mfd,
 	struct mdp_input_layer *layer;
 	bool wide = commit->flags & MDP_COMMIT_FUJISAN_WIDE;
 	bool single = commit->flags & MDP_COMMIT_FUJISAN_SINGLE;
+	bool single_b = commit->flags & MDP_COMMIT_FUJISAN_SINGLE_B;
 
-	if (!wide && !single)
+	if (!wide && !single && !single_b)
 		return 0;
-	if (wide && single) {
+	if ((wide && (single || single_b)) || (single_b && !single)) {
 		pr_err("fujisan: conflicting atomic topology flags\n");
 		return -EINVAL;
 	}
@@ -5078,10 +5079,12 @@ static int fujisan_expand_atomic_commit(struct msm_fb_data_type *mfd,
 	*layer_list = expanded;
 	commit->input_layers = expanded;
 	commit->input_layer_cnt = 2;
-	commit->flags &= ~(MDP_COMMIT_FUJISAN_WIDE | MDP_COMMIT_FUJISAN_SINGLE);
+	commit->flags &= ~(MDP_COMMIT_FUJISAN_WIDE | MDP_COMMIT_FUJISAN_SINGLE |
+		MDP_COMMIT_FUJISAN_SINGLE_B);
 
-	pr_debug("fujisan-%s: C[0,1080)->A/VIG0, %s->B/VIG1\n",
-		wide ? "wide" : "single", wide ? "C[1080,2160)" : "C[0,1080)");
+	pr_debug("fujisan-%s%s: C[0,1080)->A/VIG0, %s->B/VIG1\n",
+		wide ? "wide" : "single", single_b ? "_b" : "",
+		wide ? "C[1080,2160)" : "C[0,1080)");
 	return 0;
 }
 #else
@@ -5090,7 +5093,8 @@ static int fujisan_expand_atomic_commit(struct msm_fb_data_type *mfd,
 		struct mdp_input_layer **layer_list)
 {
 	return (commit->flags & (MDP_COMMIT_FUJISAN_WIDE |
-		MDP_COMMIT_FUJISAN_SINGLE)) ? -EOPNOTSUPP : 0;
+			MDP_COMMIT_FUJISAN_SINGLE |
+			MDP_COMMIT_FUJISAN_SINGLE_B)) ? -EOPNOTSUPP : 0;
 }
 #endif
 

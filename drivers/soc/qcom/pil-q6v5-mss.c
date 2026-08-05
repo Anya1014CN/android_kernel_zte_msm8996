@@ -27,6 +27,7 @@
 #include <linux/interrupt.h>
 #include <linux/dma-mapping.h>
 #include <linux/of_gpio.h>
+#include <linux/workqueue.h>
 #include <linux/clk/msm-clk.h>
 #include <soc/qcom/subsystem_restart.h>
 #include <soc/qcom/ramdump.h>
@@ -43,6 +44,27 @@
 #define STOP_ACK_TIMEOUT_MS	1000
 
 #define subsys_to_drv(d) container_of(d, struct modem_data, subsys_desc)
+
+static void pil_mss_boot_work(struct work_struct *work)
+{
+	struct modem_data *drv = container_of(to_delayed_work(work),
+					struct modem_data, boot_work);
+	void *boot_pil;
+
+	boot_pil = subsystem_get(drv->subsys_desc.name);
+	if (IS_ERR(boot_pil)) {
+		if (PTR_ERR(boot_pil) == -EAGAIN) {
+			schedule_delayed_work(&drv->boot_work, HZ);
+			return;
+		}
+		dev_err(drv->subsys_desc.dev, "failed to load modem at boot: %ld\n",
+			PTR_ERR(boot_pil));
+		return;
+	}
+
+	drv->boot_pil = boot_pil;
+	dev_info(drv->subsys_desc.dev, "modem loaded at boot\n");
+}
 
 static void log_modem_sfr(void)
 {
@@ -397,6 +419,7 @@ static int pil_mss_driver_probe(struct platform_device *pdev)
 	if (!drv)
 		return -ENOMEM;
 	platform_set_drvdata(pdev, drv);
+	INIT_DELAYED_WORK(&drv->boot_work, pil_mss_boot_work);
 
 	is_not_loadable = of_property_read_bool(pdev->dev.of_node,
 							"qcom,is-not-loadable");
@@ -414,13 +437,24 @@ static int pil_mss_driver_probe(struct platform_device *pdev)
 	if (ret)
 		return ret;
 
-	return pil_subsys_init(drv, pdev);
+	ret = pil_subsys_init(drv, pdev);
+	if (ret)
+		return ret;
+
+	if (of_property_read_bool(pdev->dev.of_node, "qcom,load-at-boot")) {
+		schedule_delayed_work(&drv->boot_work, HZ);
+	}
+
+	return 0;
 }
 
 static int pil_mss_driver_exit(struct platform_device *pdev)
 {
 	struct modem_data *drv = platform_get_drvdata(pdev);
 
+	cancel_delayed_work_sync(&drv->boot_work);
+	if (drv->boot_pil)
+		subsystem_put(drv->boot_pil);
 	subsys_unregister(drv->subsys);
 	destroy_ramdump_device(drv->ramdump_dev);
 	destroy_ramdump_device(drv->minidump_dev);

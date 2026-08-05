@@ -66,6 +66,11 @@
 	};
 };
 
+/* Keep the modem PIL handle while Android is running. */
+&pil_modem {
+	qcom,load-at-boot;
+};
+
 /*
  * The standard CAF lights HAL drives the RGB notification LED through each
  * channel's blink sysfs attribute.  The PMI8994 driver exposes that attribute

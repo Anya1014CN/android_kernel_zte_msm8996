@@ -899,6 +899,19 @@ static void __rx_worker(struct edge_info *einfo, bool atomic_ctx)
 
 	rcu_id = srcu_read_lock(&einfo->use_ref);
 
+	/*
+	 * The modem can publish its shared FIFO after SUBSYS_AFTER_POWERUP.
+	 * Retry initialization from its first GLINK interrupt in that case.
+	 */
+	if (unlikely(!einfo->rx_fifo)) {
+		if (!get_rx_fifo(einfo)) {
+			srcu_read_unlock(&einfo->use_ref, rcu_id);
+			return;
+		}
+		einfo->in_ssr = false;
+		einfo->xprt_if.glink_core_if_ptr->link_up(&einfo->xprt_if);
+	}
+
 	if (einfo->in_ssr) {
 		srcu_read_unlock(&einfo->use_ref, rcu_id);
 		return;

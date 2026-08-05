@@ -198,6 +198,11 @@ VALIDATE/COMMIT FLAG CONFIGURATION
  */
 #define MDP_COMMIT_FUJISAN_SINGLE	0x20000000
 
+/* Route a Fujisan single-primary target to panel B.  It is valid only with
+ * MDP_COMMIT_FUJISAN_SINGLE; the paired A layer remains in the native command
+ * transaction but its backlight is held off by the device coordinator. */
+#define MDP_COMMIT_FUJISAN_SINGLE_B	0x10000000
+
 #define MDP_COMMIT_VERSION_1_0		0x00010000
 
 #define OUT_LAYER_COLOR_SPACE

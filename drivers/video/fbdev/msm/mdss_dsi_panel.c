@@ -44,6 +44,13 @@ static struct mdss_panel_data *zte_panel_data;
 static char is_td4322_panel;
 static char is_2nd_td4322_fw_update;
 static DEFINE_MUTEX(fujisan_tddi_bootstrap_lock);
+/* Closed B keeps the Android brightness endpoint on fb0, but the physical
+ * DCS command must bypass A.  halld changes this only after it has darkened
+ * the previous panel; wide and closed A leave the normal mirrored path on. */
+static bool fujisan_primary_b;
+module_param_named(fujisan_primary_b, fujisan_primary_b, bool, 0644);
+MODULE_PARM_DESC(fujisan_primary_b,
+	"Route Fujisan primary backlight updates to panel B only");
 
 /* ZTE's Oreo panel driver exposed these controls for LiveDisplay.  The
  * msm8996 rebase retained the panel command transport but lost the small
@@ -1448,12 +1455,20 @@ static void mdss_dsi_panel_bl_ctrl(struct mdss_panel_data *pdata,
 	case BL_DCS_CMD:
 		if (!mdss_dsi_sync_wait_enable(ctrl_pdata)) {
 #ifdef CONFIG_BOARD_FUJISAN
-			/* Keep an unfolded B on the same native DCS transaction as A.
-			 * This is the lowest common path for Lights writes and the panel
-			 * driver's own wake restore, so no userspace brightness watcher is
-			 * needed.  Folding clears the gate through the explicit B LED path. */
-			if (ctrl_pdata->ndx == DSI_CTRL_LEFT &&
-			    mdss_fb_fujisan_secondary_display_is_on()) {
+				/* Keep an unfolded B on the same native DCS transaction as A.
+				 * This is the lowest common path for Lights writes and the panel
+				 * driver's own wake restore, so no userspace brightness watcher is
+				 * needed.  In closed B mode the same Android endpoint routes only
+				 * to B, so slider/automatic writes cannot relight panel A. */
+				if (ctrl_pdata->ndx == DSI_CTRL_LEFT &&
+				    READ_ONCE(fujisan_primary_b)) {
+					sctrl = mdss_dsi_get_other_ctrl(ctrl_pdata);
+					if (sctrl)
+						mdss_dsi_panel_bklt_dcs(sctrl, bl_level);
+					break;
+				}
+				if (ctrl_pdata->ndx == DSI_CTRL_LEFT &&
+				    mdss_fb_fujisan_secondary_display_is_on()) {
 				sctrl = mdss_dsi_get_other_ctrl(ctrl_pdata);
 				if (sctrl)
 					mdss_dsi_panel_bklt_dcs(sctrl, bl_level);
