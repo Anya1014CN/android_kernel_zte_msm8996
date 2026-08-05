@@ -31,8 +31,9 @@
 #include "mdss_smmu.h"
 
 #define FUJISAN_WIDE_WIDTH	2160
-#define FUJISAN_WIDE_HEIGHT	1920
+#define FUJISAN_WIDE_HEIGHT	1915
 #define FUJISAN_SPLIT_X	1080
+#define FUJISAN_B_PAD_TOP	5
 #define FUJISAN_TEST_BPP	4
 #define FUJISAN_TEST_SIZE	(FUJISAN_WIDE_WIDTH * FUJISAN_WIDE_HEIGHT * \
 				 FUJISAN_TEST_BPP)
@@ -508,7 +509,7 @@ static void fujisan_destroy_test_pipe(struct msm_fb_data_type *mfd,
 }
 
 static int fujisan_add_test_pipe(struct msm_fb_data_type *mfd, u32 src_x,
-	u32 dst_x, struct mdss_mdp_pipe **pipe_out,
+	u32 dst_x, u32 dst_y, struct mdss_mdp_pipe **pipe_out,
 	struct mdss_mdp_data **data_out)
 {
 	struct fujisan_composite_buffer *buffer = &fujisan_composite.buffer;
@@ -527,7 +528,7 @@ static int fujisan_add_test_pipe(struct msm_fb_data_type *mfd, u32 src_x,
 	req.src_rect.w = FUJISAN_SPLIT_X;
 	req.src_rect.h = FUJISAN_WIDE_HEIGHT;
 	req.dst_rect.x = dst_x;
-	req.dst_rect.y = 0;
+	req.dst_rect.y = dst_y;
 	req.dst_rect.w = FUJISAN_SPLIT_X;
 	req.dst_rect.h = FUJISAN_WIDE_HEIGHT;
 	req.z_order = MDSS_MDP_STAGE_3;
@@ -719,12 +720,12 @@ static int fujisan_start_native_boot_test(void)
 	 * mixer.  The native slave is physical A and receives C's left half on
 	 * the right mixer at global destination x=1080. */
 	stage = "wide_native_pipe_b";
-	rc = fujisan_add_test_pipe(mfd, FUJISAN_SPLIT_X, 0,
+	rc = fujisan_add_test_pipe(mfd, FUJISAN_SPLIT_X, 0, FUJISAN_B_PAD_TOP,
 		&fujisan_composite.left_pipe, &fujisan_composite.left_data);
 	if (rc)
 		goto cleanup;
 	stage = "wide_native_pipe_a";
-	rc = fujisan_add_test_pipe(mfd, 0, FUJISAN_SPLIT_X,
+	rc = fujisan_add_test_pipe(mfd, 0, FUJISAN_SPLIT_X, 0,
 		&fujisan_composite.right_pipe, &fujisan_composite.right_data);
 	if (rc)
 		goto cleanup;
@@ -822,12 +823,12 @@ static int fujisan_start_test(void)
 	 * logical geometry stable: source left goes to physical A, source right
 	 * goes to physical B. */
 	stage = "wide_pipe_b";
-	rc = fujisan_add_test_pipe(left, FUJISAN_SPLIT_X, 0,
+	rc = fujisan_add_test_pipe(left, FUJISAN_SPLIT_X, 0, FUJISAN_B_PAD_TOP,
 		&fujisan_composite.left_pipe, &fujisan_composite.left_data);
 	if (rc)
 		goto cleanup;
 	stage = "wide_pipe_a";
-	rc = fujisan_add_test_pipe(right, 0, 0, &fujisan_composite.right_pipe,
+	rc = fujisan_add_test_pipe(right, 0, 0, 0, &fujisan_composite.right_pipe,
 		&fujisan_composite.right_data);
 	if (rc)
 		goto cleanup;

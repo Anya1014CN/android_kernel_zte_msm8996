@@ -5011,6 +5011,11 @@ err:
  * its release/retire fence lifecycle.
  */
 #ifdef CONFIG_BOARD_FUJISAN
+#define FUJISAN_WIDE_WIDTH	2160
+#define FUJISAN_WIDE_HEIGHT	1915
+#define FUJISAN_WIDE_SPLIT_X	1080
+#define FUJISAN_WIDE_B_PAD_TOP	5
+
 static int fujisan_expand_atomic_commit(struct msm_fb_data_type *mfd,
 		struct mdp_layer_commit_v1 *commit,
 		struct mdp_input_layer **layer_list)
@@ -5043,14 +5048,14 @@ static int fujisan_expand_atomic_commit(struct msm_fb_data_type *mfd,
 	    (layer->buffer.format != MDP_RGBA_8888 &&
 	     layer->buffer.format != MDP_RGBX_8888) ||
 	    layer->buffer.plane_count != 1 || layer->buffer.planes[0].fd < 0 ||
-	    layer->buffer.width < (wide ? 2160 : 1080) ||
-	    layer->buffer.height < 1920 ||
+	    layer->buffer.width < (wide ? FUJISAN_WIDE_WIDTH : 1080) ||
+	    layer->buffer.height < (wide ? FUJISAN_WIDE_HEIGHT : 1920) ||
 	    layer->src_rect.x || layer->src_rect.y ||
-	    layer->src_rect.w != (wide ? 2160 : 1080) ||
-	    layer->src_rect.h != 1920 ||
+	    layer->src_rect.w != (wide ? FUJISAN_WIDE_WIDTH : 1080) ||
+	    layer->src_rect.h != (wide ? FUJISAN_WIDE_HEIGHT : 1920) ||
 	    layer->dst_rect.x || layer->dst_rect.y ||
-	    layer->dst_rect.w != (wide ? 2160 : 1080) ||
-	    layer->dst_rect.h != 1920) {
+	    layer->dst_rect.w != (wide ? FUJISAN_WIDE_WIDTH : 1080) ||
+	    layer->dst_rect.h != (wide ? FUJISAN_WIDE_HEIGHT : 1920)) {
 		pr_err("fujisan-%s: require one full linear RGBA/RGBX target\n",
 			wide ? "wide" : "single");
 		return -EINVAL;
@@ -5063,17 +5068,24 @@ static int fujisan_expand_atomic_commit(struct msm_fb_data_type *mfd,
 	/* Native stage-1 has a single C transaction across both command CTLs.
 	 * VIG0 carries A's left half and VIG1 carries B's right half.  In single
 	 * mode B stays dark through its backlight policy but still receives the
-	 * paired layer required to arm A's command-mode update. */
+	 * paired layer required to arm A's command-mode update.  Wide mode leaves
+	 * A's bottom five panel rows blank and starts B five rows down; B is the
+	 * physically high panel, so this makes the visible regions coincide. */
 	expanded[0] = *layer;
 	expanded[0].pipe_ndx = BIT(MDSS_MDP_SSPP_VIG0);
-	expanded[0].src_rect = (struct mdp_rect) { 0, 0, 1080, 1920 };
-	expanded[0].dst_rect = (struct mdp_rect) { 0, 0, 1080, 1920 };
+	expanded[0].src_rect = (struct mdp_rect) {
+		0, 0, 1080, wide ? FUJISAN_WIDE_HEIGHT : 1920 };
+	expanded[0].dst_rect = (struct mdp_rect) {
+		0, 0, 1080, wide ? FUJISAN_WIDE_HEIGHT : 1920 };
 
 	expanded[1] = *layer;
 	expanded[1].pipe_ndx = BIT(MDSS_MDP_SSPP_VIG1);
 	expanded[1].src_rect = (struct mdp_rect) {
-		wide ? 1080 : 0, 0, 1080, 1920 };
-	expanded[1].dst_rect = (struct mdp_rect) { 1080, 0, 1080, 1920 };
+		wide ? FUJISAN_WIDE_SPLIT_X : 0, 0, 1080,
+		wide ? FUJISAN_WIDE_HEIGHT : 1920 };
+	expanded[1].dst_rect = (struct mdp_rect) {
+		1080, wide ? FUJISAN_WIDE_B_PAD_TOP : 0, 1080,
+		wide ? FUJISAN_WIDE_HEIGHT : 1920 };
 
 	kfree(client);
 	*layer_list = expanded;
