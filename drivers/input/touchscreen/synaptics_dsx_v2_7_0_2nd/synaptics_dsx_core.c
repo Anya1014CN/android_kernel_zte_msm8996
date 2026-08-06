@@ -5561,19 +5561,24 @@ int synaptics_rmi4_secondary_panel_reset(bool before_reset)
 
 	mutex_lock(&ts_pm_mutex);
 	if (before_reset) {
-		if (rmi4_data->suspend || rmi4_data->fujisan_panel_reset_quiesced ||
-		    !rmi4_data->irq_enabled)
+		if (rmi4_data->suspend || rmi4_data->fujisan_panel_reset_quiesced)
 			goto out;
 
-		rc = synaptics_rmi4_irq_enable(rmi4_data, false, false);
-		if (rc < 0) {
-			dev_err(rmi4_data->pdev->dev.parent,
-				"%s: Failed to quiesce attention interrupt\n", __func__);
-			goto out;
+		if (rmi4_data->irq_enabled) {
+			rc = synaptics_rmi4_irq_enable(rmi4_data, false, false);
+			if (rc < 0) {
+				dev_err(rmi4_data->pdev->dev.parent,
+					"%s: Failed to quiesce attention interrupt\n",
+					__func__);
+				goto out;
+			}
+		#ifdef CONFIG_FB
+			cancel_work_sync(&rmi4_data->syna_irq_work);
+		#endif
 		}
-#ifdef CONFIG_FB
-		cancel_work_sync(&rmi4_data->syna_irq_work);
-#endif
+
+		/* Also remember a previously failed reset which already masked IRQ.
+		 * The next physical panel reset is its recovery opportunity. */
 		rmi4_data->fujisan_panel_reset_quiesced = true;
 	} else {
 		if (!rmi4_data->fujisan_panel_reset_quiesced)
@@ -5588,10 +5593,16 @@ int synaptics_rmi4_secondary_panel_reset(bool before_reset)
 		 * controller starts, so do not turn that expected window into retries. */
 		msleep(100);
 		rmi4_data->current_page = MASK_8BIT;
-		rc = synaptics_rmi4_reinit_device(rmi4_data);
+
+		/* The panel reset also resets TD4322.  Reinitializing the old function
+		 * list leaves a controller which has lost its page table and interrupt
+		 * masks alive but silent.  Use the driver's normal reset path so it
+		 * performs a reset, re-enumerates the functions, and restores them
+		 * before attention IRQs are unmasked. */
+		rc = synaptics_rmi4_reset_device(rmi4_data, false);
 		if (rc < 0)
 			dev_err(rmi4_data->pdev->dev.parent,
-				"%s: Failed to restore TD4322 state\n", __func__);
+				"%s: Failed to reset TD4322 after panel reset\n", __func__);
 
 		irq_rc = synaptics_rmi4_irq_enable(rmi4_data, true, false);
 		if (!rc && irq_rc < 0)

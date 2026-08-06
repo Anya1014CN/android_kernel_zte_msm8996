@@ -4133,7 +4133,7 @@ void synaptics_rmi4_smart_cover(bool enable)
 	SYNA_INFO("%s %d enable: %d\n", __func__, __LINE__, enable);
 }
 
-static void synaptics_rmi4_sleep_enable(struct synaptics_rmi4_data *rmi4_data,
+static int synaptics_rmi4_set_sleep(struct synaptics_rmi4_data *rmi4_data,
 		bool enable)
 {
 	int retval;
@@ -4148,7 +4148,7 @@ static void synaptics_rmi4_sleep_enable(struct synaptics_rmi4_data *rmi4_data,
 		dev_err(rmi4_data->pdev->dev.parent,
 				"%s: Failed to read device control\n",
 				__func__);
-		return;
+		return retval;
 	}
 
 	device_ctrl = device_ctrl & ~MASK_3BIT;
@@ -4165,11 +4165,18 @@ static void synaptics_rmi4_sleep_enable(struct synaptics_rmi4_data *rmi4_data,
 		dev_err(rmi4_data->pdev->dev.parent,
 				"%s: Failed to write device control\n",
 				__func__);
-		return;
+		return retval;
 	}
 
 	rmi4_data->sensor_sleep = enable;
 
+	return 0;
+}
+
+static void synaptics_rmi4_sleep_enable(struct synaptics_rmi4_data *rmi4_data,
+		bool enable)
+{
+	synaptics_rmi4_set_sleep(rmi4_data, enable);
 
 }
 
@@ -5569,8 +5576,26 @@ static int synaptics_rmi4_resume(struct device *dev)
 
 	rmi4_data->current_page = MASK_8BIT;
 
-	synaptics_rmi4_sleep_enable(rmi4_data, false);
-	synaptics_rmi4_irq_enable(rmi4_data, true, false);
+	retval = synaptics_rmi4_set_sleep(rmi4_data, false);
+	if (retval < 0) {
+		/*
+		 * FB can report UNBLANK before MDSS has restored the panel rails.
+		 * Do not claim success in that window: the later post-rail UNBLANK
+		 * must be allowed to retry the standard resume sequence.
+		 */
+		dev_err(rmi4_data->pdev->dev.parent,
+				"%s: Failed to wake controller, deferring resume\n",
+				__func__);
+		return retval;
+	}
+
+	retval = synaptics_rmi4_irq_enable(rmi4_data, true, false);
+	if (retval < 0) {
+		dev_err(rmi4_data->pdev->dev.parent,
+				"%s: Failed to enable attention interrupt\n",
+				__func__);
+		return retval;
+	}
 
 exit:
 #ifdef FB_READY_RESET

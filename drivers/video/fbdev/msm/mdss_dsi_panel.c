@@ -884,6 +884,22 @@ int mdss_dsi_panel_reset(struct mdss_panel_data *pdata, int enable)
 		return rc;
 	}
 
+#ifdef CONFIG_BOARD_FUJISAN
+	/*
+	 * The secondary TD4322 shares the panel reset line and is powered down
+	 * immediately after this callback.  Quiesce its attention IRQ before
+	 * either action; panel bring-up will restore it after a fresh reset.
+	 */
+	if (!enable && ctrl_pdata->ndx == DSI_CTRL_RIGHT &&
+	    gpio_is_valid(ctrl_pdata->rst2_gpio)) {
+		touch_rc = synaptics_rmi4_secondary_panel_reset(true);
+		trace_fujisan_display_event(ctrl_pdata->ndx, 1, false,
+			"tddi_irq_quiesce", touch_rc);
+		if (touch_rc)
+			return touch_rc;
+	}
+#endif
+
 	if (!gpio_is_valid(ctrl_pdata->disp_en_gpio)) {
 		pr_debug("%s:%d, reset line not configured\n",
 			   __func__, __LINE__);
@@ -944,7 +960,6 @@ int mdss_dsi_panel_reset(struct mdss_panel_data *pdata, int enable)
 						goto exit;
 					}
 					tddi_reset = true;
-					fujisan_secondary_panel_rails(ctrl_pdata, 1);
 				}
 				pr_info("%s: ndx=%d reset gpio=%d\n",
 					__func__, ctrl_pdata->ndx, rst);
