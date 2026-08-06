@@ -765,6 +765,35 @@ static int qpnp_wled_module_en(struct qpnp_wled *wled,
 	return 0;
 }
 
+#ifdef CONFIG_BOARD_FUJISAN
+/* The TD4322's DCS brightness path does not own the PMI8996 WLED module.
+ * Keep the OEM board hook, but use the current driver's serialized module
+ * transition so OVP and PSM state remain coherent. */
+static struct qpnp_wled *fujisan_wled;
+
+void qpnp_wled_enable_cabc(int enable)
+{
+	struct qpnp_wled *wled = READ_ONCE(fujisan_wled);
+	int rc;
+
+	if (!wled) {
+		pr_warn("fujisan: WLED CABC requested before probe\n");
+		return;
+	}
+
+	mutex_lock(&wled->lock);
+	rc = qpnp_wled_module_en(wled, wled->ctrl_base, !!enable);
+	mutex_unlock(&wled->lock);
+	if (rc < 0)
+		pr_err("fujisan: WLED CABC %s failed rc=%d\n",
+			enable ? "enable" : "disable", rc);
+	else
+		pr_info("fujisan: WLED CABC %s\n",
+			enable ? "enabled" : "disabled");
+}
+EXPORT_SYMBOL_GPL(qpnp_wled_enable_cabc);
+#endif
+
 /* sysfs store function for ramp */
 static ssize_t qpnp_wled_ramp_store(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t count)
@@ -2727,6 +2756,10 @@ static int qpnp_wled_probe(struct platform_device *pdev)
 		}
 	}
 
+#ifdef CONFIG_BOARD_FUJISAN
+	WRITE_ONCE(fujisan_wled, wled);
+#endif
+
 	return 0;
 
 sysfs_fail:
@@ -2745,6 +2778,11 @@ static int qpnp_wled_remove(struct platform_device *pdev)
 {
 	struct qpnp_wled *wled = dev_get_drvdata(&pdev->dev);
 	int i;
+
+#ifdef CONFIG_BOARD_FUJISAN
+	if (READ_ONCE(fujisan_wled) == wled)
+		WRITE_ONCE(fujisan_wled, NULL);
+#endif
 
 	for (i = 0; i < ARRAY_SIZE(qpnp_wled_attrs); i++)
 		sysfs_remove_file(&wled->cdev.dev->kobj,

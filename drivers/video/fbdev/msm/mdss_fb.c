@@ -297,6 +297,14 @@ static int lcd_backlight_2_registered;
  * Global screen blanking only changes its DCS brightness, so this state is
  * retained across sleep/wake; a folded transition sends Display Off. */
 static bool fujisan_secondary_display_on;
+/* The posture daemon owns whether a non-zero lcd-backlight-2 write may wake
+ * B.  Default closed prevents a stale Lights callback from reopening B
+ * before hall reconciliation has selected an unfolded topology. */
+static bool fujisan_secondary_display_allowed;
+module_param_named(fujisan_secondary_display_allowed,
+		fujisan_secondary_display_allowed, bool, 0644);
+MODULE_PARM_DESC(fujisan_secondary_display_allowed,
+		"Allow Fujisan secondary display brightness to wake panel B");
 
 bool mdss_fb_fujisan_secondary_display_is_on(void)
 {
@@ -385,6 +393,10 @@ static bool fujisan_set_native_secondary_backlight_locked(
 	 */
 	if (!mdss_fb_is_power_on_interactive(mfd))
 		return true;
+	if (value && !READ_ONCE(fujisan_secondary_display_allowed)) {
+		pr_info("fujisan: suppress secondary brightness while panel is off\n");
+		return true;
+	}
 	if (value > panel->panel_info.brightness_max)
 		value = panel->panel_info.brightness_max;
 	MDSS_BRIGHT_TO_BL(bl_lvl, value, panel->panel_info.bl_max,
@@ -393,7 +405,6 @@ static bool fujisan_set_native_secondary_backlight_locked(
 		bl_lvl = 1;
 
 	if (!value) {
-		/* 0x51/0x53 first prevents a visible frame during DCS 0x28. */
 		panel->set_backlight(panel, bl_lvl);
 		if (fujisan_set_secondary_display_state(false) > 0)
 			fujisan_secondary_display_on = false;

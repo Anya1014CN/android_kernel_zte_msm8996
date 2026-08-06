@@ -626,8 +626,22 @@ static struct dsi_cmd_desc backlight_cmd[] = {
 
 #ifdef CONFIG_BOARD_FUJISAN
 static int fujisan_bl_power_on_flag;
+static bool fujisan_secondary_wled_on;
 extern u32 zte_bl_brightness_2;
 extern bool mdss_fb_fujisan_secondary_display_is_on(void);
+extern void qpnp_wled_enable_cabc(int enable);
+
+/* OEM keeps the PMI8996 WLED module synchronized with every right-panel DCS
+ * brightness transition.  The normal display blank path reaches here without
+ * touching lcd-backlight-2, so this must not live in the LED callback. */
+static void fujisan_secondary_wled_set(bool on)
+{
+	if (on == fujisan_secondary_wled_on)
+		return;
+
+	qpnp_wled_enable_cabc(on);
+	fujisan_secondary_wled_on = on;
+}
 #endif
 
 static void mdss_dsi_panel_bklt_dcs(struct mdss_dsi_ctrl_pdata *ctrl, int level)
@@ -670,6 +684,9 @@ static void mdss_dsi_panel_bklt_dcs(struct mdss_dsi_ctrl_pdata *ctrl, int level)
 	}
 	if (bl_level == 0)
 		led_pwm2[1] = 0x0;
+
+	if (ctrl->ndx == DSI_CTRL_RIGHT)
+		fujisan_secondary_wled_set(bl_level != 0);
 
 	if (ctrl->ndx == DSI_CTRL_LEFT && zte_bl_brightness_2 == 1) {
 		/* Closed-book mode: force primary BL off. */
@@ -1044,6 +1061,11 @@ int mdss_dsi_panel_reset(struct mdss_panel_data *pdata, int enable)
 			pr_debug("%s: Reset panel done\n", __func__);
 		}
 	} else {
+#ifdef CONFIG_BOARD_FUJISAN
+		if (ctrl_pdata->ndx == DSI_CTRL_RIGHT)
+			fujisan_secondary_wled_set(false);
+#endif
+
 		if (gpio_is_valid(ctrl_pdata->avdd_en_gpio)) {
 			if (ctrl_pdata->avdd_en_gpio_invert)
 				gpio_set_value((ctrl_pdata->avdd_en_gpio), 1);
