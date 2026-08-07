@@ -1508,10 +1508,19 @@ __wlan_hdd_cfg80211_get_supported_features(struct wiphy *wiphy,
         fset |= WIFI_FEATURE_INFRA;
     }
 
-    if (TRUE == hdd_is_5g_supported(pHddCtx)) {
-        hddLog(LOG1, "INFRA_5G is supported by firmware");
+#if defined(CONFIG_MACH_ZTE_FUJISAN)
+    /* QCA6174 is dual-band and its firmware scan path exposes 5 GHz before
+     * the early HAL feature query has initialized the wiphy band table. */
+    {
+        hddLog(LOG1, "INFRA_5G is supported by Fujisan hardware");
         fset |= WIFI_FEATURE_INFRA_5G;
     }
+#else
+    if (wiphy->bands[IEEE80211_BAND_5GHZ]) {
+        hddLog(LOG1, "INFRA_5G is supported by wiphy");
+        fset |= WIFI_FEATURE_INFRA_5G;
+    }
+#endif
 
 #ifdef WLAN_FEATURE_P2P
     if ((wiphy->interface_modes & BIT(NL80211_IFTYPE_P2P_CLIENT)) &&
@@ -15709,9 +15718,12 @@ void wlan_hdd_update_wiphy(struct wiphy *wiphy,
                            hdd_context_t *ctx)
 {
     uint32_t val32;
+    uint32_t mcs_set_len;
     uint16_t val16;
+    uint8_t mcs_set[SIZE_OF_SUPPORTED_MCS_SET];
     tSirMacHTCapabilityInfo *ht_cap_info;
     eHalStatus status;
+    int i;
 
     wiphy->max_ap_assoc_sta = ctx->max_peers;
     if (!sme_IsFeatureSupportedByFW(DOT11AC)) {
@@ -15738,6 +15750,77 @@ void wlan_hdd_update_wiphy(struct wiphy *wiphy,
         if (NULL != wiphy->bands[IEEE80211_BAND_5GHZ])
             wiphy->bands[IEEE80211_BAND_5GHZ]->ht_cap.cap |=
                                                     IEEE80211_HT_CAP_TX_STBC;
+    }
+
+    /* Keep cfg80211's rate sets aligned with the negotiated firmware cfg. */
+    mcs_set_len = sizeof(mcs_set);
+    status = ccmCfgGetStr(ctx->hHal, WNI_CFG_SUPPORTED_MCS_SET,
+                          mcs_set, &mcs_set_len);
+    if (eHAL_STATUS_SUCCESS != status) {
+        hddLog(VOS_TRACE_LEVEL_ERROR,
+               "%s: could not get HT MCS set", __func__);
+    } else {
+        for (i = 0; i < IEEE80211_NUM_BANDS; i++) {
+            if (NULL == wiphy->bands[i])
+                continue;
+
+            vos_mem_copy(wiphy->bands[i]->ht_cap.mcs.rx_mask, mcs_set,
+                         sizeof(wiphy->bands[i]->ht_cap.mcs.rx_mask));
+            /* The firmware cfg has no HT highest-rate field. */
+            wiphy->bands[i]->ht_cap.mcs.rx_highest = 0;
+        }
+    }
+
+    status = ccmCfgGetInt(ctx->hHal, WNI_CFG_VHT_RX_MCS_MAP, &val32);
+    if (eHAL_STATUS_SUCCESS != status) {
+        hddLog(VOS_TRACE_LEVEL_ERROR,
+               "%s: could not get VHT RX MCS map", __func__);
+    } else {
+        for (i = 0; i < IEEE80211_NUM_BANDS; i++) {
+            if (NULL != wiphy->bands[i])
+                wiphy->bands[i]->vht_cap.vht_mcs.rx_mcs_map =
+                    cpu_to_le16((uint16_t)val32);
+        }
+    }
+
+    status = ccmCfgGetInt(ctx->hHal, WNI_CFG_VHT_TX_MCS_MAP, &val32);
+    if (eHAL_STATUS_SUCCESS != status) {
+        hddLog(VOS_TRACE_LEVEL_ERROR,
+               "%s: could not get VHT TX MCS map", __func__);
+    } else {
+        for (i = 0; i < IEEE80211_NUM_BANDS; i++) {
+            if (NULL != wiphy->bands[i])
+                wiphy->bands[i]->vht_cap.vht_mcs.tx_mcs_map =
+                    cpu_to_le16((uint16_t)val32);
+        }
+    }
+
+    status = ccmCfgGetInt(ctx->hHal,
+                           WNI_CFG_VHT_RX_HIGHEST_SUPPORTED_DATA_RATE,
+                           &val32);
+    if (eHAL_STATUS_SUCCESS != status) {
+        hddLog(VOS_TRACE_LEVEL_ERROR,
+               "%s: could not get VHT RX highest rate", __func__);
+    } else {
+        for (i = 0; i < IEEE80211_NUM_BANDS; i++) {
+            if (NULL != wiphy->bands[i])
+                wiphy->bands[i]->vht_cap.vht_mcs.rx_highest =
+                    cpu_to_le16((uint16_t)val32);
+        }
+    }
+
+    status = ccmCfgGetInt(ctx->hHal,
+                           WNI_CFG_VHT_TX_HIGHEST_SUPPORTED_DATA_RATE,
+                           &val32);
+    if (eHAL_STATUS_SUCCESS != status) {
+        hddLog(VOS_TRACE_LEVEL_ERROR,
+               "%s: could not get VHT TX highest rate", __func__);
+    } else {
+        for (i = 0; i < IEEE80211_NUM_BANDS; i++) {
+            if (NULL != wiphy->bands[i])
+                wiphy->bands[i]->vht_cap.vht_mcs.tx_highest =
+                    cpu_to_le16((uint16_t)val32);
+        }
     }
 }
 
