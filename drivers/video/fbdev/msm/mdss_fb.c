@@ -1960,7 +1960,7 @@ static int mdss_fb_blank_blank(struct msm_fb_data_type *mfd,
 	return ret;
 }
 
-static int mdss_fb_blank_unblank(struct msm_fb_data_type *mfd)
+int mdss_fb_panel_unblank(struct msm_fb_data_type *mfd)
 {
 	int ret = 0;
 	int cur_power_state;
@@ -2095,7 +2095,7 @@ static int mdss_fb_blank_sub(int blank_mode, struct fb_info *info,
 	switch (blank_mode) {
 	case FB_BLANK_UNBLANK:
 		pr_debug("unblank called. cur pwr state=%d\n", cur_power_state);
-		ret = mdss_fb_blank_unblank(mfd);
+		ret = mdss_fb_panel_unblank(mfd);
 		break;
 	case BLANK_FLAG_ULP:
 		req_power_state = MDSS_PANEL_POWER_LP2;
@@ -2117,7 +2117,7 @@ static int mdss_fb_blank_sub(int blank_mode, struct fb_info *info,
 		 */
 		if (mdss_fb_is_power_off(mfd) && mfd->mdp.on_fnc) {
 			pr_debug("off --> lp. switch to on first\n");
-			ret = mdss_fb_blank_unblank(mfd);
+			ret = mdss_fb_panel_unblank(mfd);
 			if (ret)
 				break;
 		}
