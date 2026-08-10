@@ -557,6 +557,12 @@ config UID_SYS_STATS
 	  Per UID based io statistics exported to /proc/uid_io
 	  Per UID based procstat control in /proc/uid_procstat
 
+config USB_EXT_TYPE_C_PERICOM
+	tristate "USB Type-C charger detection support using Pericom chip"
+	depends on I2C && POWER_SUPPLY
+	help
+	  Enables support for the external Pericom Type-C controller.
+
 config QPNP_MISC
 	tristate "QPNP Misc Peripheral"
 	depends on SPMI || MSM_SPMI

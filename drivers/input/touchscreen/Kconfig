@@ -13,6 +13,8 @@ if INPUT_TOUCHSCREEN
 
 source "drivers/input/touchscreen/synaptics_dsx/Kconfig"
 source "drivers/input/touchscreen/synaptics_dsx_force/Kconfig"
+source "drivers/input/touchscreen/synaptics_dsx_v2_7_0/Kconfig"
+source "drivers/input/touchscreen/synaptics_dsx_v2_7_0_2nd/Kconfig"
 
 config OF_TOUCHSCREEN
 	def_tristate INPUT
@@ -1239,5 +1241,12 @@ config TOUCHSCREEN_ST
 source "drivers/input/touchscreen/st/Kconfig"
 
 source "drivers/input/touchscreen/ft5x46/Kconfig"
+
+config ZTE_TS_PINCTRL
+	bool "ZTE touchscreen pinctrl"
+	depends on I2C && INPUT
+	help
+	  Shared pinctrl helpers for ZTE dual Synaptics touchscreens.
+
 
 endif
