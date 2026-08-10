@@ -1,0 +1,34 @@
+/* TWRP-only Fujisan DTB: retain the dual-DSI topology, but expose panel A
+ * through its native framebuffer rather than the Android composite display. */
+/dts-v1/;
+
+#include "msm8996-v3.dtsi"
+#include "msm-pmi8996.dtsi"
+#include "msm8996-mtp-fujisan.dtsi"
+#include "zte-msm8996-fujisan-pinctrl.dtsi"
+#include "zte-msm8996-v3-pmi8996-fujisan.dtsi"
+
+/ {
+	model = "Qualcomm Technologies, Inc. MSM 8996 v3 + PMI8996 MTP";
+	compatible = "qcom,msm8996-mtp", "qcom,msm8996", "qcom,mtp";
+	qcom,board-id = <102 0>;
+};
+
+&soc {
+	zte_misc {
+		compatible = "zte-misc";
+	};
+	zte-hall {
+		compatible = "zte-hall";
+		pinctrl-names = "zte_hall_gpio_active";
+		pinctrl-0 = <&zte_hall_gpio_active>;
+		hall_en {
+			label = "hall_en";
+			gpios = <&tlmm 124 0x0>;
+		};
+	};
+};
+
+&mdss_dsi {
+	/delete-property/ zte,fujisan-composite-stage1;
+};

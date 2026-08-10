@@ -1,0 +1,49 @@
+
+qcom,zte_p996a20_3180mah {
+	/* #2975631_ZTE_P996A20_3180mAh_averaged_MasterSlave_Jun20th2017*/
+	qcom,max-voltage-uv = <4400000>;
+	qcom,nom-batt-capacity-mah = <3180>;
+	qcom,batt-id-kohm = <0>;
+	qcom,battery-beta = <3435>;
+	qcom,battery-type = "ZTE_BATTERY_DATA_ID_2";
+	qcom,chg-rslow-comp-c1 = <2958216>;
+	qcom,chg-rslow-comp-c2 = <3580321>;
+	qcom,chg-rs-to-rslow = <758814>;
+	qcom,chg-rslow-comp-thr = <0x99>;
+	qcom,checksum = <0xB5C7>;
+	qcom,gui-version = "PMI8996GUI - 1.1.0.4";
+	qcom,fg-profile-data = [
+		 DE 83 AB 7C
+		 E8 80 D2 76
+		 61 83 00 6F
+		 E9 88 1C 94
+		 4B 82 56 98
+		 DA B5 4F C1
+		 52 15 EC 83
+		 AD 7C C3 80
+		 52 76 56 83
+		 0D 68 45 80
+		 02 8D 55 82
+		 81 99 C7 BC
+		 9A C9 54 0E
+		 DD 0C 69 5B
+		 14 70 71 FD
+		 05 3E CC 36
+		 FE 12 00 00
+		 C2 45 22 38
+		 00 00 00 00
+		 00 00 00 00
+		 00 00 00 00
+		 FE 69 2C 69
+		 C2 70 32 83
+		 B7 6E A4 61
+		 44 68 11 80
+		 90 6D 0A 61
+		 08 6C 75 A9
+		 18 B5 60 57
+		 5E A0 71 0C
+		 28 00 FF 36
+		 F0 11 30 03
+		 00 00 00 0C
+	];
+};
