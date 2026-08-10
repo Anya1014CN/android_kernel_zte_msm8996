@@ -242,6 +242,7 @@ enum pmic_model {
 };
 
 enum msm_cpu socinfo_get_msm_cpu(void);
+int socinfo_get_normal_flag(void);
 uint32_t socinfo_get_id(void);
 uint32_t socinfo_get_version(void);
 uint32_t socinfo_get_raw_id(void);

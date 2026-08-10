@@ -753,6 +753,13 @@ enum msm_cpu socinfo_get_msm_cpu(void)
 }
 EXPORT_SYMBOL_GPL(socinfo_get_msm_cpu);
 
+/* Fujisan touch and hall firmware paths require the normal-boot query. */
+int socinfo_get_normal_flag(void)
+{
+	return 1;
+}
+EXPORT_SYMBOL(socinfo_get_normal_flag);
+
 static ssize_t
 msm_get_vendor(struct device *dev,
 		struct device_attribute *attr,
