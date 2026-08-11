@@ -317,7 +317,16 @@ module_param_named(
 	debug_mask, fg_debug_mask, int, 00600
 );
 
+/*
+ * Fujisan's PMI8994 fuel gauge can start with the IMA owned by the FG
+ * algorithm.  Use the Qualcomm driver's existing recovery path so the
+ * initial hardware setup is retried after that lockup is cleared.
+ */
+#ifdef CONFIG_BOARD_FUJISAN
+static int fg_reset_on_lockup = 1;
+#else
 static int fg_reset_on_lockup;
+#endif
 
 static int fg_sense_type = -EINVAL;
 static int fg_restart;
