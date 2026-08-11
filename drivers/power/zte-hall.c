@@ -97,7 +97,7 @@ module_param_named(hall_timer_debug, hall_mesc,
 module_param_named(hall_interrupt_count, hall_count,
 			int, S_IRUGO | S_IWUSR | S_IWGRP);
 
-static int factory_mode_set(const char *val, struct kernel_param *kp)
+static int factory_mode_set(const char *val, const struct kernel_param *kp)
 {
 	int ret;
 
@@ -114,7 +114,7 @@ static int factory_mode_set(const char *val, struct kernel_param *kp)
 	return 0;
 }
 
-static int factory_mode_get(char *buffer, struct kernel_param *kp)
+static int factory_mode_get(char *buffer, const struct kernel_param *kp)
 {
 	switch (hallstate) {
 	case HALL_STATE_OPEN:
