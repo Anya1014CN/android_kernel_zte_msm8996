@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2019 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2011-2017 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -2720,26 +2720,25 @@ eHalStatus csrScanningStateMsgProcessor( tpAniSirGlobal pMac, void *pMsgBuf )
 	eHalStatus status = eHAL_STATUS_SUCCESS;
 	tSirMbMsg *pMsg = (tSirMbMsg *)pMsgBuf;
 	tSirSmeDisConDoneInd *pDisConDoneInd;
-	tCsrRoamInfo *roam_info;
+	tCsrRoamInfo roamInfo = {0};
 	tCsrRoamSession  *pSession;
 
 	if ((eWNI_SME_SCAN_RSP == pMsg->type) ||
 	    (eWNI_SME_GET_SCANNED_CHANNEL_RSP == pMsg->type)) {
 		status = csrScanSmeScanResponse( pMac, pMsgBuf );
 	} else {
-		roam_info = vos_mem_malloc(sizeof(*roam_info));
-		if (!roam_info)
-			return eHAL_STATUS_FAILED_ALLOC;
 		switch (pMsg->type) {
 		case eWNI_SME_UPPER_LAYER_ASSOC_CNF:
 		{
 			tSirSmeAssocIndToUpperLayerCnf *pUpperLayerAssocCnf;
+			tCsrRoamInfo *pRoamInfo = NULL;
 			tANI_U32 sessionId;
 			eHalStatus status;
 
 			smsLog(pMac, LOG1,
 			       FL("Scanning : ASSOCIATION confirmation can be given to upper layer "));
 
+			pRoamInfo = &roamInfo;
 			pUpperLayerAssocCnf =
 				(tSirSmeAssocIndToUpperLayerCnf *)pMsgBuf;
 			status = csrRoamGetSessionIdFromBSSID( pMac,
@@ -2750,47 +2749,46 @@ eHalStatus csrScanningStateMsgProcessor( tpAniSirGlobal pMac, void *pMsgBuf )
 				smsLog(pMac, LOGE,
 					FL("  session %d not found "),
 					sessionId);
-				vos_mem_free(roam_info);
 				return eHAL_STATUS_FAILURE;
 			}
 				//send the status code as Success
-			roam_info->statusCode = eSIR_SME_SUCCESS;
-			roam_info->u.pConnectedProfile =
+			pRoamInfo->statusCode = eSIR_SME_SUCCESS;
+			pRoamInfo->u.pConnectedProfile =
 				&pSession->connectedProfile;
-			roam_info->staId = (tANI_U8)pUpperLayerAssocCnf->aid;
-			roam_info->rsnIELen =
+			pRoamInfo->staId = (tANI_U8)pUpperLayerAssocCnf->aid;
+			pRoamInfo->rsnIELen =
 				(tANI_U8)pUpperLayerAssocCnf->rsnIE.length;
-			roam_info->prsnIE =
+			pRoamInfo->prsnIE =
 				pUpperLayerAssocCnf->rsnIE.rsnIEdata;
-			roam_info->addIELen =
+			pRoamInfo->addIELen =
 				(tANI_U8)pUpperLayerAssocCnf->addIE.length;
-			roam_info->paddIE =
+			pRoamInfo->paddIE =
 				pUpperLayerAssocCnf->addIE.addIEdata;
-			vos_mem_copy(roam_info->peerMac,
+			vos_mem_copy(pRoamInfo->peerMac,
 				     pUpperLayerAssocCnf->peerMacAddr,
 				     sizeof(tSirMacAddr));
-			vos_mem_copy(&roam_info->bssid,
+			vos_mem_copy(&pRoamInfo->bssid,
 				     pUpperLayerAssocCnf->bssId,
 				     sizeof(tCsrBssid));
-			roam_info->wmmEnabledSta =
+			pRoamInfo->wmmEnabledSta =
 				pUpperLayerAssocCnf->wmmEnabledSta;
-			if (CSR_IS_INFRA_AP(roam_info->u.pConnectedProfile)) {
+			if (CSR_IS_INFRA_AP(pRoamInfo->u.pConnectedProfile)) {
 				pMac->roam.roamSession[sessionId].connectState =
 					eCSR_ASSOC_STATE_TYPE_INFRA_CONNECTED;
-				roam_info->fReassocReq =
+				pRoamInfo->fReassocReq =
 					pUpperLayerAssocCnf->reassocReq;
 				status = csrRoamCallCallback(pMac, sessionId,
-					roam_info, 0,
+					pRoamInfo, 0,
 					eCSR_ROAM_INFRA_IND,
 					eCSR_ROAM_RESULT_INFRA_ASSOCIATION_CNF);
 			}
-			if(CSR_IS_WDS_AP( roam_info->u.pConnectedProfile)) {
+			if(CSR_IS_WDS_AP( pRoamInfo->u.pConnectedProfile)) {
 				vos_sleep( 100 );
 				pMac->roam.roamSession[sessionId].connectState =
 					//Sta
 					eCSR_ASSOC_STATE_TYPE_WDS_CONNECTED;
 				status = csrRoamCallCallback(pMac,
-					sessionId, roam_info, 0,
+					sessionId, pRoamInfo, 0,
 					eCSR_ROAM_WDS_IND,
 					//Sta
 					eCSR_ROAM_RESULT_WDS_ASSOCIATION_IND);
@@ -2807,22 +2805,21 @@ eHalStatus csrScanningStateMsgProcessor( tpAniSirGlobal pMac, void *pMsgBuf )
 					pDisConDoneInd->sessionId);
 			if (!pSession) {
 				smsLog(pMac, LOGE, FL("Invalid session"));
-				vos_mem_free(roam_info);
 				return eHAL_STATUS_FAILURE;
 			}
 			if (CSR_IS_SESSION_VALID(pMac,
 				pDisConDoneInd->sessionId))
 			{
-				roam_info->reasonCode =
+				roamInfo.reasonCode =
 					pDisConDoneInd->reasonCode;
-				roam_info->statusCode =
+				roamInfo.statusCode =
 					eSIR_SME_STA_DISASSOCIATED;
-				vos_mem_copy(roam_info->peerMac,
+				vos_mem_copy(roamInfo.peerMac,
 					pDisConDoneInd->peerMacAddr,
 					sizeof(tSirMacAddr));
 				status = csrRoamCallCallback(pMac,
 					pDisConDoneInd->sessionId,
-					roam_info, 0,
+					&roamInfo, 0,
 					eCSR_ROAM_LOSTLINK,
 					eCSR_ROAM_RESULT_DISASSOC_IND);
 
@@ -3177,17 +3174,8 @@ static void csrMoveTempScanResultsToMainList(tpAniSirGlobal pMac,
     tDot11fBeaconIEs *pIesLocal = NULL;
     tAniSSID tmpSsid;
     v_TIME_t timer=0;
-    bool temp_bss_cnt_exceed_max = false;
 
     tmpSsid.length = 0;
-    /*
-     * If tempScanResults count is greater than the max count flush all the
-     * main list scan entry.
-     */
-    if (csrLLCount(&pMac->scan.tempScanResults) >= pMac->scan.nBssLimit) {
-        temp_bss_cnt_exceed_max = true;
-        csrLLScanPurgeResult(pMac, &pMac->scan.scanResultList);
-    }
 
     // remove the BSS descriptions from temporary list
     while ((pEntry = csrLLRemoveTail(&pMac->scan.tempScanResults,
@@ -3199,14 +3187,6 @@ static void csrMoveTempScanResultsToMainList(tpAniSirGlobal pMac,
                       MAC_ADDR_ARRAY(pBssDescription->Result.BssDescriptor.bssId),
                       pBssDescription->Result.BssDescriptor.channelId,
                 pBssDescription->Result.BssDescriptor.rssi * (-1) );
-        if (temp_bss_cnt_exceed_max && CSR_SCAN_IS_OVER_BSS_LIMIT(pMac) &&
-            !( eCsrScanGetLfrResult == reason )) {
-              smsLog(pMac, LOG1,
-                     FL("received tempScanResults greater than the max count and we have already added max %d AP during this scan so drop this"),
-                     pMac->scan.nBssLimit);
-              csrFreeScanResultEntry(pMac, pBssDescription);
-              continue;
-        }
 
         //At this time, pBssDescription->Result.pvIes may be NULL
         pIesLocal = (tDot11fBeaconIEs *)( pBssDescription->Result.pvIes );
@@ -6456,6 +6436,7 @@ eHalStatus csrScanCopyRequest(tpAniSirGlobal pMac, tCsrScanRequest *pDstReq, tCs
                                 &unsafe_chan_cnt,
                                 sizeof(unsafe_chan));
 
+
                         for ( index = 0; index < pSrcReq->ChannelInfo.numOfChannels ; index++ )
                         {
                             /* Allow scan on valid channels only.
@@ -6469,7 +6450,7 @@ eHalStatus csrScanCopyRequest(tpAniSirGlobal pMac, tCsrScanRequest *pDstReq, tCs
                                ((eCSR_SCAN_P2P_DISCOVERY == pSrcReq->requestType) &&
                                 CSR_IS_SOCIAL_CHANNEL(pSrcReq->ChannelInfo.ChannelList[index]))))
                             {
-                                if( ((pSrcReq->skipDfsChnlInP2pSearch || pMac->sme.miracast_value ||
+                                if( ((pSrcReq->skipDfsChnlInP2pSearch ||
                                     skip_dfs_chnl) &&
                                     (NV_CHANNEL_DFS == vos_nv_getChannelEnabledState(pSrcReq->ChannelInfo.ChannelList[index])) )
 #ifdef FEATURE_WLAN_LFR
@@ -6545,10 +6526,6 @@ eHalStatus csrScanCopyRequest(tpAniSirGlobal pMac, tCsrScanRequest *pDstReq, tCs
                                         continue;
                                     }
                                 }
-#ifdef FEATURE_WLAN_DISABLE_CHANNEL_SWITCH
-                                if (!vos_is_chan_ok_for_dnbs(pSrcReq->ChannelInfo.ChannelList[index]))
-                                    continue;
-#endif
 
                                 pDstReq->ChannelInfo.ChannelList[new_index] =
                                     pSrcReq->ChannelInfo.ChannelList[index];
@@ -8513,13 +8490,6 @@ eHalStatus csrScanSavePreferredNetworkFound(tpAniSirGlobal pMac,
           (SIR_MAC_HDR_LEN_3A + SIR_MAC_B_PR_SSID_OFFSET);
    }
 
-   if (uLen > (UINT_MAX - sizeof(tCsrScanResult))) {
-       smsLog(pMac, LOGE,
-              FL("Incorrect len: %d, may leads to int overflow, uLen %d"),
-              pPrefNetworkFoundInd->frameLength, uLen);
-       vos_mem_free(pParsedFrame);
-       return eHAL_STATUS_FAILURE;
-   }
    pScanResult = vos_mem_malloc(sizeof(tCsrScanResult) + uLen);
    if ( NULL == pScanResult )
    {

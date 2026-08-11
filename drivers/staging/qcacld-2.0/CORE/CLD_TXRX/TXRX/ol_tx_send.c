@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2019 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2011-2017 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -540,9 +540,7 @@ ol_tx_discard_target_frms(ol_txrx_pdev_handle pdev)
 void
 ol_tx_credit_completion_handler(ol_txrx_pdev_handle pdev, int credits)
 {
-    if (credits > 0)
-        ol_tx_target_credit_update(pdev, credits);
-
+    ol_tx_target_credit_update(pdev, credits);
     if (pdev->cfg.is_high_latency) {
         ol_tx_sched(pdev);
     }
@@ -601,14 +599,13 @@ ol_tx_get_txtstamps(u_int32_t *msg_word, int num_msdus)
 }
 
 static inline void
-ol_tx_timestamp(ol_txrx_pdev_handle pdev, enum htt_tx_status status,
-		adf_nbuf_t netbuf, u_int64_t ts)
+ol_tx_timestamp(ol_txrx_pdev_handle pdev, adf_nbuf_t netbuf, u_int64_t ts)
 {
 	if (!netbuf)
 		return;
 
 	if (pdev->ol_tx_timestamp_cb)
-		pdev->ol_tx_timestamp_cb((int32_t)status, netbuf, ts);
+		pdev->ol_tx_timestamp_cb(netbuf, ts);
 }
 #else
 static inline struct htt_tx_compl_ind_append_txtstamp *
@@ -618,10 +615,8 @@ ol_tx_get_txtstamps(u_int32_t *msg_word, int num_msdus)
 }
 
 static inline void
-ol_tx_timestamp(ol_txrx_pdev_handle pdev, enum htt_tx_status status,
-		adf_nbuf_t netbuf, u_int64_t ts)
+ol_tx_timestamp(ol_txrx_pdev_handle pdev, adf_nbuf_t netbuf, u_int64_t ts)
 {
-	return;
 }
 #endif /* WLAN_FEATURE_TSF_PLUS */
 
@@ -650,7 +645,7 @@ ol_tx_get_txpowers(u_int32_t *msg_word, int num_msdus)
 static inline void
 ol_tx_power_handler(u_int16_t desc_id, u_int16_t tx_power)
 {
-	if (!ol_per_pkt_tx_stats_enabled())
+	if (DSRC_INVALID_TX_POWER == tx_power)
 		return;
 
 	ol_tx_stats_ring_enque_comp(desc_id, tx_power);
@@ -707,30 +702,20 @@ ol_tx_completion_handler(
     }
 
     OL_TX_DELAY_COMPUTE(pdev, status, desc_ids, num_msdus);
-    if (status == htt_tx_status_ok)
-        txpower_list = ol_tx_get_txpowers(msg_word, num_msdus);
-
-    if (status == htt_tx_status_ok ||
-        status == htt_tx_status_discard ||
-        status == htt_tx_status_no_ack)
+    if (status == htt_tx_status_ok) {
         txtstamp_list = ol_tx_get_txtstamps(msg_word, num_msdus);
+        txpower_list = ol_tx_get_txpowers(msg_word, num_msdus);
+    }
 
     trace_str = (status) ? "OT:C:F:" : "OT:C:S:";
     for (i = 0; i < num_msdus; i++) {
         tx_desc_id = desc_ids[i];
-        if (tx_desc_id >= pdev->tx_desc.pool_size) {
-            TXRX_PRINT(TXRX_PRINT_LEVEL_WARN,
-                    "%s: drop due to invalid msdu id = %x\n",
-                    __func__, tx_desc_id);
-            continue;
-        }
         tx_desc = ol_tx_desc_find(pdev, tx_desc_id);
-        adf_os_assert(tx_desc);
         tx_desc->status = status;
         netbuf = tx_desc->netbuf;
 
         if (txtstamp_list)
-            ol_tx_timestamp(pdev, status, netbuf,
+            ol_tx_timestamp(pdev, netbuf,
                     (u_int64_t)txtstamp_list->timestamp[i]);
 
         if (txpower_list)
@@ -813,12 +798,6 @@ ol_tx_desc_update_group_credit(ol_txrx_pdev_handle pdev, u_int16_t tx_desc_id,
     uint16_t vdev_id_mask;
     struct ol_tx_desc_t *tx_desc;
 
-    if (tx_desc_id >= pdev->tx_desc.pool_size) {
-        VOS_TRACE(VOS_MODULE_ID_TXRX, VOS_TRACE_LEVEL_ERROR,
-                  "%s: Invalid desc id", __func__);
-        return;
-    }
-
     tx_desc = ol_tx_desc_find(pdev, tx_desc_id);
 
     for (i = 0; i < OL_TX_MAX_TXQ_GROUPS; i++) {
@@ -893,20 +872,20 @@ ol_tx_dump_group_credit_stats(ol_txrx_pdev_handle pdev)
         for (j = 0; j < OL_TX_MAX_TXQ_GROUPS; j++) {
             adf_os_spin_lock_bh(&pdev->grp_stat_spinlock);
             curr_credit = pdev->grp_stats.stats[curr_index].grp[j].credit;
+            if (!is_break)
+                old_credit = pdev->grp_stats.stats[old_index].grp[j].credit;
             mem_vdevs = pdev->grp_stats.stats[curr_index].grp[j].member_vdevs;
             adf_os_spin_unlock_bh(&pdev->grp_stat_spinlock);
 
-            if (!is_break) {
-                old_credit = pdev->grp_stats.stats[old_index].grp[j].credit;
+            if (!is_break)
                 VOS_TRACE(VOS_MODULE_ID_TXRX, VOS_TRACE_LEVEL_ERROR,
                       "%4d: %5d: %6d %6d %8x",curr_index, j,
                       curr_credit, (curr_credit - old_credit),
                       mem_vdevs);
-            } else {
+            else
                 VOS_TRACE(VOS_MODULE_ID_TXRX, VOS_TRACE_LEVEL_ERROR,
                       "%4d: %5d: %6d %6s %8x",curr_index, j,
                       curr_credit, "NA", mem_vdevs);
-            }
        }
 
        if (is_break)
@@ -1012,14 +991,7 @@ ol_tx_inspect_handler(
 
     for (i = 0; i < num_msdus; i++) {
         tx_desc_id = desc_ids[i];
-        if (tx_desc_id >= pdev->tx_desc.pool_size) {
-            TXRX_PRINT(TXRX_PRINT_LEVEL_WARN,
-                    "%s: drop due to invalid msdu id = %x\n",
-                    __func__, tx_desc_id);
-            continue;
-        }
         tx_desc = ol_tx_desc_find(pdev, tx_desc_id);
-        adf_os_assert(tx_desc);
         netbuf = tx_desc->netbuf;
 
         /* find the "vdev" this tx_desc belongs to */
