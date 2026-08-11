@@ -3127,6 +3127,13 @@ static int mdss_mdp_probe(struct platform_device *pdev)
 		 */
 		if (split_display)
 			num_of_display_on--;
+
+#ifdef CONFIG_BOARD_FUJISAN
+		/* LK hands off both independent panels; only fb0 owns the shared
+		 * splash reference in the stage1 topology. */
+		if (num_of_display_on > 1)
+			num_of_display_on = 1;
+#endif
 	}
 	if (!num_of_display_on) {
 		mdss_mdp_footswitch_ctrl_splash(false);

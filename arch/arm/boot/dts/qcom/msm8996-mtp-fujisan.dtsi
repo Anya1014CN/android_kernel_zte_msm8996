@@ -442,10 +442,10 @@
 };
 
 &mdss_dsi {
-	/* The two physical Fujisan panels have independent DSI/PLL lifecycles.
-	 * Do not use the unfinished stage-1 composite topology here: this rebase
-	 * deliberately retains the normal dual-panel MDSS registration path. */
+	/* The panels retain independent DSI/PLL lifecycles. This switch only joins
+	 * their fb registration into the native dual-display MDP topology. */
 	hw-config = "dual_dsi";
+	zte,fujisan-composite-stage1;
 };
 
 &mdss_dsi0 {

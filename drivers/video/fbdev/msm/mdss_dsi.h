@@ -451,6 +451,17 @@ struct mdss_dsi_ctrl_pdata {
 	int irq_cnt;
 	int disp_te_gpio;
 	int rst_gpio;
+#ifdef CONFIG_BOARD_FUJISAN
+	/* Fujisan has an independently powered secondary DSI panel. */
+	int rst2_gpio;
+	int lcd_5v_vsp_en_gpio;
+	int lcd_5v_vsn_en_gpio;
+	struct device *panel_reg_dev;
+	struct regulator *lcd_2p8_reg;
+	struct regulator *lcd2_2p8_reg;
+	struct regulator *lcd2_5v_vsp_reg;
+	struct regulator *lcd2_5v_vsn_reg;
+#endif
 	int disp_en_gpio;
 	int bklt_en_gpio;
 	bool bklt_en_gpio_invert;
@@ -956,5 +967,12 @@ static inline enum dsi_physical_lane_id mdss_dsi_logical_to_physical_lane(
 
 	return i;
 }
+
+#ifdef CONFIG_BOARD_FUJISAN
+void mdss_dsi_panel_3v_power(struct mdss_panel_data *pdata, int enable);
+#else
+static inline void mdss_dsi_panel_3v_power(struct mdss_panel_data *pdata,
+	int enable) {}
+#endif
 
 #endif /* MDSS_DSI_H */

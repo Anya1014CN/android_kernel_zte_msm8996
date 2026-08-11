@@ -3665,6 +3665,13 @@ static int mdss_mdp_cmd_intfs_setup(struct mdss_mdp_ctl *ctl,
 	sctl = mdss_mdp_get_split_ctl(ctl);
 	ctx = &mdss_mdp_cmd_ctx_list[session];
 	if (ctx->ref_cnt) {
+		/* The splash handoff already bound this context to this CTL. */
+		if (ctx->ctl == ctl) {
+			ctl->intf_ctx[MASTER_CTX] = ctx;
+			pr_debug("%s: reusing handed-off cmd ctx for intf %d ctl %d\n",
+				__func__, session, ctl->num);
+			return 0;
+		}
 		if (mdss_panel_is_power_on(ctx->panel_power_state)) {
 			pr_debug("%s: cmd_start with panel always on\n",
 				__func__);
@@ -3925,4 +3932,3 @@ int mdss_mdp_cmd_start(struct mdss_mdp_ctl *ctl)
 
 	return 0;
 }
-

@@ -241,16 +241,39 @@ void mdss_dsi_panel_cmds_send(struct mdss_dsi_ctrl_pdata *ctrl,
 	mdss_dsi_cmdlist_put(ctrl, &cmdreq);
 }
 
-static char led_pwm1[2] = {0x51, 0x0};	/* DTYPE_DCS_WRITE1 */
-static struct dsi_cmd_desc backlight_cmd = {
-	{DTYPE_DCS_WRITE1, 1, 0, 0, 1, sizeof(led_pwm1)},
-	led_pwm1
+static char led_pwm1[2] = {0x51, 0x0};
+static char led_pwm2[2] = {0x53, 0x2c};
+static struct dsi_cmd_desc backlight_cmd[] = {
+	{{DTYPE_DCS_WRITE1, 0, 0, 0, 0, sizeof(led_pwm1)}, led_pwm1},
+	{{DTYPE_DCS_WRITE1, 0, 0, 0, 0, sizeof(led_pwm1)}, led_pwm1},
+	{{DTYPE_DCS_WRITE1, 0, 0, 0, 0, sizeof(led_pwm1)}, led_pwm1},
+	{{DTYPE_DCS_WRITE1, 1, 0, 0, 0, sizeof(led_pwm2)}, led_pwm2},
 };
+
+#ifdef CONFIG_BOARD_FUJISAN
+static int fujisan_bl_power_on_flag;
+static bool fujisan_secondary_wled_on;
+extern void qpnp_wled_enable_cabc(int enable);
+
+static void fujisan_secondary_wled_set(bool on)
+{
+	if (on == fujisan_secondary_wled_on)
+		return;
+	qpnp_wled_enable_cabc(on);
+	fujisan_secondary_wled_on = on;
+}
+#endif
 
 static void mdss_dsi_panel_bklt_dcs(struct mdss_dsi_ctrl_pdata *ctrl, int level)
 {
 	struct dcs_cmd_req cmdreq;
 	struct mdss_panel_info *pinfo;
+	int bl_level = level;
+
+	if (!ctrl) {
+		pr_err("%s: invalid ctrl\n", __func__);
+		return;
+	}
 
 	pinfo = &(ctrl->panel_data.panel_info);
 	if (pinfo->dcs_cmd_by_left) {
@@ -258,24 +281,148 @@ static void mdss_dsi_panel_bklt_dcs(struct mdss_dsi_ctrl_pdata *ctrl, int level)
 			return;
 	}
 
-	pr_debug("%s: level=%d\n", __func__, level);
+	if (bl_level != 0 && bl_level < 3)
+		bl_level = 3;
 
-	led_pwm1[1] = (unsigned char)level;
+	pr_info("%s: ndx=%d level=%d\n", __func__, ctrl->ndx, bl_level);
+
+	led_pwm1[1] = (unsigned char)bl_level;
+
+#ifdef CONFIG_BOARD_FUJISAN
+	/* TD4322 requires three brightness writes followed by 0x53 control-display.
+	 * The right panel also needs the PMI8996 WLED module separately enabled. */
+	if (fujisan_bl_power_on_flag == 1) {
+		led_pwm2[1] = 0x24;
+		fujisan_bl_power_on_flag = 2;
+	} else if (fujisan_bl_power_on_flag == 2) {
+		led_pwm2[1] = 0x24;
+		fujisan_bl_power_on_flag = 0;
+	} else {
+		led_pwm2[1] = 0x2c;
+	}
+	if (bl_level == 0)
+		led_pwm2[1] = 0x00;
+	if (ctrl->ndx == DSI_CTRL_RIGHT)
+		fujisan_secondary_wled_set(bl_level != 0);
+#else
+	led_pwm2[1] = bl_level ? 0x2c : 0x00;
+#endif
 
 	memset(&cmdreq, 0, sizeof(cmdreq));
-	cmdreq.cmds = &backlight_cmd;
-	cmdreq.cmds_cnt = 1;
-	cmdreq.flags = CMD_REQ_COMMIT | CMD_CLK_CTRL | CMD_REQ_DCS;
+	cmdreq.cmds = backlight_cmd;
+	cmdreq.cmds_cnt = ARRAY_SIZE(backlight_cmd);
+	cmdreq.flags = CMD_REQ_COMMIT | CMD_CLK_CTRL | CMD_REQ_HS_MODE;
 	cmdreq.rlen = 0;
 	cmdreq.cb = NULL;
 
-	if (ctrl->bklt_dcs_op_mode == DSI_HS_MODE)
-		cmdreq.flags |= CMD_REQ_HS_MODE;
-	else
-		cmdreq.flags |= CMD_REQ_LP_MODE;
-
 	mdss_dsi_cmdlist_put(ctrl, &cmdreq);
 }
+
+#ifdef CONFIG_BOARD_FUJISAN
+static void fujisan_gpio_set_out(int gpio, const char *name, int value)
+{
+	int rc;
+
+	if (!gpio_is_valid(gpio))
+		return;
+	rc = gpio_request(gpio, name);
+	if (rc && rc != -EBUSY)
+		pr_err("%s: gpio %d request failed %d\n", __func__, gpio, rc);
+	rc = gpio_direction_output(gpio, value);
+	if (rc)
+		pr_err("%s: gpio %d output %d failed %d\n", __func__, gpio,
+			value, rc);
+}
+
+static void fujisan_get_secondary_rails(struct mdss_dsi_ctrl_pdata *ctrl)
+{
+	struct regulator *reg;
+
+	if (!ctrl || !ctrl->panel_reg_dev)
+		return;
+	if (!ctrl->lcd2_2p8_reg) {
+		reg = regulator_get(ctrl->panel_reg_dev, "lcd2_2p8");
+		if (!IS_ERR(reg))
+			ctrl->lcd2_2p8_reg = reg;
+	}
+	if (!ctrl->lcd2_5v_vsp_reg) {
+		reg = regulator_get(ctrl->panel_reg_dev, "lcd2_5v_vsp");
+		if (!IS_ERR(reg))
+			ctrl->lcd2_5v_vsp_reg = reg;
+	}
+	if (!ctrl->lcd2_5v_vsn_reg) {
+		reg = regulator_get(ctrl->panel_reg_dev, "lcd2_5v_vsn");
+		if (!IS_ERR(reg))
+			ctrl->lcd2_5v_vsn_reg = reg;
+	}
+}
+
+static void fujisan_secondary_panel_rails(struct mdss_dsi_ctrl_pdata *ctrl,
+	int enable)
+{
+	int rc;
+
+	if (!ctrl)
+		return;
+	fujisan_get_secondary_rails(ctrl);
+	if (enable) {
+		if (ctrl->lcd2_2p8_reg) {
+			rc = regulator_enable(ctrl->lcd2_2p8_reg);
+			if (rc)
+				pr_err("%s: lcd2_2p8 enable failed %d\n", __func__, rc);
+		} else {
+			pr_err("%s: lcd2_2p8 regulator missing\n", __func__);
+		}
+		msleep(5);
+		if (ctrl->lcd2_5v_vsp_reg) {
+			rc = regulator_enable(ctrl->lcd2_5v_vsp_reg);
+			if (rc)
+				pr_err("%s: lcd2_5v_vsp enable failed %d\n", __func__, rc);
+		} else {
+			fujisan_gpio_set_out(ctrl->lcd_5v_vsp_en_gpio,
+				"lcd_5v_vsp_en", 1);
+		}
+		msleep(20);
+		if (ctrl->lcd2_5v_vsn_reg) {
+			rc = regulator_enable(ctrl->lcd2_5v_vsn_reg);
+			if (rc)
+				pr_err("%s: lcd2_5v_vsn enable failed %d\n", __func__, rc);
+		} else {
+			fujisan_gpio_set_out(ctrl->lcd_5v_vsn_en_gpio,
+				"lcd_5v_vsn_en", 1);
+		}
+		msleep(20);
+	} else {
+		if (ctrl->lcd2_5v_vsn_reg)
+			regulator_disable(ctrl->lcd2_5v_vsn_reg);
+		else
+			fujisan_gpio_set_out(ctrl->lcd_5v_vsn_en_gpio,
+				"lcd_5v_vsn_en", 0);
+		msleep(20);
+		if (ctrl->lcd2_5v_vsp_reg)
+			regulator_disable(ctrl->lcd2_5v_vsp_reg);
+		else
+			fujisan_gpio_set_out(ctrl->lcd_5v_vsp_en_gpio,
+				"lcd_5v_vsp_en", 0);
+		msleep(5);
+		if (ctrl->lcd2_2p8_reg)
+			regulator_disable(ctrl->lcd2_2p8_reg);
+		msleep(2);
+	}
+}
+
+void mdss_dsi_panel_3v_power(struct mdss_panel_data *pdata, int enable)
+{
+	struct mdss_dsi_ctrl_pdata *ctrl;
+
+	if (!pdata)
+		return;
+	ctrl = container_of(pdata, struct mdss_dsi_ctrl_pdata, panel_data);
+	if (ctrl->ndx == DSI_CTRL_RIGHT)
+		fujisan_secondary_panel_rails(ctrl, enable);
+}
+EXPORT_SYMBOL(mdss_dsi_panel_3v_power);
+#endif
 
 static int mdss_dsi_request_gpios(struct mdss_dsi_ctrl_pdata *ctrl_pdata)
 {
@@ -290,7 +437,12 @@ static int mdss_dsi_request_gpios(struct mdss_dsi_ctrl_pdata *ctrl_pdata)
 			goto disp_en_gpio_err;
 		}
 	}
-	rc = gpio_request(ctrl_pdata->rst_gpio, "disp_rst_n");
+#ifdef CONFIG_BOARD_FUJISAN
+	if (ctrl_pdata->ndx == DSI_CTRL_RIGHT)
+		rc = gpio_request(ctrl_pdata->rst2_gpio, "disp_rst2_n");
+	else
+	#endif
+		rc = gpio_request(ctrl_pdata->rst_gpio, "disp_rst_n");
 	if (rc) {
 		pr_err("request reset gpio failed, rc=%d\n",
 			rc);
@@ -320,7 +472,12 @@ lcd_mode_sel_gpio_err:
 	if (gpio_is_valid(ctrl_pdata->avdd_en_gpio))
 		gpio_free(ctrl_pdata->avdd_en_gpio);
 avdd_en_gpio_err:
-	gpio_free(ctrl_pdata->rst_gpio);
+#ifdef CONFIG_BOARD_FUJISAN
+	if (ctrl_pdata->ndx == DSI_CTRL_RIGHT)
+		gpio_free(ctrl_pdata->rst2_gpio);
+	else
+	#endif
+		gpio_free(ctrl_pdata->rst_gpio);
 rst_gpio_err:
 	if (gpio_is_valid(ctrl_pdata->disp_en_gpio))
 		gpio_free(ctrl_pdata->disp_en_gpio);
@@ -408,6 +565,7 @@ int mdss_dsi_panel_reset(struct mdss_panel_data *pdata, int enable)
 	struct mdss_dsi_ctrl_pdata *ctrl_pdata = NULL;
 	struct mdss_panel_info *pinfo = NULL;
 	int i, rc = 0;
+	int rst_gpio;
 
 	if (pdata == NULL) {
 		pr_err("%s: Invalid input data\n", __func__);
@@ -418,6 +576,11 @@ int mdss_dsi_panel_reset(struct mdss_panel_data *pdata, int enable)
 				panel_data);
 
 	pinfo = &(ctrl_pdata->panel_data.panel_info);
+	rst_gpio = ctrl_pdata->rst_gpio;
+#ifdef CONFIG_BOARD_FUJISAN
+	if (ctrl_pdata->ndx == DSI_CTRL_RIGHT)
+		rst_gpio = ctrl_pdata->rst2_gpio;
+#endif
 
 	/* For TDDI ddic panel, LCD shares reset pin with touch.
 	* If gesture wakeup feature is enabled, the reset pin
@@ -443,7 +606,7 @@ int mdss_dsi_panel_reset(struct mdss_panel_data *pdata, int enable)
 			   __func__, __LINE__);
 	}
 
-	if (!gpio_is_valid(ctrl_pdata->rst_gpio)) {
+	if (!gpio_is_valid(rst_gpio)) {
 		pr_debug("%s:%d, reset line not configured\n",
 			   __func__, __LINE__);
 		return rc;
@@ -469,7 +632,7 @@ int mdss_dsi_panel_reset(struct mdss_panel_data *pdata, int enable)
 			}
 
 			if (pdata->panel_info.rst_seq_len) {
-				rc = gpio_direction_output(ctrl_pdata->rst_gpio,
+				rc = gpio_direction_output(rst_gpio,
 					pdata->panel_info.rst_seq[0]);
 				if (rc) {
 					pr_err("%s: unable to set dir for rst gpio\n",
@@ -479,7 +642,7 @@ int mdss_dsi_panel_reset(struct mdss_panel_data *pdata, int enable)
 			}
 
 			for (i = 0; i < pdata->panel_info.rst_seq_len; ++i) {
-				gpio_set_value((ctrl_pdata->rst_gpio),
+				gpio_set_value(rst_gpio,
 					pdata->panel_info.rst_seq[i]);
 				if (pdata->panel_info.rst_seq[++i])
 					usleep_range(pinfo->rst_seq[i] * 1000, pinfo->rst_seq[i] * 1000);
@@ -539,8 +702,8 @@ int mdss_dsi_panel_reset(struct mdss_panel_data *pdata, int enable)
 			gpio_set_value((ctrl_pdata->disp_en_gpio), 0);
 			gpio_free(ctrl_pdata->disp_en_gpio);
 		}
-		gpio_set_value((ctrl_pdata->rst_gpio), 0);
-		gpio_free(ctrl_pdata->rst_gpio);
+		gpio_set_value(rst_gpio, 0);
+		gpio_free(rst_gpio);
 		if (gpio_is_valid(ctrl_pdata->lcd_mode_sel_gpio)) {
 			gpio_set_value(ctrl_pdata->lcd_mode_sel_gpio, 0);
 			gpio_free(ctrl_pdata->lcd_mode_sel_gpio);
@@ -992,6 +1155,10 @@ static int mdss_dsi_panel_on(struct mdss_panel_data *pdata)
 
 	if (on_cmds->cmd_cnt)
 		mdss_dsi_panel_cmds_send(ctrl, on_cmds, CMD_REQ_COMMIT);
+
+#ifdef CONFIG_BOARD_FUJISAN
+	fujisan_bl_power_on_flag = 1;
+#endif
 
 	if (pinfo->compression_mode == COMPRESSION_DSC)
 		mdss_dsi_panel_dsc_pps_send(ctrl, pinfo);

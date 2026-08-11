@@ -387,6 +387,10 @@ static int mdss_dsi_panel_power_off(struct mdss_panel_data *pdata)
 	if (mdss_dsi_pinctrl_set_state(ctrl_pdata, false))
 		pr_debug("reset disable: pinctrl not enabled\n");
 
+#ifdef CONFIG_BOARD_FUJISAN
+	mdss_dsi_panel_3v_power(pdata, 0);
+#endif
+
 	ret = msm_dss_enable_vreg(
 		ctrl_pdata->panel_power_data.vreg_config,
 		ctrl_pdata->panel_power_data.num_vreg, 0);
@@ -419,6 +423,11 @@ static int mdss_dsi_panel_power_on(struct mdss_panel_data *pdata)
 			__func__, __mdss_dsi_pm_name(DSI_PANEL_PM));
 		return ret;
 	}
+
+#ifdef CONFIG_BOARD_FUJISAN
+	/* B panel requires its own 2.8 V and TPS65132 +/-5 V rails. */
+	mdss_dsi_panel_3v_power(pdata, 1);
+#endif
 
 	/*
 	 * If continuous splash screen feature is enabled, then we need to
@@ -2723,6 +2732,16 @@ static int mdss_dsi_register_clamp_handler(struct mdss_dsi_ctrl_pdata *ctrl,
 	return 0;
 }
 
+static bool mdss_dsi_fujisan_composite_stage1(struct device_node *dsi_node)
+{
+#ifdef CONFIG_BOARD_FUJISAN
+	return dsi_node && of_property_read_bool(dsi_node,
+		"zte,fujisan-composite-stage1");
+#else
+	return false;
+#endif
+}
+
 static struct device_node *mdss_dsi_get_fb_node_cb(struct platform_device *pdev)
 {
 	struct device_node *fb_node;
@@ -2742,8 +2761,11 @@ static struct device_node *mdss_dsi_get_fb_node_cb(struct platform_device *pdev)
 		return NULL;
 	}
 
+	/* Fujisan stage1 shares the MDP fb node while keeping both DSI controllers
+	 * electrically independent. */
 	fb_node = of_parse_phandle(dsi_dev->dev.of_node,
-			mdss_dsi_get_fb_name(ctrl_pdata), 0);
+		mdss_dsi_fujisan_composite_stage1(dsi_dev->dev.of_node) ?
+		"qcom,mdss-fb-map-prim" : mdss_dsi_get_fb_name(ctrl_pdata), 0);
 	if (!fb_node) {
 		pr_err("Unable to find fb node for device: %s\n", pdev->name);
 		return NULL;
@@ -4569,6 +4591,37 @@ static int mdss_dsi_parse_gpio_params(struct platform_device *ctrl_pdev,
 		pr_err("%s:%d, reset gpio not specified\n",
 						__func__, __LINE__);
 
+#ifdef CONFIG_BOARD_FUJISAN
+	ctrl_pdata->rst2_gpio = of_get_named_gpio(ctrl_pdev->dev.of_node,
+			"qcom,platform-reset2-gpio", 0);
+	ctrl_pdata->lcd_5v_vsp_en_gpio = of_get_named_gpio(
+		ctrl_pdev->dev.of_node, "zte,lcd-5v-vsp-enable-gpio", 0);
+	ctrl_pdata->lcd_5v_vsn_en_gpio = of_get_named_gpio(
+		ctrl_pdev->dev.of_node, "zte,lcd-5v-vsn-enable-gpio", 0);
+	ctrl_pdata->panel_reg_dev = &ctrl_pdev->dev;
+
+	ctrl_pdata->lcd_2p8_reg = regulator_get(&ctrl_pdev->dev, "lcd_2p8");
+	if (IS_ERR(ctrl_pdata->lcd_2p8_reg))
+		ctrl_pdata->lcd_2p8_reg = NULL;
+	ctrl_pdata->lcd2_2p8_reg = regulator_get(&ctrl_pdev->dev, "lcd2_2p8");
+	if (IS_ERR(ctrl_pdata->lcd2_2p8_reg))
+		ctrl_pdata->lcd2_2p8_reg = NULL;
+	ctrl_pdata->lcd2_5v_vsp_reg = regulator_get(&ctrl_pdev->dev,
+		"lcd2_5v_vsp");
+	if (IS_ERR(ctrl_pdata->lcd2_5v_vsp_reg))
+		ctrl_pdata->lcd2_5v_vsp_reg = NULL;
+	ctrl_pdata->lcd2_5v_vsn_reg = regulator_get(&ctrl_pdev->dev,
+		"lcd2_5v_vsn");
+	if (IS_ERR(ctrl_pdata->lcd2_5v_vsn_reg))
+		ctrl_pdata->lcd2_5v_vsn_reg = NULL;
+
+	pr_info("%s: ndx=%d rst=%d rst2=%d B-rails 2p8=%d vsp=%d vsn=%d\n",
+		__func__, ctrl_pdata->ndx, ctrl_pdata->rst_gpio,
+		ctrl_pdata->rst2_gpio, !!ctrl_pdata->lcd2_2p8_reg,
+		!!ctrl_pdata->lcd2_5v_vsp_reg,
+		!!ctrl_pdata->lcd2_5v_vsn_reg);
+#endif
+
 	ctrl_pdata->lcd_mode_sel_gpio = of_get_named_gpio(
 			ctrl_pdev->dev.of_node, "qcom,panel-mode-gpio", 0);
 	if (!gpio_is_valid(ctrl_pdata->lcd_mode_sel_gpio)) {
@@ -4706,6 +4759,13 @@ int dsi_panel_device_register(struct platform_device *ctrl_pdev,
 
 	mdss_dsi_ctrl_init(&ctrl_pdev->dev, ctrl_pdata);
 	mdss_dsi_set_prim_panel(ctrl_pdata);
+	if (mdss_dsi_fujisan_composite_stage1(
+		ctrl_pdev->dev.of_node->parent)) {
+		/* mdss_fb derives MDP_DUAL_LM_DUAL_DISPLAY from the common node. */
+		pinfo->is_split_display = true;
+		pr_info("fujisan: composite stage1 panel%d uses common fb node\n",
+			ctrl_pdata->ndx);
+	}
 
 	ctrl_pdata->dsi_irq_line = of_property_read_bool(
 				ctrl_pdev->dev.of_node, "qcom,dsi-irq-line");
