@@ -451,6 +451,14 @@ static void mdss_fb_set_bl_brightness(struct led_classdev *led_cdev,
 		mutex_unlock(&mfd->bl_lock);
 	}
 	mfd->bl_level_usr = bl_lvl;
+
+#ifdef CONFIG_BOARD_FUJISAN
+	/* Both physical panels share the primary brightness control in the
+	 * dual-panel topology.  Mirror every framework update in the kernel so
+	 * slider animations and single-B-primary mode use the same level. */
+	if (mfd->index == 0)
+		fujisan_set_native_secondary_backlight(value);
+#endif
 }
 
 static enum led_brightness mdss_fb_get_bl_brightness(
@@ -2127,6 +2135,10 @@ static int mdss_fb_blank_blank(struct msm_fb_data_type *mfd,
 		current_bl = mfd->bl_level;
 		mfd->allow_bl_update = true;
 		mdss_fb_set_backlight(mfd, 0);
+#ifdef CONFIG_BOARD_FUJISAN
+		if (mfd->index == 0)
+			fujisan_set_native_secondary_backlight_locked(mfd, 0);
+#endif
 		mfd->allow_bl_update = false;
 		mfd->unset_bl_level = current_bl;
 		mutex_unlock(&mfd->bl_lock);
