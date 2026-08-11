@@ -22,6 +22,9 @@
 #include <linux/qpnp/pwm.h>
 #include <linux/err.h>
 #include <linux/string.h>
+#ifdef CONFIG_BOARD_FUJISAN
+#include <linux/input/synaptics_dsx_v2_7_0_2nd.h>
+#endif
 
 #include "mdss_dsi.h"
 #include "mdss_dba_utils.h"
@@ -257,10 +260,21 @@ extern void qpnp_wled_enable_cabc(int enable);
 
 static void fujisan_secondary_wled_set(bool on)
 {
+	int rc;
+
 	if (on == fujisan_secondary_wled_on)
 		return;
 	qpnp_wled_enable_cabc(on);
 	fujisan_secondary_wled_on = on;
+	if (!on)
+		return;
+
+	/* The secondary Synaptics platform probe can precede the B panel rail
+	 * enable during boot. Retry only when B has actually been unblanked. */
+	rc = synaptics_rmi4_secondary_retry();
+	if (rc && rc != -ENODEV)
+		pr_err("%s: secondary touch retry request failed rc=%d\n",
+			__func__, rc);
 }
 #endif
 

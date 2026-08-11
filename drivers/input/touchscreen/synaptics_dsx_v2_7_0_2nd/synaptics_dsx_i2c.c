@@ -58,6 +58,42 @@ static struct synaptics_dsx_hw_interface hw_if;
 
 static struct platform_device *synaptics_dsx_i2c_device;
 
+#ifdef CONFIG_BOARD_FUJISAN
+static struct delayed_work synaptics_rmi4_secondary_retry_work;
+
+static void synaptics_rmi4_secondary_retry_worker(struct work_struct *work)
+{
+	int rc;
+
+	/* A failed early core probe leaves the I2C device bound but its platform
+	 * child unbound. B's shared L17 rail is available only after unblank. */
+	if (!synaptics_dsx_i2c_device ||
+	    synaptics_dsx_i2c_device->dev.driver)
+		return;
+
+	rc = device_attach(&synaptics_dsx_i2c_device->dev);
+	if (rc < 0)
+		pr_err("%s: secondary touch retry failed rc=%d\n", __func__, rc);
+	else
+		pr_info("%s: secondary touch retry rc=%d\n", __func__, rc);
+}
+
+int synaptics_rmi4_secondary_retry(void)
+{
+	if (!synaptics_dsx_i2c_device)
+		return -ENODEV;
+	if (synaptics_dsx_i2c_device->dev.driver)
+		return 0;
+
+	/* The DCS backlight command follows the panel rail sequence; give the
+	 * controller time to finish its own power-on before querying it. */
+	schedule_delayed_work(&synaptics_rmi4_secondary_retry_work,
+		msecs_to_jiffies(100));
+	return 0;
+}
+EXPORT_SYMBOL(synaptics_rmi4_secondary_retry);
+#endif
+
 #ifdef CONFIG_OF
 static int parse_dt(struct device *dev, struct synaptics_dsx_board_data *bdata)
 {
@@ -612,6 +648,7 @@ static int synaptics_rmi4_i2c_probe(struct i2c_client *client,
 static int synaptics_rmi4_i2c_remove(struct i2c_client *client)
 {
 	platform_device_unregister(synaptics_dsx_i2c_device);
+	synaptics_dsx_i2c_device = NULL;
 
 	return 0;
 }
@@ -647,12 +684,19 @@ static struct i2c_driver synaptics_rmi4_i2c_driver = {
 
 int synaptics_rmi4_bus_init_2nd(void)
 {
+#ifdef CONFIG_BOARD_FUJISAN
+	INIT_DELAYED_WORK(&synaptics_rmi4_secondary_retry_work,
+		synaptics_rmi4_secondary_retry_worker);
+#endif
 	return i2c_add_driver(&synaptics_rmi4_i2c_driver);
 }
 EXPORT_SYMBOL(synaptics_rmi4_bus_init_2nd);
 
 void synaptics_rmi4_bus_exit_2nd(void)
 {
+#ifdef CONFIG_BOARD_FUJISAN
+	cancel_delayed_work_sync(&synaptics_rmi4_secondary_retry_work);
+#endif
 	kfree(wr_buf);
 
 	i2c_del_driver(&synaptics_rmi4_i2c_driver);

@@ -114,6 +114,8 @@ struct synaptics_dsx_board_data {
 #ifdef CONFIG_BOARD_FUJISAN
 /* Serialize the shared TD4322 panel/touch reset line with its IRQ worker. */
 int synaptics_rmi4_secondary_panel_reset(bool before_reset);
+/* Retry the secondary platform probe after its panel rails are enabled. */
+int synaptics_rmi4_secondary_retry(void);
 #endif
 
 #endif
