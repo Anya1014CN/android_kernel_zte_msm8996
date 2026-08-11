@@ -456,13 +456,23 @@ module_param_named(
 	int, 00600
 );
 
+#ifdef CONFIG_BOARD_FUJISAN
+/* P996A26 stock kernel limits the QC3 input path to 2.5 A. */
+static int smbchg_default_hvdcp3_icl_ma = 2500;
+#else
 static int smbchg_default_hvdcp3_icl_ma = 2700;
+#endif
 module_param_named(
 	default_hvdcp3_icl_ma, smbchg_default_hvdcp3_icl_ma,
 	int, 00600
 );
 
+#ifdef CONFIG_BOARD_FUJISAN
+/* Preserve the OEM safeguard for ordinary DCP adapters. */
+static int smbchg_default_dcp_icl_ma = 1500;
+#else
 static int smbchg_default_dcp_icl_ma = 1800;
+#endif
 module_param_named(
 	default_dcp_icl_ma, smbchg_default_dcp_icl_ma,
 	int, 00600
@@ -1107,6 +1117,45 @@ static int get_prop_batt_full_charge(struct smbchg_chip *chip)
 		bfc = DEFAULT_BATT_FULL_CHG_CAPACITY;
 	}
 	return bfc;
+}
+
+static int get_prop_batt_charge_counter(struct smbchg_chip *chip)
+{
+	int charge_counter, rc;
+
+	rc = get_property_from_fg(chip, POWER_SUPPLY_PROP_CHARGE_COUNTER,
+				  &charge_counter);
+	if (rc) {
+		pr_smb(PR_STATUS, "Couldn't get charge_counter rc = %d\n", rc);
+		charge_counter = 0;
+	}
+	return charge_counter;
+}
+
+static int get_prop_batt_full_charge_design(struct smbchg_chip *chip)
+{
+	int bfc, rc;
+
+	rc = get_property_from_fg(chip, POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN,
+				  &bfc);
+	if (rc) {
+		pr_smb(PR_STATUS, "Couldn't get charge_full_design rc = %d\n", rc);
+		bfc = DEFAULT_BATT_FULL_CHG_CAPACITY;
+	}
+	return bfc;
+}
+
+static int get_prop_batt_cycle_count(struct smbchg_chip *chip)
+{
+	int count, rc;
+
+	rc = get_property_from_fg(chip, POWER_SUPPLY_PROP_CYCLE_COUNT,
+				  &count);
+	if (rc) {
+		pr_smb(PR_STATUS, "Couldn't get cycle_count rc = %d\n", rc);
+		count = 0;
+	}
+	return count;
 }
 
 #define DEFAULT_BATT_VOLTAGE_NOW	0
@@ -3649,8 +3698,14 @@ static int smbchg_config_chg_battery_type(struct smbchg_chip *chip)
 		return 0;
 	}
 
+	/*
+	 * The fuel gauge has already identified this pack.  Reuse that type
+	 * here instead of relying on the raw battery-ID resistor: fujisan's
+	 * P996A20 pack reports about 10k while its DTS profile is keyed by
+	 * battery type.
+	 */
 	profile_node = of_batterydata_get_best_profile(batt_node,
-				prop.intval / 1000, NULL);
+				prop.intval / 1000, chip->battery_type);
 	if (IS_ERR_OR_NULL(profile_node)) {
 		rc = PTR_ERR(profile_node);
 		pr_err("couldn't find profile handle %d\n", rc);
@@ -5851,7 +5906,7 @@ static int smbchg_usb_set_property(struct power_supply *psy,
 		break;
 	case POWER_SUPPLY_PROP_CURRENT_MAX:
 	case POWER_SUPPLY_PROP_SDP_CURRENT_MAX:
-		smbchg_set_sdp_current(chip, val->intval);
+		return smbchg_set_sdp_current(chip, val->intval);
 	default:
 		return -EINVAL;
 	}
@@ -5923,6 +5978,7 @@ static enum power_supply_property smbchg_battery_properties[] = {
 	POWER_SUPPLY_PROP_CHARGING_ENABLED,
 	POWER_SUPPLY_PROP_CHARGE_TYPE,
 	POWER_SUPPLY_PROP_CAPACITY,
+	POWER_SUPPLY_PROP_CHARGE_COUNTER,
 	POWER_SUPPLY_PROP_HEALTH,
 	POWER_SUPPLY_PROP_TECHNOLOGY,
 	POWER_SUPPLY_PROP_SYSTEM_TEMP_LEVEL,
@@ -5935,6 +5991,8 @@ static enum power_supply_property smbchg_battery_properties[] = {
 	POWER_SUPPLY_PROP_VOLTAGE_NOW,
 	POWER_SUPPLY_PROP_RESISTANCE_ID,
 	POWER_SUPPLY_PROP_CHARGE_FULL,
+	POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN,
+	POWER_SUPPLY_PROP_CYCLE_COUNT,
 	POWER_SUPPLY_PROP_SAFETY_TIMER_ENABLE,
 	POWER_SUPPLY_PROP_INPUT_CURRENT_MAX,
 	POWER_SUPPLY_PROP_INPUT_CURRENT_SETTLED,
@@ -6122,6 +6180,9 @@ static int smbchg_battery_get_property(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_CAPACITY:
 		val->intval = get_prop_batt_capacity(chip);
 		break;
+	case POWER_SUPPLY_PROP_CHARGE_COUNTER:
+		val->intval = get_prop_batt_charge_counter(chip);
+		break;
 	case POWER_SUPPLY_PROP_CURRENT_NOW:
 		val->intval = get_prop_batt_current_now(chip);
 		break;
@@ -6133,6 +6194,12 @@ static int smbchg_battery_get_property(struct power_supply *psy,
 		break;
 	case POWER_SUPPLY_PROP_CHARGE_FULL:
 		val->intval = get_prop_batt_full_charge(chip);
+		break;
+	case POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN:
+		val->intval = get_prop_batt_full_charge_design(chip);
+		break;
+	case POWER_SUPPLY_PROP_CYCLE_COUNT:
+		val->intval = get_prop_batt_cycle_count(chip);
 		break;
 	case POWER_SUPPLY_PROP_TEMP:
 		val->intval = get_prop_batt_temp(chip);
@@ -8231,6 +8298,37 @@ static void rerun_hvdcp_det_if_necessary(struct smbchg_chip *chip)
 	}
 }
 
+#ifdef CONFIG_BOARD_FUJISAN
+/*
+ * The OEM PMI8994 configuration retries APSD when a charger is already
+ * attached at boot and the first result is SDP/OTHER/NONE.  Without this,
+ * a DCP can remain reported as a floating USB source until it is unplugged.
+ */
+static void fujisan_rerun_initial_apsd(struct smbchg_chip *chip)
+{
+	enum power_supply_type usb_supply_type;
+	char *usb_type_name;
+	int rc;
+
+	if (!chip->usb_present)
+		return;
+
+	read_usb_type(chip, &usb_type_name, &usb_supply_type);
+	if (usb_supply_type != POWER_SUPPLY_TYPE_USB &&
+			usb_supply_type != POWER_SUPPLY_TYPE_UNKNOWN)
+		return;
+
+	pr_smb(PR_STATUS, "Fujisan initial %s, rerunning APSD\n",
+			usb_type_name);
+	rc = rerun_apsd(chip);
+	if (rc)
+		pr_err("Fujisan initial APSD rerun failed rc=%d\n", rc);
+
+	/* Re-read the result and notify healthd even if no edge IRQ was emitted. */
+	update_usb_status(chip, is_usb_present(chip), true);
+}
+#endif
+
 static int smbchg_probe(struct platform_device *pdev)
 {
 	int rc;
@@ -8570,6 +8668,10 @@ static int smbchg_probe(struct platform_device *pdev)
 	}
 
 	rerun_hvdcp_det_if_necessary(chip);
+
+#ifdef CONFIG_BOARD_FUJISAN
+	fujisan_rerun_initial_apsd(chip);
+#endif
 
 	update_usb_status(chip, is_usb_present(chip), false);
 	dump_regs(chip);

@@ -327,7 +327,17 @@ module_param_named(
 	first_est_dump, fg_est_dump, int, 00600
 );
 
+/*
+ * Fujisan ships the P996A20 pack.  Its battery-ID line is not reliable
+ * during early boot on this board, so the generic 4.4 selector can leave
+ * the fuel gauge without a profile and report its 50% fallback value.
+ * The ZTE 3.18 kernel deliberately forced this verified pack profile.
+ */
+#ifdef CONFIG_BOARD_FUJISAN
+static char *fg_batt_type = "ZTE_BATTERY_DATA_ID_2";
+#else
 static char *fg_batt_type;
+#endif
 module_param_named(
 	battery_type, fg_batt_type, charp, 00600
 );
@@ -567,6 +577,7 @@ struct fg_chip {
 	int			ocv_junction_p1p2;
 	int			ocv_junction_p2p3;
 	int			nom_cap_uah;
+	int			design_cap_uah;
 	int			actual_cap_uah;
 	int			status;
 	int			prev_status;
@@ -3943,7 +3954,14 @@ static bool is_usb_present(struct fg_chip *chip)
 	if (!chip->usb_psy)
 		chip->usb_psy = power_supply_get_by_name("usb");
 
-	if (chip->usb_psy)
+	/*
+	 * On Fujisan, the legacy SMB1351 power supply can be visible by name
+	 * before its property callback has been installed.  The generic power
+	 * supply core calls that callback without a NULL check, so defer the
+	 * presence query until the supplier is fully usable.
+	 */
+	if (chip->usb_psy && chip->usb_psy->desc &&
+			chip->usb_psy->desc->get_property)
 		power_supply_get_property(chip->usb_psy,
 				POWER_SUPPLY_PROP_PRESENT, &prop);
 	return prop.intval != 0;
@@ -3956,7 +3974,8 @@ static bool is_dc_present(struct fg_chip *chip)
 	if (!chip->dc_psy)
 		chip->dc_psy = power_supply_get_by_name("dc");
 
-	if (chip->dc_psy)
+	if (chip->dc_psy && chip->dc_psy->desc &&
+			chip->dc_psy->desc->get_property)
 		power_supply_get_property(chip->dc_psy,
 				POWER_SUPPLY_PROP_PRESENT, &prop);
 	return prop.intval != 0;
@@ -3974,7 +3993,8 @@ static bool is_otg_present(struct fg_chip *chip)
 	if (!chip->usb_psy)
 		chip->usb_psy = power_supply_get_by_name("usb");
 
-	if (chip->usb_psy)
+	if (chip->usb_psy && chip->usb_psy->desc &&
+			chip->usb_psy->desc->get_property)
 		power_supply_get_property(chip->usb_psy,
 				POWER_SUPPLY_PROP_USB_OTG, &prop);
 	return prop.intval != 0;
@@ -4647,7 +4667,7 @@ static int fg_power_get_property(struct power_supply *psy,
 			val->intval = 1;
 		break;
 	case POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN:
-		val->intval = chip->nom_cap_uah;
+		val->intval = chip->design_cap_uah ?: chip->nom_cap_uah;
 		break;
 	case POWER_SUPPLY_PROP_CHARGE_FULL:
 		val->intval = chip->learning_data.learned_cc_uah;
@@ -6314,6 +6334,7 @@ static int fg_batt_profile_init(struct fg_chip *chip)
 {
 	int rc = 0, ret;
 	int len, batt_id;
+	u32 design_cap_mah;
 	struct device_node *node = chip->pdev->dev.of_node;
 	struct device_node *batt_node, *profile_node;
 	const char *data, *batt_type_str;
@@ -6440,6 +6461,15 @@ wait:
 		goto no_profile;
 	}
 
+	/* The profile SRAM capacity is calibration data. The board-declared
+	 * nominal rating is the value reported as design capacity. */
+	rc = of_property_read_u32(profile_node, "qcom,nom-batt-capacity-mah",
+				&design_cap_mah);
+	if (rc < 0)
+		chip->design_cap_uah = 0;
+	else
+		chip->design_cap_uah = design_cap_mah * 1000;
+
 	if (!chip->batt_profile)
 		chip->batt_profile = devm_kzalloc(chip->dev,
 				sizeof(char) * len, GFP_KERNEL);
@@ -6470,6 +6500,20 @@ wait:
 					PROFILE_COMPARE_LEN) == 0;
 	if (reg & PROFILE_INTEGRITY_BIT) {
 		fg_cap_learning_load_data(chip);
+		/*
+		 * A warm AP reboot on fujisan can leave CPRED temporarily far
+		 * from VBAT.  Re-running the first estimate in that state corrupts
+		 * the learned SOC/CC even though the resident P996A20 profile is
+		 * valid and unchanged.  Preserve that state; a missing integrity
+		 * bit or changed profile still takes the normal reload path.
+		 */
+#ifdef CONFIG_BOARD_FUJISAN
+		if (!fg_is_batt_empty(chip) && profiles_same) {
+			if (!vbat_in_range && (fg_debug_mask & FG_STATUS))
+				pr_info("keeping valid profile despite Vbat estimate delta\n");
+			goto done;
+		}
+#else
 		if (vbat_in_range && !fg_is_batt_empty(chip) && profiles_same) {
 			if (fg_debug_mask & FG_STATUS)
 				pr_info("Battery profiles same, using default\n");
@@ -6477,6 +6521,7 @@ wait:
 				schedule_work(&chip->dump_sram);
 			goto done;
 		}
+#endif
 	} else {
 		pr_info("Battery profile not same, clearing data\n");
 		clear_cycle_counter(chip);
