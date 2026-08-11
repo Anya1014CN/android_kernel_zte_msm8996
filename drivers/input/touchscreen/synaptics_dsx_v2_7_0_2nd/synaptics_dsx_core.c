@@ -5500,8 +5500,10 @@ exit:
 	if (rmi4_data->fingers_on_2d == true)
 		synaptics_rmi4_free_fingers(rmi4_data);
 
-	if (zte_ts_is_td4322())
-		rmi4_data->suspend = true;
+	/* Both supported secondary controllers need the matching resume sequence.
+	 * S3330 is reset while folded; leaving this clear makes resume return early
+	 * and leaves the controller held in reset after the next unfold. */
+	rmi4_data->suspend = true;
 
 	mutex_unlock(&ts_pm_mutex);
 
