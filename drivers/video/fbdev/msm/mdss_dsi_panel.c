@@ -38,6 +38,12 @@
 
 DEFINE_LED_TRIGGER(bl_led_trigger);
 
+#ifdef CONFIG_BOARD_FUJISAN
+static struct mdss_panel_data *zte_panel_data;
+static bool is_td4322_panel;
+static DEFINE_MUTEX(fujisan_tddi_bootstrap_lock);
+#endif
+
 static bool mdss_panel_reset_skip;
 static struct mdss_panel_info *mdss_pinfo = NULL;
 
@@ -436,6 +442,67 @@ void mdss_dsi_panel_3v_power(struct mdss_panel_data *pdata, int enable)
 		fujisan_secondary_panel_rails(ctrl, enable);
 }
 EXPORT_SYMBOL(mdss_dsi_panel_3v_power);
+
+char zte_ts_is_td4322(void)
+{
+	return is_td4322_panel ? 1 : 0;
+}
+EXPORT_SYMBOL(zte_ts_is_td4322);
+
+void zte_lcd_power_ctrl_func(int enable)
+{
+	struct mdss_dsi_ctrl_pdata *ctrl;
+	int rc = 0;
+	int i;
+
+	/* The secondary touch controller may probe before the B panel is unblanked. */
+	if (!is_td4322_panel || !zte_panel_data)
+		goto out;
+
+	ctrl = container_of(zte_panel_data, struct mdss_dsi_ctrl_pdata,
+		panel_data);
+	if (ctrl->ndx != DSI_CTRL_RIGHT ||
+		!mdss_panel_is_power_off(zte_panel_data->panel_info.panel_power_state))
+		goto out;
+
+	mutex_lock(&fujisan_tddi_bootstrap_lock);
+	if (enable) {
+		fujisan_secondary_panel_rails(ctrl, 1);
+		if (gpio_is_valid(ctrl->rst2_gpio)) {
+			rc = gpio_request(ctrl->rst2_gpio, "disp_rst2_n");
+			if (rc) {
+				fujisan_secondary_panel_rails(ctrl, 0);
+				goto unlock;
+			}
+
+			if (zte_panel_data->panel_info.rst_seq_len) {
+				rc = gpio_direction_output(ctrl->rst2_gpio,
+					zte_panel_data->panel_info.rst_seq[0]);
+				if (rc)
+					goto free_gpio;
+			}
+			for (i = 0; i < zte_panel_data->panel_info.rst_seq_len; ++i) {
+				gpio_set_value(ctrl->rst2_gpio,
+					zte_panel_data->panel_info.rst_seq[i]);
+				if (zte_panel_data->panel_info.rst_seq[++i])
+					usleep_range(
+						zte_panel_data->panel_info.rst_seq[i] * 1000,
+						zte_panel_data->panel_info.rst_seq[i] * 1000);
+			}
+free_gpio:
+			gpio_free(ctrl->rst2_gpio);
+			if (rc)
+				fujisan_secondary_panel_rails(ctrl, 0);
+		}
+	} else {
+		fujisan_secondary_panel_rails(ctrl, 0);
+	}
+unlock:
+	mutex_unlock(&fujisan_tddi_bootstrap_lock);
+out:
+	msleep(200);
+}
+EXPORT_SYMBOL(zte_lcd_power_ctrl_func);
 #endif
 
 static int mdss_dsi_request_gpios(struct mdss_dsi_ctrl_pdata *ctrl_pdata)
@@ -580,6 +647,9 @@ int mdss_dsi_panel_reset(struct mdss_panel_data *pdata, int enable)
 	struct mdss_panel_info *pinfo = NULL;
 	int i, rc = 0;
 	int rst_gpio;
+#ifdef CONFIG_BOARD_FUJISAN
+	bool secondary_td4322;
+#endif
 
 	if (pdata == NULL) {
 		pr_err("%s: Invalid input data\n", __func__);
@@ -592,8 +662,15 @@ int mdss_dsi_panel_reset(struct mdss_panel_data *pdata, int enable)
 	pinfo = &(ctrl_pdata->panel_data.panel_info);
 	rst_gpio = ctrl_pdata->rst_gpio;
 #ifdef CONFIG_BOARD_FUJISAN
+	secondary_td4322 = is_td4322_panel &&
+		ctrl_pdata->ndx == DSI_CTRL_RIGHT;
 	if (ctrl_pdata->ndx == DSI_CTRL_RIGHT)
 		rst_gpio = ctrl_pdata->rst2_gpio;
+
+	/* TD4322 shares this reset line. Quiesce its attention worker before
+	 * changing the panel rails; reinit restores its function table afterwards. */
+	if (secondary_td4322)
+		synaptics_rmi4_secondary_panel_reset(true);
 #endif
 
 	/* For TDDI ddic panel, LCD shares reset pin with touch.
@@ -725,6 +802,10 @@ int mdss_dsi_panel_reset(struct mdss_panel_data *pdata, int enable)
 	}
 
 exit:
+#ifdef CONFIG_BOARD_FUJISAN
+	if (secondary_td4322 && enable && !rc)
+		synaptics_rmi4_secondary_panel_reset(false);
+#endif
 	return rc;
 }
 
@@ -3240,7 +3321,15 @@ int mdss_dsi_panel_init(struct device_node *node,
 	} else {
 		pr_info("%s: Panel Name = %s\n", __func__, panel_name);
 		strlcpy(&pinfo->panel_name[0], panel_name, MDSS_MAX_PANEL_LEN);
+#ifdef CONFIG_BOARD_FUJISAN
+		if (strnstr(panel_name, "td4322", MDSS_MAX_PANEL_LEN))
+			is_td4322_panel = true;
+#endif
 	}
+#ifdef CONFIG_BOARD_FUJISAN
+	if (ndx == DSI_CTRL_RIGHT)
+		zte_panel_data = &ctrl_pdata->panel_data;
+#endif
 	rc = mdss_panel_parse_dt(node, ctrl_pdata);
 	if (rc) {
 		pr_err("%s:%d panel dt parse failed\n", __func__, __LINE__);
