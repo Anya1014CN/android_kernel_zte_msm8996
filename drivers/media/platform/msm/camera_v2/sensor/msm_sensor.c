@@ -147,6 +147,18 @@ int msm_sensor_power_down(struct msm_sensor_ctrl_t *s_ctrl)
 		sensor_i2c_client);
 }
 
+int msm_sensor_power_reset(struct msm_sensor_ctrl_t *s_ctrl)
+{
+	struct msm_camera_power_ctrl_t *power_info;
+	if (!s_ctrl || s_ctrl->is_csid_tg_mode)
+		return s_ctrl ? 0 : -EINVAL;
+	power_info = &s_ctrl->sensordata->power_info;
+	if (!power_info || !s_ctrl->sensor_i2c_client)
+		return -EINVAL;
+	return msm_camera_power_reset(power_info, s_ctrl->sensor_device_type,
+		s_ctrl->sensor_i2c_client);
+}
+
 int msm_sensor_power_up(struct msm_sensor_ctrl_t *s_ctrl)
 {
 	int rc;
@@ -823,6 +835,18 @@ static int msm_sensor_config32(struct msm_sensor_ctrl_t *s_ctrl,
 			rc = -EFAULT;
 		}
 		break;
+	case CFG_POWER_RESET:
+		if (s_ctrl->is_csid_tg_mode)
+			goto DONE;
+		if (s_ctrl->sensor_state != MSM_SENSOR_POWER_UP) {
+			rc = -EFAULT;
+			break;
+		}
+		if (s_ctrl->func_tbl->sensor_power_reset)
+			rc = s_ctrl->func_tbl->sensor_power_reset(s_ctrl);
+		else
+			rc = -EFAULT;
+		break;
 	case CFG_SET_STOP_STREAM_SETTING: {
 		struct msm_camera_i2c_reg_setting32 stop_setting32;
 		struct msm_camera_i2c_reg_setting *stop_setting =
@@ -1315,6 +1339,18 @@ int msm_sensor_config(struct msm_sensor_ctrl_t *s_ctrl, void __user *argp)
 			rc = -EFAULT;
 		}
 		break;
+	case CFG_POWER_RESET:
+		if (s_ctrl->is_csid_tg_mode)
+			goto DONE;
+		if (s_ctrl->sensor_state != MSM_SENSOR_POWER_UP) {
+			rc = -EFAULT;
+			break;
+		}
+		if (s_ctrl->func_tbl->sensor_power_reset)
+			rc = s_ctrl->func_tbl->sensor_power_reset(s_ctrl);
+		else
+			rc = -EFAULT;
+		break;
 
 	case CFG_SET_STOP_STREAM_SETTING: {
 		struct msm_camera_i2c_reg_setting *stop_setting =
@@ -1444,6 +1480,7 @@ static struct msm_sensor_fn_t msm_sensor_func_tbl = {
 	.sensor_config32 = msm_sensor_config32,
 #endif
 	.sensor_power_up = msm_sensor_power_up,
+	.sensor_power_reset = msm_sensor_power_reset,
 	.sensor_power_down = msm_sensor_power_down,
 	.sensor_match_id = msm_sensor_match_id,
 };

@@ -907,10 +907,12 @@ enum msm_isp_ioctl_cmd_code {
 	MSM_ISP_SET_DUAL_HW_MASTER_SLAVE,
 	MSM_ISP_MAP_BUF_START_FE,
 	MSM_ISP_UNMAP_BUF,
-	MSM_ISP_AHB_CLK_CFG,
-	MSM_ISP_DUAL_HW_MASTER_SLAVE_SYNC,
 	MSM_ISP_FETCH_ENG_MULTI_PASS_START,
 	MSM_ISP_MAP_BUF_START_MULTI_PASS_FE,
+	/* Preserve the Android 8 Fujisan camera HAL ISP command ABI. */
+	MSM_ISP_CFG_HW_STATE,
+	MSM_ISP_AHB_CLK_CFG,
+	MSM_ISP_DUAL_HW_MASTER_SLAVE_SYNC,
 	MSM_ISP_REQUEST_BUF_VER2,
 	MSM_ISP_DUAL_HW_LPM_MODE,
 };
@@ -1014,6 +1016,10 @@ enum msm_isp_ioctl_cmd_code {
 #define VIDIOC_MSM_ISP_UNMAP_BUF \
 	_IOWR('V', MSM_ISP_UNMAP_BUF, \
 		struct msm_isp_unmap_buf_req)
+
+#define VIDIOC_MSM_ISP_CFG_HW_STATE \
+	_IOWR('V', MSM_ISP_CFG_HW_STATE, \
+		struct msm_vfe_axi_stream_cfg_cmd)
 
 #define VIDIOC_MSM_ISP_AHB_CLK_CFG \
 	_IOWR('V', MSM_ISP_AHB_CLK_CFG, struct msm_isp_ahb_clk_cfg)

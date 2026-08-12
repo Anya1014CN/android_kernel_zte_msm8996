@@ -1648,6 +1648,21 @@ power_up_failed:
 	return rc;
 }
 
+/* Android 8 Fujisan HAL invokes CFG_POWER_RESET while the sensor is live. */
+int msm_camera_power_reset(struct msm_camera_power_ctrl_t *ctrl,
+	enum msm_camera_device_type_t device_type,
+	struct msm_camera_i2c_client *sensor_i2c_client)
+{
+	int rc;
+
+	if (!ctrl || !sensor_i2c_client)
+		return -EINVAL;
+	rc = msm_camera_power_down(ctrl, device_type, sensor_i2c_client);
+	if (rc < 0)
+		return rc;
+	return msm_camera_power_up(ctrl, device_type, sensor_i2c_client);
+}
+
 static struct msm_sensor_power_setting*
 msm_camera_get_power_settings(struct msm_camera_power_ctrl_t *ctrl,
 				enum msm_sensor_power_seq_type_t seq_type,
@@ -1778,4 +1793,3 @@ int msm_camera_power_down(struct msm_camera_power_ctrl_t *ctrl,
 	CDBG("%s exit\n", __func__);
 	return 0;
 }
-

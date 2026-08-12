@@ -986,13 +986,14 @@ struct msm_snapshot_pp_status {
 #define CFG_GET_CSI_PARAMS            46
 #define CFG_POWER_UP                  47
 #define CFG_POWER_DOWN                48
+#define CFG_POWER_RESET               55
 #define CFG_WRITE_I2C_ARRAY           49
 #define CFG_READ_I2C_ARRAY            50
 #define CFG_PCLK_CHANGE               51
 #define CFG_CONFIG_VREG_ARRAY         52
 #define CFG_CONFIG_CLK_ARRAY          53
 #define CFG_GPIO_OP                   54
-#define CFG_MAX                       55
+#define CFG_MAX                       56
 
 
 #define MOVE_NEAR	0
