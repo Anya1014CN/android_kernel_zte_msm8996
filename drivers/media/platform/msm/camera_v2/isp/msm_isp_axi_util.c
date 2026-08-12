@@ -3393,6 +3393,31 @@ int msm_isp_cfg_axi_stream(struct vfe_device *vfe_dev, void *arg)
 
 	memset(stream_idx, 0, sizeof(stream_idx));
 
+	/*
+	 * The Fujisan Android 8 camera stack submits one CFG_STREAM entry per
+	 * AXI source but leaves the returned handle field zero. REQUEST_STREAM
+	 * has already registered the authoritative handle, so recover zero
+	 * entries from their source slots before normal validation.
+	 */
+	for (i = 0; i < stream_cfg_cmd->num_streams &&
+		 i < VFE_AXI_SRC_MAX; i++) {
+		struct msm_vfe_axi_stream *registered;
+		int registered_vfe;
+
+		if (stream_cfg_cmd->stream_handle[i] != 0)
+			continue;
+		registered = msm_isp_get_stream_common_data(vfe_dev, i);
+		if (!registered || registered->state == AVAILABLE ||
+			registered->num_isp == 0)
+			continue;
+		registered_vfe = msm_isp_get_vfe_idx_for_stream_user(vfe_dev,
+			registered);
+		if (registered_vfe < 0 || registered_vfe >= MAX_VFE)
+			continue;
+		stream_cfg_cmd->stream_handle[i] =
+			registered->stream_handle[registered_vfe];
+	}
+
 	for (i = 0; i < stream_cfg_cmd->num_streams; i++) {
 		if (HANDLE_TO_IDX(stream_cfg_cmd->stream_handle[i]) >=
 			VFE_AXI_SRC_MAX)

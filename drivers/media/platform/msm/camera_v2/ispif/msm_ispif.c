@@ -1911,6 +1911,9 @@ static long msm_ispif_subdev_ioctl_unlocked(struct v4l2_subdev *sd,
 	switch (cmd) {
 	case VIDIOC_MSM_ISPIF_CFG:
 		return msm_ispif_cmd(sd, arg);
+	/* Android 8 Fujisan camera HAL's ISPIF_CFG ABI. */
+	case 0xc17056c0U:
+		return msm_ispif_cmd(sd, arg);
 	case VIDIOC_MSM_ISPIF_CFG_EXT:
 		return msm_ispif_cmd_ext(sd, arg);
 	case MSM_SD_NOTIFY_FREEZE: {
