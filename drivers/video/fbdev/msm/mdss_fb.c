@@ -284,10 +284,14 @@ static int lcd_backlight_registered;
 static int lcd_backlight_2_registered;
 static bool fujisan_secondary_display_on;
 static bool fujisan_secondary_display_allowed;
+static bool fujisan_primary_b;
 module_param_named(fujisan_secondary_display_allowed,
 	fujisan_secondary_display_allowed, bool, 0644);
 MODULE_PARM_DESC(fujisan_secondary_display_allowed,
 	"Allow Fujisan secondary display brightness to wake panel B");
+module_param_named(fujisan_primary_b, fujisan_primary_b, bool, 0644);
+MODULE_PARM_DESC(fujisan_primary_b,
+	"Route the primary brightness control to panel B");
 
 bool mdss_fb_fujisan_secondary_display_is_on(void)
 {
@@ -443,6 +447,14 @@ static void mdss_fb_set_bl_brightness(struct led_classdev *led_cdev,
 
 	if (!bl_lvl && value)
 		bl_lvl = 1;
+
+#ifdef CONFIG_BOARD_FUJISAN
+	if (mfd->index == 0 && READ_ONCE(fujisan_primary_b)) {
+		mfd->bl_level_usr = bl_lvl;
+		fujisan_set_native_secondary_backlight(value);
+		return;
+	}
+#endif
 
 	if (!IS_CALIB_MODE_BL(mfd) && (!mfd->ext_bl_ctrl || !value ||
 							!mfd->bl_level)) {
@@ -4984,6 +4996,10 @@ static int fujisan_expand_atomic_commit(struct msm_fb_data_type *mfd,
 	expanded[1].dst_rect = (struct mdp_rect) {
 		1080, wide ? FUJISAN_WIDE_B_PAD_TOP : 0, 1080,
 		wide ? FUJISAN_WIDE_HEIGHT : 1920 };
+	if (single_b)
+		expanded[0].alpha = 0;
+	else if (single)
+		expanded[1].alpha = 0;
 
 	kfree(client);
 	*layer_list = expanded;
