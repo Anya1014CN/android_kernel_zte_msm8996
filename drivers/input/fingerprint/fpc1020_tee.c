@@ -217,7 +217,8 @@ static ssize_t screen_state_get(struct device *dev,
 	return scnprintf(buf, PAGE_SIZE, "%d\n", !f->screen_off);
 }
 
-#if defined(CONFIG_MACH_XIAOMI_A1) || defined(CONFIG_MACH_XIAOMI_A4)
+#if defined(CONFIG_MACH_XIAOMI_A1) || defined(CONFIG_MACH_XIAOMI_A4) || \
+	defined(CONFIG_MACH_ZTE_FUJISAN)
 static ssize_t proximity_state_set(struct device *dev,
 	struct device_attribute *attr, const char *buf, size_t count)
 {
@@ -289,23 +290,50 @@ static ssize_t enable_key_events_show(struct device *dev,
 }
 #endif
 
-#if defined(CONFIG_MACH_XIAOMI_A1) || defined(CONFIG_MACH_XIAOMI_A4)
+#if defined(CONFIG_MACH_ZTE_FUJISAN)
+static ssize_t wakeup_enable_store(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t count)
+{
+	struct fpc1020_data *f = dev_get_drvdata(dev);
+
+	if (!strncmp(buf, "enable", strlen("enable")))
+		f->wakeup_enabled = 1;
+	else if (!strncmp(buf, "disable", strlen("disable")))
+		f->wakeup_enabled = 0;
+	else
+		return -EINVAL;
+
+	return count;
+}
+#endif
+
+#if defined(CONFIG_MACH_XIAOMI_A1) || defined(CONFIG_MACH_XIAOMI_A4) || \
+	defined(CONFIG_MACH_ZTE_FUJISAN)
 static DEVICE_ATTR(enable_key_events, S_IWUSR | S_IRUSR, enable_key_events_show, enable_key_events_store);
 static DEVICE_ATTR(enable_wakeup, S_IWUSR | S_IRUSR, enable_wakeup_show, enable_wakeup_store);
 #endif
+#if defined(CONFIG_MACH_ZTE_FUJISAN)
+static DEVICE_ATTR(wakeup_enable, S_IWUSR | S_IWGRP, NULL, wakeup_enable_store);
+#endif
 static DEVICE_ATTR(irq, S_IRUSR | S_IWUSR, irq_get, irq_ack);
-#if defined(CONFIG_MACH_XIAOMI_A1) || defined(CONFIG_MACH_XIAOMI_A4)
+#if defined(CONFIG_MACH_XIAOMI_A1) || defined(CONFIG_MACH_XIAOMI_A4) || \
+	defined(CONFIG_MACH_ZTE_FUJISAN)
 static DEVICE_ATTR(proximity_state, S_IWUSR, NULL, proximity_state_set);
 #endif
 static DEVICE_ATTR(screen_state, S_IRUSR, screen_state_get, NULL);
 	
 static struct attribute *attributes[] = {
 	&dev_attr_irq.attr,
-#if defined(CONFIG_MACH_XIAOMI_A1) || defined(CONFIG_MACH_XIAOMI_A4)
+#if defined(CONFIG_MACH_ZTE_FUJISAN)
+	&dev_attr_wakeup_enable.attr,
+#endif
+#if defined(CONFIG_MACH_XIAOMI_A1) || defined(CONFIG_MACH_XIAOMI_A4) || \
+	defined(CONFIG_MACH_ZTE_FUJISAN)
 	&dev_attr_proximity_state.attr,
 #endif
 	&dev_attr_screen_state.attr,
-#if defined(CONFIG_MACH_XIAOMI_A1) || defined(CONFIG_MACH_XIAOMI_A4)
+#if defined(CONFIG_MACH_XIAOMI_A1) || defined(CONFIG_MACH_XIAOMI_A4) || \
+	defined(CONFIG_MACH_ZTE_FUJISAN)
 	&dev_attr_enable_key_events.attr,
 	&dev_attr_enable_wakeup.attr,
 #endif
@@ -643,4 +671,3 @@ static int __init fpc1020_init(void)
 	return platform_driver_register(&fpc1020_driver);
 }
 device_initcall(fpc1020_init);
-
