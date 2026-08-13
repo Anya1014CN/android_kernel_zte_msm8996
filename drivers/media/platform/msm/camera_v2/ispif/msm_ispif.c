@@ -232,6 +232,20 @@ static long msm_ispif_cmd_ext(struct v4l2_subdev *sd,
 		(struct ispif_device *)v4l2_get_subdevdata(sd);
 	struct ispif_cfg_data_ext pcdata = {0};
 	struct msm_ispif_param_data_ext *params = NULL;
+	/* Android 8 Fujisan camera HAL predates the stereo payload fields. */
+	struct msm_ispif_param_data_ext_legacy {
+		uint32_t num;
+		struct msm_ispif_params_entry entries[MAX_PARAM_ENTRIES];
+		struct msm_ispif_pack_cfg pack_cfg[CID_MAX];
+	} legacy;
+	struct msm_ispif_param_data_ext_legacy_v2 {
+		uint32_t num;
+		struct msm_ispif_params_entry entries[MAX_PARAM_ENTRIES];
+		struct msm_ispif_pack_cfg pack_cfg[CID_MAX];
+		struct msm_ispif_right_param_entry right_entries[MAX_PARAM_ENTRIES];
+		uint32_t stereo_enable;
+		uint16_t line_width[VFE_MAX];
+	} legacy_v2;
 
 	if (is_compat_task()) {
 #ifdef CONFIG_COMPAT
@@ -258,7 +272,9 @@ static long msm_ispif_cmd_ext(struct v4l2_subdev *sd,
 		pcdata.size = pcdata64->size;
 		pcdata.data = pcdata64->data;
 	}
-	if (pcdata.size != sizeof(struct msm_ispif_param_data_ext)) {
+	if (pcdata.size != sizeof(struct msm_ispif_param_data_ext) &&
+		pcdata.size != sizeof(legacy) &&
+		pcdata.size != sizeof(legacy_v2)) {
 		pr_err("%s: payload size mismatch\n", __func__);
 		return -EINVAL;
 	}
@@ -268,7 +284,23 @@ static long msm_ispif_cmd_ext(struct v4l2_subdev *sd,
 		CDBG("%s: params alloc failed\n", __func__);
 		return -ENOMEM;
 	}
-	if (copy_from_user(params, (void __user *)(pcdata.data),
+	if (pcdata.size == sizeof(legacy) || pcdata.size == sizeof(legacy_v2)) {
+		void *legacy_data = pcdata.size == sizeof(legacy) ?
+			(void *)&legacy : (void *)&legacy_v2;
+
+		if (copy_from_user(&legacy, (void __user *)(pcdata.data),
+			pcdata.size > sizeof(legacy) ? sizeof(legacy) : pcdata.size)) {
+			kfree(params);
+			return -EFAULT;
+		}
+		if (pcdata.size == sizeof(legacy_v2) &&
+			copy_from_user(&legacy_v2, (void __user *)(pcdata.data),
+			pcdata.size)) {
+			kfree(params);
+			return -EFAULT;
+		}
+		memcpy(&params->num, legacy_data, pcdata.size);
+	} else if (copy_from_user(params, (void __user *)(pcdata.data),
 		pcdata.size)) {
 		kfree(params);
 		return -EFAULT;

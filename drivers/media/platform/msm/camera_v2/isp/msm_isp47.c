@@ -341,12 +341,19 @@ int msm_vfe47_init_hardware(struct vfe_device *vfe_dev)
 	vfe_dev->common_data->dual_vfe_res->vfe_base[vfe_dev->pdev->id] =
 		vfe_dev->vfe_base;
 
+	rc = msm_isp_update_bandwidth(ISP_VFE0 + vfe_dev->pdev->id,
+			MSM_ISP_MIN_AB, MSM_ISP_MIN_IB);
+	if (rc)
+		goto bw_enable_fail;
+
 	rc = msm_camera_enable_irq(vfe_dev->vfe_irq, 1);
 	if (rc < 0)
 		goto irq_enable_fail;
 
 	return rc;
 irq_enable_fail:
+	msm_isp_update_bandwidth(ISP_VFE0 + vfe_dev->pdev->id, 0, 0);
+bw_enable_fail:
 	vfe_dev->common_data->dual_vfe_res->vfe_base[vfe_dev->pdev->id] = NULL;
 	if (cam_config_ahb_clk(NULL, 0, id, CAM_AHB_SUSPEND_VOTE) < 0)
 		pr_err("%s: failed to remove vote for AHB\n", __func__);
@@ -2485,16 +2492,16 @@ void msm_vfe47_stats_update_ping_pong_addr(
 			stream_info);
 	uint32_t paddr32 = (paddr & 0xFFFFFFFF);
 	uint32_t paddr32_max;
+	void __iomem *stats_addr;
 	int stats_idx;
 
 	stats_idx = STATS_IDX(stream_info->stream_handle[vfe_idx]);
 
-	msm_camera_io_w(paddr32, vfe_base +
-		VFE47_STATS_PING_PONG_BASE(stats_idx, pingpong_status));
-
+	stats_addr = vfe_base +
+		VFE47_STATS_PING_PONG_BASE(stats_idx, pingpong_status);
+	msm_camera_io_w(paddr32, stats_addr);
 	paddr32_max = (paddr + buf_size) & 0xFFFFFFE0;
-	msm_camera_io_w(paddr32_max, vfe_base +
-		VFE47_STATS_PING_PONG_BASE(stats_idx, pingpong_status) + 0x4);
+	msm_camera_io_w(paddr32_max, stats_addr + 0x4);
 }
 
 uint32_t msm_vfe47_stats_get_wm_mask(

@@ -1724,6 +1724,28 @@ static int msm_isp_update_deliver_count(struct vfe_device *vfe_dev,
 	if (!stream_info->controllable_output)
 		goto done;
 
+	/*
+	 * Split pixel streams share one stream_info.  The buffer manager has
+	 * already collapsed the two VFE completions, so advance the request state
+	 * once without comparing two independent hardware ping/pong bits.
+	 */
+	if (stream_info->num_isp == MAX_VFE) {
+		if (!stream_info->undelivered_request_cnt || !done_buf) {
+			pr_err_ratelimited("%s:%d shared completion with no request\n",
+				__func__, __LINE__);
+			return -EINVAL;
+		}
+		if (done_buf->is_drop_reconfig == 1 &&
+			stream_info->sw_ping_pong_bit == -1)
+			goto done;
+		if (stream_info->sw_ping_pong_bit == -1)
+			stream_info->sw_ping_pong_bit = 0;
+		if (done_buf->is_drop_reconfig != 1)
+			stream_info->undelivered_request_cnt--;
+		stream_info->sw_ping_pong_bit ^= 1;
+		goto done;
+	}
+
 	if (!stream_info->undelivered_request_cnt ||
 		(done_buf == NULL)) {
 		pr_err_ratelimited("%s:%d error undelivered_request_cnt 0\n",
@@ -4229,7 +4251,7 @@ void msm_isp_process_axi_irq_stream(struct vfe_device *vfe_dev,
 		struct msm_isp_timestamp *ts)
 {
 	int rc = -1;
-	uint32_t pingpong_bit = 0, i;
+	uint32_t pingpong_bit = 0, buf_pingpong_bit = 0, i;
 	struct msm_isp_buffer *done_buf = NULL;
 	unsigned long flags;
 	struct timeval *time_stamp;
@@ -4276,15 +4298,35 @@ void msm_isp_process_axi_irq_stream(struct vfe_device *vfe_dev,
 		return;
 	}
 
-	/* composite the irq for dual vfe */
-	rc = msm_isp_composite_irq(vfe_dev, stream_info,
-		MSM_ISP_COMP_IRQ_PING_BUFDONE + pingpong_bit);
-	if (rc) {
-		spin_unlock_irqrestore(&stream_info->lock, flags);
-		if (rc < 0)
-			msm_isp_halt_send_error(vfe_dev,
+	if (vfe_dev->is_split && stream_info->num_isp == MAX_VFE &&
+		stream_info->stream_src < RDI_INTF_0) {
+		done_buf = stream_info->buf[pingpong_bit];
+		buf_pingpong_bit = pingpong_bit;
+		if (done_buf && done_buf->pingpong_bit != pingpong_bit)
+			buf_pingpong_bit = done_buf->pingpong_bit;
+		rc = vfe_dev->buf_mgr->ops->update_put_buf_cnt(vfe_dev->buf_mgr,
+			vfe_dev->pdev->id,
+			done_buf ? done_buf->bufq_handle :
+			stream_info->bufq_handle[VFE_BUF_QUEUE_DEFAULT],
+			done_buf ? done_buf->buf_idx : -1, time_stamp, frame_id,
+			buf_pingpong_bit);
+		if (rc) {
+			spin_unlock_irqrestore(&stream_info->lock, flags);
+			if (rc < 0)
+				msm_isp_halt_send_error(vfe_dev,
 					ISP_EVENT_PING_PONG_MISMATCH);
-		return;
+			return;
+		}
+	} else {
+		rc = msm_isp_composite_irq(vfe_dev, stream_info,
+			MSM_ISP_COMP_IRQ_PING_BUFDONE + pingpong_bit);
+		if (rc) {
+			spin_unlock_irqrestore(&stream_info->lock, flags);
+			if (rc < 0)
+				msm_isp_halt_send_error(vfe_dev,
+					ISP_EVENT_PING_PONG_MISMATCH);
+			return;
+		}
 	}
 
 	done_buf = stream_info->buf[pingpong_bit];

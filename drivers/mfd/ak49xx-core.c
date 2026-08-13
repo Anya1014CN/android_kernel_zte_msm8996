@@ -834,6 +834,10 @@ static int ak49xx_device_init(struct ak49xx *ak49xx)
 			} else
 				break;
 		}
+		if (!ak49xx_spi) {
+			ret = -EPROBE_DEFER;
+			goto err;
+		}
 		ak49xx->read_dev = ak49xx_spi_read;
 		ak49xx->write_dev = ak49xx_spi_write;
 		usleep_range(1000, 1100);
@@ -1956,4 +1960,3 @@ module_exit(ak49xx_exit);
 MODULE_DESCRIPTION("ak496x core driver");
 MODULE_VERSION("1.0");
 MODULE_LICENSE("GPL v2");
-

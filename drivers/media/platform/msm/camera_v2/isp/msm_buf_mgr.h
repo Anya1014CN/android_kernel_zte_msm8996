@@ -74,6 +74,7 @@ enum msm_isp_buf_mgr_state {
 
 struct msm_isp_buffer_mapped_info {
 	size_t len;
+	size_t valid_len;
 	dma_addr_t paddr;
 	int buf_fd;
 };
@@ -119,6 +120,7 @@ struct msm_isp_bufq {
 	enum msm_isp_buf_type buf_type;
 	struct msm_isp_buffer *bufs;
 	spinlock_t bufq_lock;
+	uint8_t put_buf_mask[ISP_NUM_BUF_MASK];
 	/*Native buffer queue*/
 	struct list_head head;
 	enum smmu_attach_mode security_mode;
@@ -179,6 +181,9 @@ struct msm_isp_buf_ops {
 	int (*buf_divert)(struct msm_isp_buf_mgr *buf_mgr,
 			uint32_t bufq_handle, uint32_t buf_index,
 			struct timeval *tv, uint32_t frame_id);
+	int (*update_put_buf_cnt)(struct msm_isp_buf_mgr *buf_mgr,
+			uint32_t id, uint32_t bufq_handle, int32_t buf_index,
+			struct timeval *tv, uint32_t frame_id, uint32_t pingpong_bit);
 };
 
 struct msm_isp_buf_mgr {

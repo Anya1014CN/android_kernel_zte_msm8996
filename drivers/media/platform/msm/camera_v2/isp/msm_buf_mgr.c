@@ -228,6 +228,7 @@ static int msm_isp_prepare_v4l2_buf(struct msm_isp_buf_mgr *buf_mgr,
 		}
 
 		mapped_info->paddr += accu_length;
+		mapped_info->valid_len = qbuf_buf->planes[i].length;
 		accu_length += qbuf_buf->planes[i].length;
 
 		CDBG("%s: plane: %d addr:%pK\n",
@@ -706,6 +707,58 @@ static int msm_isp_put_buf(struct msm_isp_buf_mgr *buf_mgr,
 	return rc;
 }
 
+static int msm_isp_update_put_buf_cnt(struct msm_isp_buf_mgr *buf_mgr,
+	uint32_t id, uint32_t bufq_handle, int32_t buf_index,
+	struct timeval *tv, uint32_t frame_id, uint32_t pingpong_bit)
+{
+	struct msm_isp_bufq *bufq;
+	struct msm_isp_buffer *buf_info = NULL;
+	uint8_t *put_buf_mask;
+	unsigned long flags;
+	int rc = 0;
+
+	bufq = msm_isp_get_bufq(buf_mgr, bufq_handle);
+	if (!bufq) {
+		pr_err("%s: Invalid bufq\n", __func__);
+		return -EINVAL;
+	}
+
+	spin_lock_irqsave(&bufq->bufq_lock, flags);
+	put_buf_mask = &bufq->put_buf_mask[pingpong_bit];
+	if (buf_index >= 0) {
+		buf_info = msm_isp_get_buf_ptr(buf_mgr, bufq_handle, buf_index);
+		if (!buf_info ||
+			buf_info->state != MSM_ISP_BUFFER_STATE_DEQUEUED ||
+			buf_info->pingpong_bit != pingpong_bit) {
+			rc = -EFAULT;
+			goto unlock;
+		}
+	}
+
+	if (*put_buf_mask & BIT(id)) {
+		rc = 1;
+		goto unlock;
+	}
+
+	if (*put_buf_mask == 0 && buf_info)
+		buf_info->frame_id = frame_id;
+
+	*put_buf_mask |= BIT(id);
+	if (*put_buf_mask != ISP_SHARE_BUF_MASK) {
+		rc = 1;
+		goto unlock;
+	}
+
+	*put_buf_mask = 0;
+	if (buf_info && BUF_SRC(bufq->stream_id) == MSM_ISP_BUFFER_SRC_NATIVE) {
+		buf_info->state = MSM_ISP_BUFFER_STATE_DIVERTED;
+		buf_info->tv = tv;
+	}
+unlock:
+	spin_unlock_irqrestore(&bufq->bufq_lock, flags);
+	return rc;
+}
+
 static int msm_isp_buf_divert(struct msm_isp_buf_mgr *buf_mgr,
 	uint32_t bufq_handle, uint32_t buf_index,
 	struct timeval *tv, uint32_t frame_id)
@@ -1012,6 +1065,8 @@ static int msm_isp_request_bufq(struct msm_isp_buf_mgr *buf_mgr,
 	bufq->stream_id = buf_request->stream_id;
 	bufq->num_bufs = buf_request->num_buf;
 	bufq->buf_type = buf_request->buf_type;
+	bufq->put_buf_mask[0] = 0;
+	bufq->put_buf_mask[1] = 0;
 	INIT_LIST_HEAD(&bufq->head);
 	bufq->security_mode = buf_request->security_mode;
 
@@ -1482,6 +1537,7 @@ static struct msm_isp_buf_ops isp_buf_ops = {
 	.buf_mgr_debug = msm_isp_buf_mgr_debug,
 	.get_bufq = msm_isp_get_bufq,
 	.buf_divert = msm_isp_buf_divert,
+	.update_put_buf_cnt = msm_isp_update_put_buf_cnt,
 };
 
 int msm_isp_create_isp_buf_mgr(
