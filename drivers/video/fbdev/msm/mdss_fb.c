@@ -393,6 +393,52 @@ static bool fujisan_set_native_secondary_backlight(enum led_brightness value)
 	return handled;
 }
 
+/* Atomic topology is the single owner of the paired panel route. */
+static void fujisan_apply_atomic_topology(struct msm_fb_data_type *mfd,
+		bool wide, bool single_b)
+{
+	bool old_allowed = READ_ONCE(fujisan_secondary_display_allowed);
+	bool old_primary_b = READ_ONCE(fujisan_primary_b);
+	bool new_allowed = wide || single_b;
+
+	if (old_allowed == new_allowed && old_primary_b == single_b)
+		return;
+	if (!new_allowed && old_allowed) {
+		mutex_lock(&mfd->bl_lock);
+		fujisan_set_native_secondary_backlight_locked(mfd, 0);
+		mutex_unlock(&mfd->bl_lock);
+	}
+	if (single_b && !old_primary_b) {
+		mutex_lock(&mfd->bl_lock);
+		mdss_fb_set_backlight(mfd, 0);
+		mutex_unlock(&mfd->bl_lock);
+	}
+	WRITE_ONCE(fujisan_primary_b, single_b);
+	WRITE_ONCE(fujisan_secondary_display_allowed, new_allowed);
+	if (new_allowed && (!old_allowed || old_primary_b != single_b)) {
+		enum led_brightness value = 0;
+		if (mfd->panel_info && mfd->panel_info->bl_max > 0)
+			MDSS_BL_TO_BRIGHT(value, mfd->bl_level_usr,
+				mfd->panel_info->bl_max,
+				mfd->panel_info->brightness_max);
+		/* The first topology frame can precede the framework brightness
+		 * callback.  Preserve the initialized physical level in that case;
+		 * a non-zero B value is also required to send its DCS Display On. */
+		if (!value && mfd->bl_level && mfd->panel_info &&
+		    mfd->panel_info->bl_max > 0)
+			MDSS_BL_TO_BRIGHT(value, mfd->bl_level,
+				mfd->panel_info->bl_max,
+				mfd->panel_info->brightness_max);
+		if (!value)
+			value = 1;
+		mutex_lock(&mfd->bl_lock);
+		fujisan_set_native_secondary_backlight_locked(mfd, value);
+		mutex_unlock(&mfd->bl_lock);
+	}
+	pr_info("fujisan: atomic topology wide=%d primary_b=%d secondary_allowed=%d\n",
+		wide, single_b, new_allowed);
+}
+
 static void mdss_fb_set_bl_brightness_2(struct led_classdev *led_cdev,
 		enum led_brightness value)
 {
@@ -4956,6 +5002,7 @@ static int fujisan_expand_atomic_commit(struct msm_fb_data_type *mfd,
 			wide ? "wide" : "single");
 		return -EINVAL;
 	}
+	fujisan_apply_atomic_topology(mfd, wide, single_b);
 
 	layer = &client[0];
 	if (layer->flags ||
