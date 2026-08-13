@@ -201,6 +201,24 @@ config SND_SOC_MSM8996
 	 the machine driver and the corresponding
 	 DAI-links
 
+config SND_SOC_MSM8996_AK4962
+	tristate "ZTE Fujisan AK4962 machine driver"
+	depends on ARCH_MSM8996
+	select SND_SOC_QDSP6V2
+	select SND_SOC_MSM_STUB
+	select SND_SOC_MSM_HOSTLESS_PCM
+	select SND_DYNAMIC_MINORS
+	select MSM_QDSP6_APRV2
+	select MSM_QDSP6V2_CODECS
+	select SND_SOC_AK4962
+	select AUDIO_EXT_CLK
+	select QTI_PP
+	select DTS_SRS_TM
+	select SND_HWDEP
+	help
+	  Enable the original ZTE Fujisan machine driver for the external
+	  AK4962 SlimBus codec.
+
 config SND_SOC_MSM8996_VM
 	tristate "SoC Machine driver for MSM8996 virtualization"
 	select SND_SOC_QDSP6V2_VM

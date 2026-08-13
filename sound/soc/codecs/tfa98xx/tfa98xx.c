@@ -3292,6 +3292,7 @@ static struct of_device_id tfa98xx_dt_match[] = {
 	{.compatible = "tfa,tfa9874" },
 	{.compatible = "tfa,tfa9878" },
 	{.compatible = "tfa,tfa9888" },
+	{.compatible = "nxp,tfa9888" },
 	{.compatible = "tfa,tfa9890" },
 	{.compatible = "tfa,tfa9891" },
 	{.compatible = "tfa,tfa9894" },
