@@ -408,6 +408,13 @@ static void fujisan_apply_atomic_topology(struct msm_fb_data_type *mfd,
 		fujisan_set_native_secondary_backlight_locked(mfd, 0);
 		mutex_unlock(&mfd->bl_lock);
 	}
+	if (!single_b && old_primary_b) {
+		/* B-only routing suppressed A's physical callback.  Restore the
+		 * saved framework level before exposing A or the paired wide path. */
+		mutex_lock(&mfd->bl_lock);
+		mdss_fb_set_backlight(mfd, mfd->bl_level_usr);
+		mutex_unlock(&mfd->bl_lock);
+	}
 	if (single_b && !old_primary_b) {
 		mutex_lock(&mfd->bl_lock);
 		mdss_fb_set_backlight(mfd, 0);
