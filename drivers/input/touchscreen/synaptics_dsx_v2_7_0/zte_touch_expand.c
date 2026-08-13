@@ -18,6 +18,9 @@
 #define MINOR_PANEL		1
 #define AIM_FREQUENCY		140
 
+#define ZTE_TOUCH_PANEL_A	BIT(MAJOR_PANEL)
+#define ZTE_TOUCH_PANEL_B	BIT(MINOR_PANEL)
+
 #define TEB_INFO(fmt, arg...)           pr_info("<<TEB-INF>>[%s:%d] "fmt"", __func__, __LINE__, ##arg)
 #define TEB_ERROR(fmt, arg...)          pr_info("<<TEB-ERR>>[%s:%d] "fmt"", __func__, __LINE__, ##arg)
 
@@ -45,25 +48,90 @@ typedef struct {
 
 
 static TOUCH_EXPAND_T global_touch_expand;
+/* Start folded on A.  The display atomic topology updates this before its
+ * first client target is submitted for B or C. */
+static unsigned int active_panels = ZTE_TOUCH_PANEL_A;
 #ifdef CONFIG_BOARD_FUJISAN
 /* Android cannot merge independent touch devices into one multi-touch stream.
  * Fujisan's expanded mode therefore uses the combined 2160px input device. */
-static bool separate_inputs;
+static bool separate_inputs = true;
 #else
 static bool separate_inputs;
 #endif
 
-module_param_named(separate_inputs, separate_inputs, bool, 0644);
+module_param_named(separate_inputs, separate_inputs, bool, 0444);
 MODULE_PARM_DESC(separate_inputs,
 		"Route touches to each panel input instead of the combined input");
 
 bool zte_touch_separate_inputs_enabled(void)
 {
-	return separate_inputs;
+	return READ_ONCE(separate_inputs);
 }
 EXPORT_SYMBOL(zte_touch_separate_inputs_enabled);
 
+bool zte_touch_panel_is_active(unsigned char panel_id)
+{
+	return READ_ONCE(active_panels) & BIT(panel_id);
+}
+EXPORT_SYMBOL(zte_touch_panel_is_active);
+
 static DECLARE_WAIT_QUEUE_HEAD(touch_expand_waitq);
+
+/* The expanded input is Android's one internal touchscreen.  Keep its event
+ * stream aligned with the display topology rather than letting an electrically
+ * inactive panel inject coordinates into the current primary display. */
+void zte_touch_expand_set_active_panels(bool panel_a, bool panel_b)
+{
+	struct input_dev *input_dev = global_touch_expand.input_dev;
+	unsigned int panels = (panel_a ? ZTE_TOUCH_PANEL_A : 0) |
+		(panel_b ? ZTE_TOUCH_PANEL_B : 0);
+	unsigned int finger_flag;
+	unsigned char slot;
+
+	if (!panels)
+		return;
+	if (READ_ONCE(active_panels) == panels &&
+		READ_ONCE(separate_inputs) !=
+		(panels != (ZTE_TOUCH_PANEL_A | ZTE_TOUCH_PANEL_B)))
+		return;
+
+	WRITE_ONCE(active_panels, panels);
+	/* A/B have their own calibrated 1080x1920 input ranges.  C alone uses
+	 * the 2160x1920 merged input stream. */
+	WRITE_ONCE(separate_inputs,
+		panels != (ZTE_TOUCH_PANEL_A | ZTE_TOUCH_PANEL_B));
+	if (!input_dev)
+		return;
+
+	mutex_lock(&global_touch_expand.list_mutex);
+	for (slot = 0; slot < MAX_FINGER; slot++) {
+		COORD_INFO_T *fragment_info;
+
+		while (!list_empty(&global_touch_expand.touch_list_head[slot])) {
+			fragment_info = list_first_entry(
+				&global_touch_expand.touch_list_head[slot],
+				COORD_INFO_T, list);
+			list_del(&fragment_info->list);
+			kfree(fragment_info);
+		}
+	}
+	global_touch_expand.wait_flag = 0;
+	finger_flag = global_touch_expand.finger_flag;
+	global_touch_expand.finger_flag = 0;
+	mutex_unlock(&global_touch_expand.list_mutex);
+
+	for (slot = 0; slot < MAX_FINGER; slot++) {
+		if (finger_flag & BIT(slot)) {
+			input_mt_slot(input_dev, slot);
+			input_mt_report_slot_state(input_dev, MT_TOOL_FINGER, 0);
+		}
+	}
+	input_report_key(input_dev, BTN_TOUCH, 0);
+	input_report_key(input_dev, BTN_TOOL_FINGER, 0);
+	input_sync(input_dev);
+	pr_info("zte_touch_expand: active panels A=%d B=%d\n", panel_a, panel_b);
+}
+EXPORT_SYMBOL(zte_touch_expand_set_active_panels);
 
 void zte_touch_expand_push(unsigned short x, unsigned short y,
 								unsigned int wx, unsigned int wy,
@@ -72,6 +140,9 @@ void zte_touch_expand_push(unsigned short x, unsigned short y,
 {
 	COORD_INFO_T *fragment_info = NULL;
 	unsigned char list_id = 0;
+
+	if (!(READ_ONCE(active_panels) & BIT(panel_id)))
+		return;
 
 	fragment_info = kzalloc(sizeof(COORD_INFO_T), GFP_KERNEL);
 	if (fragment_info == NULL) {
@@ -135,6 +206,10 @@ static void zte_touch_expand_handle_fragment(COORD_INFO_T *report_info[])
 		/*TEB_INFO("-----finger %u, fragment_info %p!!!\n", finger, report_info[finger]);*/
 
 		fragment_info = report_info[finger];
+		if (!(READ_ONCE(active_panels) & BIT(fragment_info->panel_id))) {
+			kfree(fragment_info);
+			continue;
+		}
 /*
 		do_gettimeofday(&after_tv);
 		before_tv = &(fragment_info->tv);
@@ -270,12 +345,6 @@ static int zte_touch_expand_init(void)
 	unsigned char i = 0;
 
 	TEB_INFO("into!!!\n");
-
-	/* Lineage dual-display path uses per-panel inputs + idc displayId. */
-	if (separate_inputs) {
-		TEB_INFO("separate_inputs=1, skip combined expand input\n");
-		return 0;
-	}
 
 	input_dev = input_allocate_device();
 	if (input_dev == NULL) {

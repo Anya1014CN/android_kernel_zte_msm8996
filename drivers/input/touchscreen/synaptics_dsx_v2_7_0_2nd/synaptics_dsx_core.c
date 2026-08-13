@@ -128,6 +128,7 @@ void zte_touch_expand_push(unsigned short x, unsigned short y,
 		unsigned int wx, unsigned int wy, unsigned char slot_id,
 		unsigned char tool_finger, unsigned char panel_id);
 bool zte_touch_separate_inputs_enabled(void);
+bool zte_touch_panel_is_active(unsigned char panel_id);
 static int synaptics_rmi4_check_status(struct synaptics_rmi4_data *rmi4_data,
 		bool *was_in_bl_mode);
 static int synaptics_rmi4_free_fingers(struct synaptics_rmi4_data *rmi4_data);
@@ -1281,6 +1282,8 @@ static int synaptics_rmi4_f12_abs_report(struct synaptics_rmi4_data *rmi4_data,
 	struct synaptics_rmi4_f12_finger_data *finger_data;
 	static unsigned char finger_presence;
 	static unsigned char stylus_presence;
+	const bool report_native = zte_touch_separate_inputs_enabled() &&
+		zte_touch_panel_is_active(1);
 #ifdef F12_DATA_15_WORKAROUND
 	static unsigned char objects_already_present;
 #endif
@@ -1407,7 +1410,7 @@ static int synaptics_rmi4_f12_abs_report(struct synaptics_rmi4_data *rmi4_data,
 			y = rmi4_data->sensor_max_y - y;
 
 #ifdef TYPE_B_PROTOCOL
-		if (zte_touch_separate_inputs_enabled()) {
+		if (report_native) {
 			input_mt_slot(rmi4_data->input_dev, finger);
 			input_mt_report_slot_state(rmi4_data->input_dev,
 					MT_TOOL_FINGER,
@@ -1426,7 +1429,7 @@ static int synaptics_rmi4_f12_abs_report(struct synaptics_rmi4_data *rmi4_data,
 			if (!zte_touch_separate_inputs_enabled()) {
 				zte_touch_expand_push(x, y, wx, wy,
 						finger, 1, 1);
-			} else {
+			} else if (report_native) {
 				input_report_key(rmi4_data->input_dev, BTN_TOUCH, 1);
 				input_report_key(rmi4_data->input_dev,
 						BTN_TOOL_FINGER, 1);
@@ -1499,7 +1502,7 @@ static int synaptics_rmi4_f12_abs_report(struct synaptics_rmi4_data *rmi4_data,
 	}
 
 	if (touch_count == 0) {
-		if (zte_touch_separate_inputs_enabled()) {
+		if (report_native) {
 			input_report_key(rmi4_data->input_dev, BTN_TOUCH, 0);
 			input_report_key(rmi4_data->input_dev,
 					BTN_TOOL_FINGER, 0);
@@ -1509,7 +1512,7 @@ static int synaptics_rmi4_f12_abs_report(struct synaptics_rmi4_data *rmi4_data,
 		objects_already_present = 0;
 #endif
 	}
-	if (zte_touch_separate_inputs_enabled())
+	if (report_native)
 		input_sync(rmi4_data->input_dev);
 
 	mutex_unlock(&(rmi4_data->rmi4_report_mutex));
@@ -3832,6 +3835,8 @@ exit:
 static int synaptics_rmi4_free_fingers(struct synaptics_rmi4_data *rmi4_data)
 {
 	unsigned char ii;
+	const bool report_native = zte_touch_separate_inputs_enabled() &&
+		zte_touch_panel_is_active(1);
 
 	mutex_lock(&(rmi4_data->rmi4_report_mutex));
 
@@ -3839,7 +3844,7 @@ static int synaptics_rmi4_free_fingers(struct synaptics_rmi4_data *rmi4_data)
 
 #ifdef TYPE_B_PROTOCOL
 	for (ii = 0; ii < rmi4_data->num_of_fingers; ii++) {
-		if (zte_touch_separate_inputs_enabled()) {
+		if (report_native) {
 			input_mt_slot(rmi4_data->input_dev, ii);
 			input_mt_report_slot_state(rmi4_data->input_dev,
 					MT_TOOL_FINGER, 0);
@@ -3848,7 +3853,7 @@ static int synaptics_rmi4_free_fingers(struct synaptics_rmi4_data *rmi4_data)
 		}
 	}
 #endif
-	if (zte_touch_separate_inputs_enabled()) {
+	if (report_native) {
 		input_report_key(rmi4_data->input_dev, BTN_TOUCH, 0);
 		input_report_key(rmi4_data->input_dev, BTN_TOOL_FINGER, 0);
 		input_sync(rmi4_data->input_dev);

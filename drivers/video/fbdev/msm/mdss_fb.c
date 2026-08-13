@@ -61,6 +61,7 @@
 
 #ifdef CONFIG_BOARD_FUJISAN
 u32 zte_bl_brightness_2;
+extern void zte_touch_expand_set_active_panels(bool panel_a, bool panel_b);
 #endif
 
 #ifdef CONFIG_FB_MSM_TRIPLE_BUFFER
@@ -422,6 +423,10 @@ static void fujisan_apply_atomic_topology(struct msm_fb_data_type *mfd,
 	}
 	WRITE_ONCE(fujisan_primary_b, single_b);
 	WRITE_ONCE(fujisan_secondary_display_allowed, new_allowed);
+	/* Touch routing is part of the same hardware topology as the CTL route.
+	 * A and B are independent when folded; C deliberately accepts both. */
+	zte_touch_expand_set_active_panels(wide || !single_b,
+		wide || single_b);
 	if (new_allowed && (!old_allowed || old_primary_b != single_b)) {
 		enum led_brightness value = 0;
 		if (mfd->panel_info && mfd->panel_info->bl_max > 0)
