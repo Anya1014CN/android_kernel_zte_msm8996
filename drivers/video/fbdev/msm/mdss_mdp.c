@@ -3129,10 +3129,9 @@ static int mdss_mdp_probe(struct platform_device *pdev)
 			num_of_display_on--;
 
 #ifdef CONFIG_BOARD_FUJISAN
-		/* LK hands off both independent panels; only fb0 owns the shared
-		 * splash reference in the stage1 topology. */
-		if (num_of_display_on > 1)
-			num_of_display_on = 1;
+		/* The single-A DTS disables continuous splash.  Release LK's
+		 * leftover DSI1 clock vote before userspace opens fb0. */
+		num_of_display_on = 0;
 #endif
 	}
 	if (!num_of_display_on) {

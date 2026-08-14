@@ -22,9 +22,7 @@
 };
 
 &mdss_dsi {
-	//hw-config = "split_dsi";
-	hw-config = "dual_dsi";
-	//hw-config = "single_dsi";
+	hw-config = "single_dsi";
 };
 
 &pmi8994_wled {
@@ -165,6 +163,7 @@
 
 
 &mdss_dsi0 {
+	status = "disabled";
 	qcom,dsi-pref-prim-pan = <&dsi_dual_zte_truly_nt35695_5p5_fhd_cmd>;
 	pinctrl-names = "mdss_default", "mdss_sleep";
 	pinctrl-0 = <&mdss_dsi_active &mdss_te_active>;
@@ -192,7 +191,7 @@
 	pinctrl-0 = <&mdss_dsi1_active &mdss_te1_active>;
 	pinctrl-1 = <&mdss_dsi1_suspend &mdss_te1_suspend>;
 
-	qcom,display-id = "tertiary"; //for dual dsi
+	qcom,display-id = "primary";
 
 	qcom,platform-te-gpio = <&tlmm 10 0>;
 	qcom,platform-te2-gpio = <&tlmm 11 0>;

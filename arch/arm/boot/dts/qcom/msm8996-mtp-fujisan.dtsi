@@ -442,10 +442,8 @@
 };
 
 &mdss_dsi {
-	/* The panels retain independent DSI/PLL lifecycles. This switch only joins
-	 * their fb registration into the native dual-display MDP topology. */
-	hw-config = "dual_dsi";
-	zte,fujisan-composite-stage1;
+	/* Physical A is DSI1; expose it through the standard primary fb node. */
+	hw-config = "single_dsi";
 };
 
 &mdss_dsi0 {
