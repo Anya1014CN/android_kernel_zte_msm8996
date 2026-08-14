@@ -22,7 +22,12 @@
 };
 
 &mdss_dsi {
-	hw-config = "single_dsi";
+	hw-config = "dual_dsi";
+};
+
+/* The 640x480 writeback node is a virtual display, not a panel. */
+&msm_wb_disp {
+	status = "disabled";
 };
 
 &pmi8994_wled {
@@ -163,7 +168,7 @@
 
 
 &mdss_dsi0 {
-	status = "disabled";
+	status = "okay";
 	qcom,dsi-pref-prim-pan = <&dsi_dual_zte_truly_nt35695_5p5_fhd_cmd>;
 	pinctrl-names = "mdss_default", "mdss_sleep";
 	pinctrl-0 = <&mdss_dsi_active &mdss_te_active>;
@@ -185,13 +190,13 @@
 };
 
 &mdss_dsi1 {
-	//status = "disabled"; //for single dsi
+	status = "disabled";
 	qcom,dsi-pref-prim-pan = <&dsi_dual_zte_truly_nt35695_5p5_fhd_cmd2>;
 	pinctrl-names = "mdss_default", "mdss_sleep";
 	pinctrl-0 = <&mdss_dsi1_active &mdss_te1_active>;
 	pinctrl-1 = <&mdss_dsi1_suspend &mdss_te1_suspend>;
 
-	qcom,display-id = "primary";
+	qcom,display-id = "tertiary";
 
 	qcom,platform-te-gpio = <&tlmm 10 0>;
 	qcom,platform-te2-gpio = <&tlmm 11 0>;

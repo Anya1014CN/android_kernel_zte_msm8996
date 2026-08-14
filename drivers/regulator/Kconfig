@@ -670,6 +670,13 @@ config REGULATOR_TPS51632
 	  This driver supports TPS51632 voltage regulator chip.
 	  The TPS51632 is 3-2-1 Phase D-Cap+ Step Down Driverless Controller
 	  with Serial VID control and DVFS.
+
+config REGULATOR_TPS65132
+	tristate "TI TPS65132 Power regulator"
+	depends on I2C
+	select REGMAP_I2C
+	help
+	  This driver supports TPS65132 voltage regulator chips.
 	  The voltage output can be configure through I2C interface or PWM
 	  interface.
 
@@ -1004,4 +1011,3 @@ config REGULATOR_STUB
 	  constraint checking while the real driver is being developed.
 
 endif
-

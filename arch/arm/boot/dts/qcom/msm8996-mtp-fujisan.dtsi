@@ -442,8 +442,7 @@
 };
 
 &mdss_dsi {
-	/* Physical A is DSI1; expose it through the standard primary fb node. */
-	hw-config = "single_dsi";
+	hw-config = "dual_dsi";
 };
 
 &mdss_dsi0 {

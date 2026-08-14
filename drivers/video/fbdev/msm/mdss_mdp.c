@@ -2591,6 +2591,8 @@ static int mdss_mdp_get_cmdline_config(struct platform_device *pdev)
 	/* reads from dt by default */
 	pan_cfg->lk_cfg = true;
 
+	/* Keep LK's detected panel nodes; mdss_dsi still parses dual_dsi while
+	 * the DTS selects only the OEM primary endpoint for this bring-up. */
 	len = strlen(mdss_mdp_panel);
 
 	if (len > 0) {
@@ -3129,9 +3131,12 @@ static int mdss_mdp_probe(struct platform_device *pdev)
 			num_of_display_on--;
 
 #ifdef CONFIG_BOARD_FUJISAN
-		/* The single-A DTS disables continuous splash.  Release LK's
-		 * leftover DSI1 clock vote before userspace opens fb0. */
-		num_of_display_on = 0;
+		/* The OEM single-panel topology retains DSI0 as primary.  Accept
+		 * LK's DSI0 handoff so its splash stays powered through kernel init. */
+		if (intf_sel & MDSS_MDP_INTF_DSI0_SEL)
+			num_of_display_on = 1;
+		else
+			num_of_display_on = 0;
 #endif
 	}
 	if (!num_of_display_on) {

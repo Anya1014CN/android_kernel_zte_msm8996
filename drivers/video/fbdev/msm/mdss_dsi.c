@@ -377,7 +377,6 @@ static int mdss_dsi_panel_power_off(struct mdss_panel_data *pdata)
 
 	ctrl_pdata = container_of(pdata, struct mdss_dsi_ctrl_pdata,
 				panel_data);
-
 	ret = mdss_dsi_panel_reset(pdata, 0);
 	if (ret) {
 		pr_warn("%s: Panel reset failed. rc=%d\n", __func__, ret);
@@ -414,7 +413,6 @@ static int mdss_dsi_panel_power_on(struct mdss_panel_data *pdata)
 
 	ctrl_pdata = container_of(pdata, struct mdss_dsi_ctrl_pdata,
 				panel_data);
-
 	ret = msm_dss_enable_vreg(
 		ctrl_pdata->panel_power_data.vreg_config,
 		ctrl_pdata->panel_power_data.num_vreg, 1);
@@ -1513,7 +1511,6 @@ int mdss_dsi_on(struct mdss_panel_data *pdata)
 
 	pinfo = &pdata->panel_info;
 	mipi = &pdata->panel_info.mipi;
-
 	if (mdss_dsi_is_panel_on_interactive(pdata)) {
 		/*
 		 * all interrupts are disabled at LK
@@ -4038,12 +4035,6 @@ static int mdss_dsi_parse_hw_cfg(struct platform_device *pdev, char *pan_cfg)
 			__func__);
 		return -EINVAL;
 	}
-
-#ifdef CONFIG_BOARD_FUJISAN
-	/* Stock boot arguments carry cfg:dual_dsi; panel A on DSI1 is the only
-	 * active endpoint for this bring-up. */
-	sdata->hw_config = SINGLE_DSI;
-#endif
 
 	pr_debug("%s: DSI h/w configuration is %d\n", __func__,
 		sdata->hw_config);
