@@ -2729,6 +2729,16 @@ static int mdss_dsi_register_clamp_handler(struct mdss_dsi_ctrl_pdata *ctrl,
 	return 0;
 }
 
+static bool mdss_dsi_fujisan_composite_stage1(struct device_node *dsi_node)
+{
+#ifdef CONFIG_BOARD_FUJISAN
+	return dsi_node && of_property_read_bool(dsi_node,
+		"zte,fujisan-composite-stage1");
+#else
+	return false;
+#endif
+}
+
 static struct device_node *mdss_dsi_get_fb_node_cb(struct platform_device *pdev)
 {
 	struct device_node *fb_node;
@@ -2748,8 +2758,11 @@ static struct device_node *mdss_dsi_get_fb_node_cb(struct platform_device *pdev)
 		return NULL;
 	}
 
+	/* Fujisan stage1 shares the MDP fb node while keeping both DSI controllers
+	 * electrically independent. */
 	fb_node = of_parse_phandle(dsi_dev->dev.of_node,
-		mdss_dsi_get_fb_name(ctrl_pdata), 0);
+		mdss_dsi_fujisan_composite_stage1(dsi_dev->dev.of_node) ?
+		"qcom,mdss-fb-map-prim" : mdss_dsi_get_fb_name(ctrl_pdata), 0);
 	if (!fb_node) {
 		pr_err("Unable to find fb node for device: %s\n", pdev->name);
 		return NULL;
@@ -4743,6 +4756,14 @@ int dsi_panel_device_register(struct platform_device *ctrl_pdev,
 
 	mdss_dsi_ctrl_init(&ctrl_pdev->dev, ctrl_pdata);
 	mdss_dsi_set_prim_panel(ctrl_pdata);
+	if (mdss_dsi_fujisan_composite_stage1(
+		ctrl_pdev->dev.of_node->parent)) {
+		/* mdss_fb derives MDP_DUAL_LM_DUAL_DISPLAY from the common node. */
+		pinfo->is_split_display = true;
+		pr_info("fujisan: composite stage1 panel%d uses common fb node\n",
+			ctrl_pdata->ndx);
+	}
+
 	ctrl_pdata->dsi_irq_line = of_property_read_bool(
 				ctrl_pdev->dev.of_node, "qcom,dsi-irq-line");
 

@@ -55,8 +55,14 @@
 #include "mdss_debug.h"
 #include "mdss_smmu.h"
 #include "mdss_mdp.h"
+#include "mdss_dsi.h"
 
 #include "mdss_livedisplay.h"
+
+#ifdef CONFIG_BOARD_FUJISAN
+u32 zte_bl_brightness_2;
+extern void zte_touch_expand_set_active_panels(bool panel_a, bool panel_b);
+#endif
 
 #ifdef CONFIG_FB_MSM_TRIPLE_BUFFER
 #define MDSS_FB_NUM 3
@@ -275,6 +281,209 @@ static int mdss_fb_notify_update(struct msm_fb_data_type *mfd,
 
 static int lcd_backlight_registered;
 
+#ifdef CONFIG_BOARD_FUJISAN
+static int lcd_backlight_2_registered;
+static bool fujisan_secondary_display_on;
+static bool fujisan_secondary_display_allowed;
+static bool fujisan_primary_b;
+module_param_named(fujisan_secondary_display_allowed,
+	fujisan_secondary_display_allowed, bool, 0644);
+MODULE_PARM_DESC(fujisan_secondary_display_allowed,
+	"Allow Fujisan secondary display brightness to wake panel B");
+module_param_named(fujisan_primary_b, fujisan_primary_b, bool, 0644);
+MODULE_PARM_DESC(fujisan_primary_b,
+	"Route the primary brightness control to panel B");
+
+bool mdss_fb_fujisan_secondary_display_is_on(void)
+{
+	return READ_ONCE(fujisan_secondary_display_on);
+}
+
+static int fujisan_set_secondary_display_state(bool on)
+{
+	static char display_off[] = { 0x28, 0x00 };
+	static char display_on[] = { 0x29, 0x00 };
+	static struct dsi_cmd_desc display_off_cmd = {
+		{ DTYPE_DCS_WRITE, 1, 0, 0, 20, sizeof(display_off) },
+		display_off,
+	};
+	static struct dsi_cmd_desc display_on_cmd = {
+		{ DTYPE_DCS_WRITE, 1, 0, 0, 20, sizeof(display_on) },
+		display_on,
+	};
+	struct mdss_dsi_ctrl_pdata *ctrl;
+	struct dcs_cmd_req req;
+	int ret;
+
+	ctrl = mdss_dsi_get_ctrl_by_index(DSI_CTRL_RIGHT);
+	if (!ctrl)
+		return -ENODEV;
+
+	memset(&req, 0, sizeof(req));
+	req.cmds = on ? &display_on_cmd : &display_off_cmd;
+	req.cmds_cnt = 1;
+	req.flags = CMD_REQ_COMMIT | CMD_CLK_CTRL | CMD_REQ_LP_MODE |
+		CMD_REQ_UNICAST;
+	ret = mdss_dsi_cmdlist_put(ctrl, &req);
+	if (ret <= 0) {
+		pr_err("fujisan: secondary DCS display %s not sent (%d)\n",
+			on ? "on" : "off", ret);
+		return ret ? ret : -EAGAIN;
+	}
+	return ret;
+}
+
+/* Stage1 keeps both physical panels under fb0.  fb1 is a writeback device,
+ * so B backlight must be reached through fb0's split CTL, not its fb index. */
+static bool fujisan_set_native_secondary_backlight_locked(
+	struct msm_fb_data_type *mfd, enum led_brightness value)
+{
+	struct mdss_mdp_ctl *ctl;
+	struct mdss_mdp_ctl *split_ctl;
+	struct mdss_panel_data *panel;
+	int bl_lvl;
+
+	if (!mfd || mfd->index != 0 ||
+	    mfd->split_mode != MDP_DUAL_LM_DUAL_DISPLAY)
+		return false;
+
+	ctl = mfd_to_ctl(mfd);
+	split_ctl = ctl ? mdss_mdp_get_split_ctl(ctl) : NULL;
+	panel = split_ctl ? split_ctl->panel_data : NULL;
+	if (!panel || !panel->set_backlight ||
+	    panel->panel_info.brightness_max <= 0)
+		return false;
+	if (!mdss_fb_is_power_on_interactive(mfd))
+		return true;
+	if (value && !READ_ONCE(fujisan_secondary_display_allowed))
+		return true;
+
+	if (value > panel->panel_info.brightness_max)
+		value = panel->panel_info.brightness_max;
+	MDSS_BRIGHT_TO_BL(bl_lvl, value, panel->panel_info.bl_max,
+		panel->panel_info.brightness_max);
+	if (!bl_lvl && value)
+		bl_lvl = 1;
+
+	if (!value) {
+		panel->set_backlight(panel, bl_lvl);
+		if (fujisan_set_secondary_display_state(false) > 0)
+			fujisan_secondary_display_on = false;
+	} else {
+		if (!fujisan_secondary_display_on &&
+		    fujisan_set_secondary_display_state(true) > 0)
+			fujisan_secondary_display_on = true;
+		panel->set_backlight(panel, bl_lvl);
+	}
+	pr_info("fujisan: secondary backlight ctl%d level=%d\n",
+		split_ctl->num, bl_lvl);
+	return true;
+}
+
+static bool fujisan_set_native_secondary_backlight(enum led_brightness value)
+{
+	struct msm_fb_data_type *mfd;
+	bool handled;
+
+	if (!fbi_list[0] || !fbi_list[0]->par)
+		return false;
+	mfd = fbi_list[0]->par;
+	mutex_lock(&mfd->bl_lock);
+	handled = fujisan_set_native_secondary_backlight_locked(mfd, value);
+	mutex_unlock(&mfd->bl_lock);
+	return handled;
+}
+
+/* Atomic topology is the single owner of the paired panel route. */
+static void fujisan_apply_atomic_topology(struct msm_fb_data_type *mfd,
+		bool wide, bool single_b)
+{
+	bool old_allowed = READ_ONCE(fujisan_secondary_display_allowed);
+	bool old_primary_b = READ_ONCE(fujisan_primary_b);
+	bool new_allowed = wide || single_b;
+
+	if (old_allowed == new_allowed && old_primary_b == single_b)
+		return;
+	if (!new_allowed && old_allowed) {
+		mutex_lock(&mfd->bl_lock);
+		fujisan_set_native_secondary_backlight_locked(mfd, 0);
+		mutex_unlock(&mfd->bl_lock);
+	}
+	if (!single_b && old_primary_b) {
+		/* B-only routing suppressed A's physical callback.  Restore the
+		 * saved framework level before exposing A or the paired wide path. */
+		mutex_lock(&mfd->bl_lock);
+		mdss_fb_set_backlight(mfd, mfd->bl_level_usr);
+		mutex_unlock(&mfd->bl_lock);
+	}
+	if (single_b && !old_primary_b) {
+		mutex_lock(&mfd->bl_lock);
+		mdss_fb_set_backlight(mfd, 0);
+		mutex_unlock(&mfd->bl_lock);
+	}
+	WRITE_ONCE(fujisan_primary_b, single_b);
+	WRITE_ONCE(fujisan_secondary_display_allowed, new_allowed);
+	/* Touch routing is part of the same hardware topology as the CTL route.
+	 * A and B are independent when folded; C deliberately accepts both. */
+	zte_touch_expand_set_active_panels(wide || !single_b,
+		wide || single_b);
+	if (new_allowed && (!old_allowed || old_primary_b != single_b)) {
+		enum led_brightness value = 0;
+		if (mfd->panel_info && mfd->panel_info->bl_max > 0)
+			MDSS_BL_TO_BRIGHT(value, mfd->bl_level_usr,
+				mfd->panel_info->bl_max,
+				mfd->panel_info->brightness_max);
+		/* The first topology frame can precede the framework brightness
+		 * callback.  Preserve the initialized physical level in that case;
+		 * a non-zero B value is also required to send its DCS Display On. */
+		if (!value && mfd->bl_level && mfd->panel_info &&
+		    mfd->panel_info->bl_max > 0)
+			MDSS_BL_TO_BRIGHT(value, mfd->bl_level,
+				mfd->panel_info->bl_max,
+				mfd->panel_info->brightness_max);
+		if (!value)
+			value = 1;
+		mutex_lock(&mfd->bl_lock);
+		fujisan_set_native_secondary_backlight_locked(mfd, value);
+		mutex_unlock(&mfd->bl_lock);
+	}
+	pr_info("fujisan: atomic topology wide=%d primary_b=%d secondary_allowed=%d\n",
+		wide, single_b, new_allowed);
+}
+
+static void mdss_fb_set_bl_brightness_2(struct led_classdev *led_cdev,
+		enum led_brightness value)
+{
+	struct msm_fb_data_type *mfd;
+	int bl_lvl;
+	int i;
+
+	/* Preserve the fold-mode bit consumed by the paired DSI backlight path. */
+	zte_bl_brightness_2 = value == 1;
+	if (fujisan_set_native_secondary_backlight(value))
+		return;
+
+	for (i = 0; i < fbi_list_index; i++) {
+		if (!fbi_list[i])
+			continue;
+		mfd = (struct msm_fb_data_type *)fbi_list[i]->par;
+		if (!mfd || mfd->index != 1 || !mfd->panel_info)
+			continue;
+		if (value > mfd->panel_info->brightness_max)
+			value = mfd->panel_info->brightness_max;
+		MDSS_BRIGHT_TO_BL(bl_lvl, value, mfd->panel_info->bl_max,
+			mfd->panel_info->brightness_max);
+		if (!bl_lvl && value)
+			bl_lvl = 1;
+		mutex_lock(&mfd->bl_lock);
+		mdss_fb_set_backlight(mfd, bl_lvl);
+		mutex_unlock(&mfd->bl_lock);
+		mfd->bl_level_usr = bl_lvl;
+		break;
+	}
+}
+#endif
+
 static void mdss_fb_set_bl_brightness(struct led_classdev *led_cdev,
 				      enum led_brightness value)
 {
@@ -297,6 +506,14 @@ static void mdss_fb_set_bl_brightness(struct led_classdev *led_cdev,
 	if (!bl_lvl && value)
 		bl_lvl = 1;
 
+#ifdef CONFIG_BOARD_FUJISAN
+	if (mfd->index == 0 && READ_ONCE(fujisan_primary_b)) {
+		mfd->bl_level_usr = bl_lvl;
+		fujisan_set_native_secondary_backlight(value);
+		return;
+	}
+#endif
+
 	if (!IS_CALIB_MODE_BL(mfd) && (!mfd->ext_bl_ctrl || !value ||
 							!mfd->bl_level)) {
 		mutex_lock(&mfd->bl_lock);
@@ -304,6 +521,14 @@ static void mdss_fb_set_bl_brightness(struct led_classdev *led_cdev,
 		mutex_unlock(&mfd->bl_lock);
 	}
 	mfd->bl_level_usr = bl_lvl;
+
+#ifdef CONFIG_BOARD_FUJISAN
+	/* Both physical panels share the primary brightness control in the
+	 * dual-panel topology.  Mirror every framework update in the kernel so
+	 * slider animations and single-B-primary mode use the same level. */
+	if (mfd->index == 0)
+		fujisan_set_native_secondary_backlight(value);
+#endif
 }
 
 static enum led_brightness mdss_fb_get_bl_brightness(
@@ -325,6 +550,14 @@ static struct led_classdev backlight_led = {
 	.brightness_get = mdss_fb_get_bl_brightness,
 	.max_brightness = MDSS_MAX_BL_BRIGHTNESS,
 };
+#ifdef CONFIG_BOARD_FUJISAN
+static struct led_classdev backlight_led_2 = {
+	.name           = "lcd-backlight-2",
+	.brightness     = MDSS_MAX_BL_BRIGHTNESS / 2,
+	.brightness_set = mdss_fb_set_bl_brightness_2,
+	.max_brightness = MDSS_MAX_BL_BRIGHTNESS,
+};
+#endif
 
 static ssize_t mdss_fb_get_type(struct device *dev,
 				struct device_attribute *attr, char *buf)
@@ -1391,13 +1624,32 @@ static int mdss_fb_probe(struct platform_device *pdev)
 		pr_err("pm_runtime: fail to set active.\n");
 	pm_runtime_enable(mfd->fbi->dev);
 
-	/* android supports only one lcd-backlight/lcd for now */
+	/* Fujisan needs a separate LED node for its independently managed B panel. */
+#ifdef CONFIG_BOARD_FUJISAN
+	if (!lcd_backlight_registered && mfd->index == 0) {
+		backlight_led.brightness = mfd->panel_info->brightness_max;
+		backlight_led.max_brightness = mfd->panel_info->brightness_max;
+		if (led_classdev_register(&pdev->dev, &backlight_led))
+			pr_err("led_classdev_register failed\n");
+		else
+			lcd_backlight_registered = 1;
+	}
+	if (!lcd_backlight_2_registered && mfd->index == 1) {
+		backlight_led_2.brightness = mfd->panel_info->brightness_max;
+		backlight_led_2.max_brightness = mfd->panel_info->brightness_max;
+		if (led_classdev_register(&pdev->dev, &backlight_led_2))
+			pr_err("led_classdev_register backlight_2 failed\n");
+		else
+			lcd_backlight_2_registered = 1;
+	}
+#else
 	if (!lcd_backlight_registered) {
 		if (led_classdev_register(&pdev->dev, &backlight_led))
 			pr_err("led_classdev_register failed\n");
 		else
 			lcd_backlight_registered = 1;
 	}
+#endif
 
 	mdss_fb_init_panel_modes(mfd, pdata);
 
@@ -1499,10 +1751,20 @@ static int mdss_fb_remove(struct platform_device *pdev)
 	/* remove /dev/fb* */
 	unregister_framebuffer(mfd->fbi);
 
-	if (lcd_backlight_registered) {
+	if (lcd_backlight_registered
+#ifdef CONFIG_BOARD_FUJISAN
+		&& mfd->index == 0
+#endif
+		) {
 		lcd_backlight_registered = 0;
 		led_classdev_unregister(&backlight_led);
 	}
+#ifdef CONFIG_BOARD_FUJISAN
+	if (lcd_backlight_2_registered && mfd->index == 1) {
+		lcd_backlight_2_registered = 0;
+		led_classdev_unregister(&backlight_led_2);
+	}
+#endif
 
 	return 0;
 }
@@ -1943,6 +2205,10 @@ static int mdss_fb_blank_blank(struct msm_fb_data_type *mfd,
 		current_bl = mfd->bl_level;
 		mfd->allow_bl_update = true;
 		mdss_fb_set_backlight(mfd, 0);
+#ifdef CONFIG_BOARD_FUJISAN
+		if (mfd->index == 0)
+			fujisan_set_native_secondary_backlight_locked(mfd, 0);
+#endif
 		mfd->allow_bl_update = false;
 		mfd->unset_bl_level = current_bl;
 		mutex_unlock(&mfd->bl_lock);
@@ -1960,7 +2226,7 @@ static int mdss_fb_blank_blank(struct msm_fb_data_type *mfd,
 	return ret;
 }
 
-static int mdss_fb_blank_unblank(struct msm_fb_data_type *mfd)
+int mdss_fb_panel_unblank(struct msm_fb_data_type *mfd)
 {
 	int ret = 0;
 	int cur_power_state;
@@ -2095,7 +2361,7 @@ static int mdss_fb_blank_sub(int blank_mode, struct fb_info *info,
 	switch (blank_mode) {
 	case FB_BLANK_UNBLANK:
 		pr_debug("unblank called. cur pwr state=%d\n", cur_power_state);
-		ret = mdss_fb_blank_unblank(mfd);
+		ret = mdss_fb_panel_unblank(mfd);
 		break;
 	case BLANK_FLAG_ULP:
 		req_power_state = MDSS_PANEL_POWER_LP2;
@@ -2117,7 +2383,7 @@ static int mdss_fb_blank_sub(int blank_mode, struct fb_info *info,
 		 */
 		if (mdss_fb_is_power_off(mfd) && mfd->mdp.on_fnc) {
 			pr_debug("off --> lp. switch to on first\n");
-			ret = mdss_fb_blank_unblank(mfd);
+			ret = mdss_fb_panel_unblank(mfd);
 			if (ret)
 				break;
 		}
@@ -4712,12 +4978,116 @@ err:
 	return ret;
 }
 
+#ifdef CONFIG_BOARD_FUJISAN
+#define FUJISAN_WIDE_WIDTH	2160
+#define FUJISAN_WIDE_HEIGHT	1915
+#define FUJISAN_WIDE_SPLIT_X	1080
+#define FUJISAN_WIDE_B_PAD_TOP	5
+
+/* The HWC submits one full client target.  Native stage1 scanout, however,
+ * needs an ordinary layer on each command-mode CTL.  Expand the request before
+ * validation so the existing atomic path keeps ownership of buffer and fence
+ * lifetime. */
+static int fujisan_expand_atomic_commit(struct msm_fb_data_type *mfd,
+		struct mdp_layer_commit_v1 *commit,
+		struct mdp_input_layer **layer_list)
+{
+	struct mdp_input_layer *client = *layer_list;
+	struct mdp_input_layer *expanded;
+	struct mdp_input_layer *layer;
+	bool wide = commit->flags & MDP_COMMIT_FUJISAN_WIDE;
+	bool single = commit->flags & MDP_COMMIT_FUJISAN_SINGLE;
+	bool single_b = commit->flags & MDP_COMMIT_FUJISAN_SINGLE_B;
+
+	if (!wide && !single && !single_b)
+		return 0;
+	if ((wide && (single || single_b)) || (single_b && !single)) {
+		pr_err("fujisan: conflicting atomic topology flags\n");
+		return -EINVAL;
+	}
+
+	if (!mfd || mfd->index != 0 ||
+	    mfd->split_mode != MDP_DUAL_LM_DUAL_DISPLAY ||
+	    !client || commit->input_layer_cnt != 1 ||
+	    commit->output_layer || commit->dest_scaler_cnt) {
+		pr_err("fujisan-%s: invalid atomic topology\n",
+			wide ? "wide" : "single");
+		return -EINVAL;
+	}
+	fujisan_apply_atomic_topology(mfd, wide, single_b);
+
+	layer = &client[0];
+	if (layer->flags ||
+	    (layer->buffer.format != MDP_RGBA_8888 &&
+	     layer->buffer.format != MDP_RGBX_8888) ||
+	    layer->buffer.plane_count != 1 || layer->buffer.planes[0].fd < 0 ||
+	    layer->buffer.width < (wide ? FUJISAN_WIDE_WIDTH : 1080) ||
+	    layer->buffer.height < (wide ? FUJISAN_WIDE_HEIGHT : 1920) ||
+	    layer->src_rect.x || layer->src_rect.y ||
+	    layer->src_rect.w != (wide ? FUJISAN_WIDE_WIDTH : 1080) ||
+	    layer->src_rect.h != (wide ? FUJISAN_WIDE_HEIGHT : 1920) ||
+	    layer->dst_rect.x || layer->dst_rect.y ||
+	    layer->dst_rect.w != (wide ? FUJISAN_WIDE_WIDTH : 1080) ||
+	    layer->dst_rect.h != (wide ? FUJISAN_WIDE_HEIGHT : 1920)) {
+		pr_err("fujisan-%s: require one full linear RGBA/RGBX target\n",
+			wide ? "wide" : "single");
+		return -EINVAL;
+	}
+
+	expanded = kcalloc(2, sizeof(*expanded), GFP_KERNEL);
+	if (!expanded)
+		return -ENOMEM;
+
+	/* VIG0 drives A's left half. VIG1 drives B's right half.  In single mode
+	 * B remains paired in hardware; panel/backlight policy determines visibility. */
+	expanded[0] = *layer;
+	expanded[0].pipe_ndx = BIT(MDSS_MDP_SSPP_VIG0);
+	expanded[0].src_rect = (struct mdp_rect) {
+		0, 0, 1080, wide ? FUJISAN_WIDE_HEIGHT : 1920 };
+	expanded[0].dst_rect = (struct mdp_rect) {
+		0, 0, 1080, wide ? FUJISAN_WIDE_HEIGHT : 1920 };
+
+	expanded[1] = *layer;
+	expanded[1].pipe_ndx = BIT(MDSS_MDP_SSPP_VIG1);
+	expanded[1].src_rect = (struct mdp_rect) {
+		wide ? FUJISAN_WIDE_SPLIT_X : 0, 0, 1080,
+		wide ? FUJISAN_WIDE_HEIGHT : 1920 };
+	expanded[1].dst_rect = (struct mdp_rect) {
+		1080, wide ? FUJISAN_WIDE_B_PAD_TOP : 0, 1080,
+		wide ? FUJISAN_WIDE_HEIGHT : 1920 };
+	if (single_b)
+		expanded[0].alpha = 0;
+	else if (single)
+		expanded[1].alpha = 0;
+
+	kfree(client);
+	*layer_list = expanded;
+	commit->input_layers = expanded;
+	commit->input_layer_cnt = 2;
+	commit->flags &= ~(MDP_COMMIT_FUJISAN_WIDE | MDP_COMMIT_FUJISAN_SINGLE |
+		MDP_COMMIT_FUJISAN_SINGLE_B);
+
+	pr_debug("fujisan-%s%s: paired atomic expansion\n",
+		wide ? "wide" : "single", single_b ? "_b" : "");
+	return 0;
+}
+#else
+static int fujisan_expand_atomic_commit(struct msm_fb_data_type *mfd,
+		struct mdp_layer_commit_v1 *commit,
+		struct mdp_input_layer **layer_list)
+{
+	return (commit->flags & (MDP_COMMIT_FUJISAN_WIDE |
+		MDP_COMMIT_FUJISAN_SINGLE | MDP_COMMIT_FUJISAN_SINGLE_B)) ?
+		-EOPNOTSUPP : 0;
+}
+#endif
+
 static int mdss_fb_atomic_commit_ioctl(struct fb_info *info,
 	unsigned long *argp, struct file *file)
 {
 	int ret, i = 0, j = 0, rc;
 	struct mdp_layer_commit  commit;
-	u32 buffer_size, layer_count;
+	u32 buffer_size, layer_count, user_layer_count;
 	struct mdp_input_layer *layer, *layer_list = NULL;
 	struct mdp_input_layer __user *input_layer_list;
 	struct mdp_output_layer *output_layer = NULL;
@@ -4774,6 +5144,7 @@ static int mdss_fb_atomic_commit_ioctl(struct fb_info *info,
 	}
 
 	layer_count = commit.commit_v1.input_layer_cnt;
+	user_layer_count = layer_count;
 	input_layer_list = commit.commit_v1.input_layers;
 
 	if (layer_count > MAX_LAYER_COUNT) {
@@ -4796,6 +5167,12 @@ static int mdss_fb_atomic_commit_ioctl(struct fb_info *info,
 		}
 
 		commit.commit_v1.input_layers = layer_list;
+
+		ret = fujisan_expand_atomic_commit(mfd, &commit.commit_v1,
+			&layer_list);
+		if (ret)
+			goto err;
+		layer_count = commit.commit_v1.input_layer_cnt;
 
 		for (i = 0; i < layer_count; i++) {
 			layer = &layer_list[i];
@@ -4850,8 +5227,8 @@ static int mdss_fb_atomic_commit_ioctl(struct fb_info *info,
 		pr_err("atomic commit failed ret:%d\n", ret);
 	ATRACE_END("ATOMIC_COMMIT");
 
-	if (layer_count) {
-		for (j = 0; j < layer_count; j++) {
+	if (user_layer_count) {
+		for (j = 0; j < user_layer_count; j++) {
 			rc = copy_to_user(&input_layer_list[j].error_code,
 					&layer_list[j].error_code, sizeof(int));
 			if (rc)

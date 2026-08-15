@@ -190,7 +190,7 @@
 };
 
 &mdss_dsi1 {
-	status = "disabled";
+	status = "okay";
 	qcom,dsi-pref-prim-pan = <&dsi_dual_zte_truly_nt35695_5p5_fhd_cmd2>;
 	pinctrl-names = "mdss_default", "mdss_sleep";
 	pinctrl-0 = <&mdss_dsi1_active &mdss_te1_active>;
