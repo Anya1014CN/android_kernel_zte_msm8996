@@ -67,6 +67,8 @@ struct piusb_regs {
 #define STS_MODE_DFP	(0x4)         /* port is connected to UFP */
 #define STS_MODE_UFP	(0x8)         /* port is connected to DFP */
 #define STS_MODE_MASK	(0x1C)	      /* Port Status- connected to ufp or dfp */
+/* Fujisan's Pericom reports this DFP attach state for its OTG adapter. */
+#define STS_MODE_DFP_EXT	(STS_MODE_DFP | BIT(4))
 } __packed;
 
 struct pi_usb_type_c {
@@ -109,6 +111,16 @@ static char *dual_mode_text[] = {
 
 static int piusb_i2c_enable(struct pi_usb_type_c *pi, bool enable, u8 mode);
 
+static bool piusb_mode_is_dfp(u8 port_mode)
+{
+	return port_mode == STS_MODE_DFP || port_mode == STS_MODE_DFP_EXT;
+}
+
+static bool piusb_mode_is_ufp(u8 port_mode)
+{
+	return port_mode == STS_MODE_UFP;
+}
+
 static int piusb_read_regdata(struct i2c_client *i2c)
 {
 	int rc;
@@ -138,14 +150,14 @@ static int piusb_read_regdata(struct i2c_client *i2c)
 
 	if (!pi_usb->reg_data.intr_status) {
 		/*
-		 * A cable can already be attached when the driver probes.  In that
-		 * case the interrupt latch is clear, but port_status still contains
-		 * the live VBUS and UFP state needed to select the charger current.
+		 * A cable can already be attached when the driver probes. In that
+		 * case the interrupt latch is clear, but port_status still identifies
+		 * either valid attached role. DFP is host mode and does not require
+		 * sink-side VBUS to be reported.
 		 */
-		pi_usb->attach_state =
-			(pi_usb->reg_data.port_status & STS_VBUS_MASK) &&
-			((pi_usb->reg_data.port_status & STS_MODE_MASK) ==
-			 STS_MODE_UFP);
+		attach_state = pi_usb->reg_data.port_status & STS_MODE_MASK;
+		pi_usb->attach_state = piusb_mode_is_ufp(attach_state) ||
+					piusb_mode_is_dfp(attach_state);
 		return 0;
 	}
 
@@ -201,8 +213,8 @@ static void piusb_update_max_current(struct pi_usb_type_c *pi_usb)
 static void piusb_update_extcon(struct pi_usb_type_c *pi)
 {
 	u8 port_mode = pi->reg_data.port_status & STS_MODE_MASK;
-	bool usb = pi->attach_state && port_mode == STS_MODE_UFP;
-	bool host = pi->attach_state && port_mode == STS_MODE_DFP;
+	bool usb = pi->attach_state && piusb_mode_is_ufp(port_mode);
+	bool host = pi->attach_state && piusb_mode_is_dfp(port_mode);
 
 	/* DWC3 consumes these standard extcon events for device and host mode. */
 	extcon_set_cable_state_(pi->extcon, EXTCON_USB, usb);
@@ -373,16 +385,16 @@ static int piusb_dr_get_property(struct dual_role_phy_instance *dual_role,
 	/* Allow role-switch to finish before returning updated mode */
 	if (prop == DUAL_ROLE_PROP_MODE &&
 			((pi_usb->current_mode == CTL_MODE_DFP &&
-			     curr_port_status != STS_MODE_DFP) ||
-			(pi_usb->current_mode == CTL_MODE_UFP &&
-				curr_port_status != STS_MODE_UFP))) {
+			     !piusb_mode_is_dfp(curr_port_status)) ||
+				(pi_usb->current_mode == CTL_MODE_UFP &&
+					!piusb_mode_is_ufp(curr_port_status)))) {
 		mutex_unlock(&pi_usb->mutex);
 		msleep(detach_debounce_delay_ms);
 		mutex_lock(&pi_usb->mutex);
 	}
 
 	curr_port_status = pi_usb->reg_data.port_status & STS_MODE_MASK;
-	if (curr_port_status == STS_MODE_DFP) {
+	if (piusb_mode_is_dfp(curr_port_status)) {
 		dev_dbg(&pi_usb->client->dev, "%s: Mode is DFP\n", __func__);
 		mode = DUAL_ROLE_PROP_MODE_DFP;
 		pr = DUAL_ROLE_PROP_PR_SRC;
