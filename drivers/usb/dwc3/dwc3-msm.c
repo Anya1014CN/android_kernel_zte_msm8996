@@ -2878,6 +2878,32 @@ err:
 	return ret;
 }
 
+static bool dwc3_msm_extcon_role_active(struct dwc3_msm *mdwc)
+{
+	int state;
+
+	if (mdwc->extcon_vbus) {
+		state = extcon_get_cable_state_(mdwc->extcon_vbus, EXTCON_USB);
+		if (state > 0) {
+			dwc3_msm_vbus_notifier(&mdwc->vbus_nb, true,
+					       mdwc->extcon_vbus);
+			return true;
+		}
+	}
+
+	if (mdwc->extcon_id) {
+		state = extcon_get_cable_state_(mdwc->extcon_id,
+						EXTCON_USB_HOST);
+		if (state > 0) {
+			dwc3_msm_id_notifier(&mdwc->id_nb, true,
+					     mdwc->extcon_id);
+			return true;
+		}
+	}
+
+	return false;
+}
+
 static ssize_t mode_show(struct device *dev, struct device_attribute *attr,
 		char *buf)
 {
@@ -2895,6 +2921,10 @@ static ssize_t mode_store(struct device *dev, struct device_attribute *attr,
 		const char *buf, size_t count)
 {
 	struct dwc3_msm *mdwc = dev_get_drvdata(dev);
+
+	/* A connected Type-C role is authoritative over gadget defaults. */
+	if (mdwc->usb_data_enabled && dwc3_msm_extcon_role_active(mdwc))
+		return count;
 
 	if (sysfs_streq(buf, "peripheral")) {
 		mdwc->vbus_active = true;
