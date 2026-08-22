@@ -394,6 +394,34 @@ static bool fujisan_set_native_secondary_backlight(enum led_brightness value)
 	return handled;
 }
 
+/* Restore B from the framework's current A brightness.  This is needed both
+ * when Wide first claims the paired CTLs and after an ordinary screen OFF/ON:
+ * panel power-off sends B DCS Display Off, while the logical Wide topology
+ * itself remains unchanged across that cycle. */
+static void fujisan_restore_secondary_backlight(struct msm_fb_data_type *mfd)
+{
+	enum led_brightness value = 0;
+
+	if (!mfd)
+		return;
+	if (mfd->panel_info && mfd->panel_info->bl_max > 0)
+		MDSS_BL_TO_BRIGHT(value, mfd->bl_level_usr,
+			mfd->panel_info->bl_max, mfd->panel_info->brightness_max);
+	/* A panel power cycle can clear bl_level_usr before the first Wide frame.
+	 * Fall back to the restored physical A level, then use a non-zero minimum
+	 * so B receives its required DCS Display On command. */
+	if (!value && mfd->bl_level && mfd->panel_info &&
+	    mfd->panel_info->bl_max > 0)
+		MDSS_BL_TO_BRIGHT(value, mfd->bl_level,
+			mfd->panel_info->bl_max, mfd->panel_info->brightness_max);
+	if (!value)
+		value = 1;
+
+	mutex_lock(&mfd->bl_lock);
+	fujisan_set_native_secondary_backlight_locked(mfd, value);
+	mutex_unlock(&mfd->bl_lock);
+}
+
 /* Atomic topology is the single owner of the paired panel route. */
 static void fujisan_apply_atomic_topology(struct msm_fb_data_type *mfd,
 		bool wide, bool single_b)
@@ -402,8 +430,15 @@ static void fujisan_apply_atomic_topology(struct msm_fb_data_type *mfd,
 	bool old_primary_b = READ_ONCE(fujisan_primary_b);
 	bool new_allowed = wide || single_b;
 
-	if (old_allowed == new_allowed && old_primary_b == single_b)
+	if (old_allowed == new_allowed && old_primary_b == single_b) {
+		/* Screen power-off sends B a DCS Display Off but deliberately retains
+		 * the Wide route flags.  Rearm B on the first post-resume Wide frame. */
+		if (new_allowed && !READ_ONCE(fujisan_secondary_display_on)) {
+			pr_info("fujisan: rearm secondary after panel power cycle\n");
+			fujisan_restore_secondary_backlight(mfd);
+		}
 		return;
+	}
 	if (!new_allowed && old_allowed) {
 		mutex_lock(&mfd->bl_lock);
 		fujisan_set_native_secondary_backlight_locked(mfd, 0);
@@ -427,26 +462,8 @@ static void fujisan_apply_atomic_topology(struct msm_fb_data_type *mfd,
 	 * A and B are independent when folded; C deliberately accepts both. */
 	zte_touch_expand_set_active_panels(wide || !single_b,
 		wide || single_b);
-	if (new_allowed && (!old_allowed || old_primary_b != single_b)) {
-		enum led_brightness value = 0;
-		if (mfd->panel_info && mfd->panel_info->bl_max > 0)
-			MDSS_BL_TO_BRIGHT(value, mfd->bl_level_usr,
-				mfd->panel_info->bl_max,
-				mfd->panel_info->brightness_max);
-		/* The first topology frame can precede the framework brightness
-		 * callback.  Preserve the initialized physical level in that case;
-		 * a non-zero B value is also required to send its DCS Display On. */
-		if (!value && mfd->bl_level && mfd->panel_info &&
-		    mfd->panel_info->bl_max > 0)
-			MDSS_BL_TO_BRIGHT(value, mfd->bl_level,
-				mfd->panel_info->bl_max,
-				mfd->panel_info->brightness_max);
-		if (!value)
-			value = 1;
-		mutex_lock(&mfd->bl_lock);
-		fujisan_set_native_secondary_backlight_locked(mfd, value);
-		mutex_unlock(&mfd->bl_lock);
-	}
+	if (new_allowed && (!old_allowed || old_primary_b != single_b))
+		fujisan_restore_secondary_backlight(mfd);
 	pr_info("fujisan: atomic topology wide=%d primary_b=%d secondary_allowed=%d\n",
 		wide, single_b, new_allowed);
 }
