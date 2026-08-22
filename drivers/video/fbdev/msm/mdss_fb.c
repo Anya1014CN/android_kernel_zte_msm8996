@@ -2223,8 +2223,13 @@ static int mdss_fb_blank_blank(struct msm_fb_data_type *mfd,
 		mfd->allow_bl_update = true;
 		mdss_fb_set_backlight(mfd, 0);
 #ifdef CONFIG_BOARD_FUJISAN
-		if (mfd->index == 0)
+		if (mfd->index == 0) {
 			fujisan_set_native_secondary_backlight_locked(mfd, 0);
+			/* DCS power-off may complete after the legacy helper returns.
+			 * Record B as off unconditionally so the first post-resume Wide
+			 * atomic frame re-sends its DCS Display On command. */
+			WRITE_ONCE(fujisan_secondary_display_on, false);
+		}
 #endif
 		mfd->allow_bl_update = false;
 		mfd->unset_bl_level = current_bl;
