@@ -794,7 +794,13 @@ long msm_ion_custom_ioctl(struct ion_client *client,
 				data.flush_data.offset;
 			end = start + data.flush_data.length;
 
-			if (check_vaddr_bounds(start, end)) {
+			/*
+			 * Legacy CAF clients use a NULL vaddr with offset zero to
+			 * request whole-DMA-BUF cache maintenance. ion_do_cache_op()
+			 * handles that case using the buffer's physical pages. Keep
+			 * rejecting every non-zero user virtual address outside its VMA.
+			 */
+			if (start && check_vaddr_bounds(start, end)) {
 				pr_err("%s: virtual address %pK is out of bounds\n",
 				       __func__, data.flush_data.vaddr);
 				ret = -EINVAL;

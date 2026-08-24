@@ -340,7 +340,13 @@ int mmc_init_queue(struct mmc_queue *mq, struct mmc_card *card,
 		limit = (u64)dma_max_pfn(mmc_dev(host)) << PAGE_SHIFT;
 
 	mq->card = card;
+	/*
+	 * A card can advertise CMDQ even when its host has disabled or failed
+	 * CMDQ setup.  Do not create a CMDQ queue and then tear it down on the
+	 * -ENOTSUPP fallback path; use the normal legacy queue directly.
+	 */
 	if (card->ext_csd.cmdq_support &&
+	    (host->caps2 & MMC_CAP2_CMD_QUEUE) &&
 	    (area_type == MMC_BLK_DATA_AREA_MAIN)) {
 		mq->queue = blk_init_queue(mmc_cmdq_dispatch_req, lock);
 		if (!mq->queue)

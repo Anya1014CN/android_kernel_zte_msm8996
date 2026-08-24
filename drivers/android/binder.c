@@ -1564,7 +1564,17 @@ static void binder_pop_transaction_ilocked(struct binder_thread *target_thread,
 	BUG_ON(!target_thread);
 	assert_spin_locked(&target_thread->proc->inner_lock);
 	BUG_ON(target_thread->transaction_stack != t);
-	BUG_ON(target_thread->transaction_stack->from != target_thread);
+	/*
+	 * The sender thread may exit while another Binder thread is cleaning
+	 * up this transaction.  Its cleanup clears t->from first; popping the
+	 * transaction remains safe in that case.  Keep rejecting a non-NULL
+	 * sender that does not match the stack owner.
+	 *
+	 * Upstream: binder: Fix overly strict assertion in
+	 * binder_pop_transaction (Android bugs 33250092, 32225111).
+	 */
+	BUG_ON(target_thread->transaction_stack->from != NULL &&
+	       target_thread->transaction_stack->from != target_thread);
 	target_thread->transaction_stack =
 		target_thread->transaction_stack->from_parent;
 	t->from = NULL;
@@ -2959,7 +2969,8 @@ static int binder_proc_transaction(struct binder_transaction *t,
 		trace_binder_transaction_update_buffer_release(buffer);
 		binder_transaction_buffer_release(proc, NULL, buffer, 0, 0);
 		binder_alloc_free_buf(&proc->alloc, buffer);
-		kfree(t_outdated);
+		/* t_outdated came from binder_transaction_pool. */
+		kmem_cache_free(binder_transaction_pool, t_outdated);
 		binder_stats_deleted(BINDER_STAT_TRANSACTION);
 	}
 

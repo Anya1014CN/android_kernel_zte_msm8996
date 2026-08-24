@@ -4381,7 +4381,15 @@ static void sdhci_msm_cmdq_init(struct sdhci_host *host,
 	struct sdhci_msm_host *msm_host = pltfm_host->priv;
 
 	if (nocmdq) {
-		dev_dbg(&pdev->dev, "CMDQ disabled via cmdline\n");
+		/*
+		 * The Fujisan eMMC reports CMDQ support but this legacy MSM8996
+		 * host cannot complete CMDQ setup.  Make the cmdline override
+		 * authoritative: do not leave a stale capability for the MMC core
+		 * to consume when sdhci_add_host() creates the card queue.
+		 */
+		msm_host->mmc->caps2 &= ~MMC_CAP2_CMD_QUEUE;
+		host->cq_host = NULL;
+		dev_info(&pdev->dev, "CMDQ disabled via cmdline\n");
 		return;
 	}
 
