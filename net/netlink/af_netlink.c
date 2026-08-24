@@ -741,6 +741,8 @@ static int netlink_release(struct socket *sock)
 			nlk->cb.done(&nlk->cb);
 		module_put(nlk->cb.module);
 		kfree_skb(nlk->cb.skb);
+		/* Avoid repeating the dump teardown below after cb.skb is freed. */
+		WRITE_ONCE(nlk->cb_running, false);
 	}
 
 	module_put(nlk->module);
