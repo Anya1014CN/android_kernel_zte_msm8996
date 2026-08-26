@@ -358,7 +358,8 @@ static void msm_restart_prepare(const char *cmd)
 					     restart_reason);
 			}
 		} else if (!strncmp(cmd, "edl", 3)) {
-			if (0)
+			/* Honor the explicit recovery EDL action. The previous dead guard
+			 * only recorded an edl restart reason and then booted Android. */
 			enable_emergency_dload_mode();
 		} else {
 			qpnp_pon_set_restart_reason(PON_RESTART_REASON_NORMAL);

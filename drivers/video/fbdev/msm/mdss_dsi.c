@@ -38,6 +38,18 @@
 
 #define CMDLINE_DSI_CTL_NUM_STRING_LEN 2
 
+#ifdef CONFIG_BOARD_FUJISAN
+/* Recovery deliberately ignores LK's dual-panel cmdline configuration. */
+static bool fujisan_recovery_mode;
+
+static int __init fujisan_recovery_mode_setup(char *value)
+{
+	fujisan_recovery_mode = value && !strcmp(value, "1");
+	return 1;
+}
+early_param("androidboot.fujisan.recovery", fujisan_recovery_mode_setup);
+#endif
+
 /* Master structure to hold all the information about the DSI/panel */
 static struct mdss_dsi_data *mdss_dsi_res;
 
@@ -4005,6 +4017,13 @@ static int mdss_dsi_parse_hw_cfg(struct platform_device *pdev, char *pan_cfg)
 	}
 
 	sdata->hw_config = SINGLE_DSI;
+
+#ifdef CONFIG_BOARD_FUJISAN
+	/* LK appends cfg:dual_dsi. Recovery uses the known-working TWRP DTB;
+	 * bypass LK only so the normal parser reads that DTB's topology. */
+	if (fujisan_recovery_mode)
+		pan_cfg = NULL;
+#endif
 
 	if (pan_cfg)
 		cfg_prim = strnstr(pan_cfg, "cfg:", strlen(pan_cfg));
